@@ -87,12 +87,13 @@ component T3Code
               button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button"
                 image "symbol:sf/point.3.connected.trianglepath.dotted"
             input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" margin="0 16px 8px"
-            row gap=8 padding="0 16px 10px"
-              button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
-                text "All environments"
-              for environment in catalog.environments key=environment.id
-                button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
-                  text environment.label
+            scroll padding="0 16px 10px" max-height=120 overflow-x="auto"
+              row gap=8
+                button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
+                  text "All environments"
+                for environment in catalog.environments key=environment.id
+                  button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
+                    text environment.label
             if failed(catalog)
               EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
             else if visibleThreads.length == 0 and not pending(catalog)
@@ -121,10 +122,10 @@ component T3Code
                 header
                   text "Connected"
                 for environment in catalog.environments key=environment.id
-                  row gap=12 padding="12px 4px"
-                    column flex=1 min-width=0 gap=3
+                  row gap=12 padding="12px 4px" flex-wrap="wrap"
+                    column width="100%" min-width=0 gap=3
                       row align-items="center" gap=7
-                        text environment.label font="-exact-body" flex=1 min-width=0
+                        text environment.label font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
                         text environment.status font="-exact-footnote" color="-exact-secondary-label"
                       text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                     input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
@@ -148,7 +149,7 @@ component T3Code
                     else
                       text message.body user-select="text" overflow-wrap="break-word" max-width="94%" padding="8px 0" testId=`message-${message.id}`
               row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)"
-                row flex=1 align-items="flex-end" gap=8 padding="5px 6px 5px 16px" border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
-                  textarea id="composer" value=composer input=editComposer rows=1 max-height=140 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
+                row flex=1 align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
+                  textarea id="composer" value=composer input=editComposer rows=1 max-height=140 min-height=44 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
                   button press=sendMessage disabled=not canSend buttonStyle="prominent-glass" retainFocus=true aria-label="Send" testId="send"
                     image "symbol:send"
