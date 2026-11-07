@@ -87,19 +87,20 @@ component T3Code
               button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button"
                 image "symbol:sf/point.3.connected.trianglepath.dotted"
             input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" margin="0 16px 8px"
-            scroll padding="0 16px 10px" max-height=120 overflow-x="auto"
-              row gap=8
-                button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
-                  text "All environments"
-                for environment in catalog.environments key=environment.id
-                  button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
-                    text environment.label
             if failed(catalog)
               EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
             else if visibleThreads.length == 0 and not pending(catalog)
               EmptyState(symbol="symbol:messages", title="No threads yet", message="Create a task to start a new coding session.")
             else
               list id="home" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                section
+                  scroll max-height=120 overflow-x="auto"
+                    row gap=8 padding="0 16px 10px"
+                      button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
+                        text "All environments"
+                      for environment in catalog.environments key=environment.id
+                        button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
+                          text environment.label
                 section
                   for thread in visibleThreads key=thread.id
                     link href=path("thread", thread.id) testId=`thread-${thread.id}`
