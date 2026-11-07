@@ -1,0 +1,23 @@
+{
+  "$schema": "../../exact2-origin-main/scripts/app.schema.json",
+  "name": "T3 Code Exact iOS",
+  "short_name": "T3 Code",
+  "id": "com.schroedernathan.t3code.exactios",
+  "start_url": "/",
+  "display": "standalone",
+  "app": {
+    "id": "com.schroedernathan.t3code.exactios",
+    "name": "T3 Code Exact iOS"
+  },
+  "host": {
+    "ios": {
+      "minimumOS": "17.0",
+      "deviceFamily": ["iphone", "ipad"]
+    }
+  },
+  "deploy": {
+    "store": {
+      "ios": "0"
+    }
+  }
+}
