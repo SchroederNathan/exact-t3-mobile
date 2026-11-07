@@ -1,220 +1,154 @@
-// Exact Ios App: a list that pushes a detail, a sheet to add, an alert to delete, kept in a file.
-// The items are app.ts's (app:/data/items.json). A phone pushes the detail; a wide window
-// shows the list beside it by itself, because a row draws the disclosure chevron
-// (`contract vocab navigationSplit`). A row deletes by swipe and opens a menu on a long press
-// (`contract vocab swipe`, `menu`): a swipe or the menu's Delete deletes at once, as Mail and
-// Notes do, and the detail's Delete asks first. A smaller app deletes what it doesn't need: the
-// delete (`askRemove`, `remove`, the dialog, the row's `delete=`, the menu's Delete), the
-// notes (the shape's field, the sheet's and the detail's sections), or the lock (the shape's `locked`, `setLock`, `flipLock`, the badge, the switch,
-// the menu's Lock and Delete's reason).
-// Compose as the platform does: a row pushes its detail, create and edit are sheets (an edit
-// sheet fills from its item: `edit-sheet`), a phone gets one column and a wide window two
-// (`responsive-columns`); not a form above one long list.
-// The bar's search field filters as you type (`contract vocab search`); an empty list, a failed
-// read and no match are each an `EmptyState` in the list's place. Save is disabled until valid;
-// Enter (Return on iOS) in the title saves, as a form does on the web (`submit=save`).
-// A directory (Contacts) is `listStyle="plain"`, a `section` per letter headed by it: its headers
-// pin as it scrolls and UIKit's A–Z index comes with them (Favorites above the letters stay out
-// of it). Keep the list the route's child after its `header`, in no row beside another box.
-use Badge, EmptyState from "exact:content"
+use EmptyState from "exact:content"
 
 routes nav
-  items "/"
-    item "/item/:id"
-    add "/add"
+  home "/"
+  environments "/environments"
+  thread "/threads/:id"
 
-shape Item
+shape Environment
   id: string
+  label: string
+  url: string
+  status: string
+  enabled: bool
+
+shape Message
+  id: string
+  role: string
+  body: string
+  createdAt: string
+
+shape Thread
+  id: string
+  environmentId: string
+  project: string
   title: string
-  notes: string
-  locked: bool
+  status: string
+  updatedAt: string
+  messages: Message[]
+
+shape Catalog
+  environments: Environment[]
+  threads: Thread[]
 
 shape Reply
   ok: bool
   error: string
 
-fn titleOf(items: Item[], id: string): string = match first(items.filter(i => i.id == id)) { case some(i) => i.title, case none => "" }
-fn found(items: Item[], id: string): bool = items.filter(i => i.id == id).length > 0
-fn matches(i: Item, q: string): bool = i.title.toLowerCase().includes(q.trim().toLowerCase()) or i.notes.toLowerCase().includes(q.trim().toLowerCase())
+fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
+fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
+fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 
-component App
+component T3Code
   state query = ""
-  state draftTitle = ""
-  state draftNotes = ""
-  // The last Save's refusal, in red under the field until a Save succeeds.
-  state refusal = ""
-  // The row a long press opened the menu on, or the item the detail's Delete asks about.
-  state aimed = ""
-  resource lib = loadItems() as shape Item[] else empty()
-  mutation added as shape Reply refreshes lib then afterSave
-  mutation removed as shape Reply refreshes lib
-  mutation lockSaved as shape Reply refreshes lib
-  derive selected = match stack(nav).filter(e => e.name == "item").at(-1) { case some(e) => e.params.id, case none => "" }
-  derive aimedLocked = lib.filter(i => i.id == aimed and i.locked).length > 0
-  derive shown = lib.filter(i => matches(i, query))
-  derive saveError = match added { case some(r) => r.error, case none => "" }
-  // Why Save is disabled, under the field (not red: nothing is wrong yet).
-  derive saveHint = pending(added) ? "Saving…" : draftTitle.trim() == "" ? "Enter a title to save." : ""
+  state selectedEnvironment = ""
+  state composer = ""
+  resource catalog = loadCatalog() as shape Catalog else empty()
+  mutation changed as shape Reply refreshes catalog
+  derive currentThreadId = match stack(nav).filter(e => e.name == "thread").at(-1) { case some(e) => e.params.id, case none => "" }
+  derive currentThread = selectedThread(catalog, currentThreadId)
+  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query)
+  derive selectedEnvironmentLabel = selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment)
+  derive canSend = composer.trim() != "" and not pending(changed)
 
-  action search(v: string)
-    query = v
-  action reload
-    refresh lib
-  action openAdd
-    draftTitle = ""
-    draftNotes = ""
-    refusal = ""
-    nav = push(nav, "/add")
+  action search(value: string)
+    query = value
+
+  action filterEnvironment(id: string)
+    selectedEnvironment = id
+
+  action openEnvironments
+    nav = push(nav, "/environments")
+
+  action openThread(url: string)
+    nav = go(nav, url)
+
   action back
     nav = back(nav)
-  // A row is a link to its item; the browser's Back, Forward and a deep link arrive here too.
-  // An item shown beside the list (a wide window) is replaced by the next one opened.
-  action follow(url: string)
-    nav = top(nav).name == "item" and url.startsWith("/item/") ? replace(nav, url) : go(nav, url)
-  action editTitle(v: string)
-    draftTitle = v
-  action editNotes(v: string)
-    draftNotes = v
-  action save
-    if draftTitle.trim() != "" and not pending(added)
-      send added = addItem(draftTitle.trim(), draftNotes.trim())
-  // The sheet closes only on an ok reply; a refusal keeps it open, saying why.
-  action afterSave
-    refusal = saveError
-    if saveError == "" and top(nav).name == "add"
-      nav = back(nav)
-  action setLock(id: string, on: bool)
-    send lockSaved = lockItem(id, on)
-  action aim(id: string)
-    aimed = id
-  action flipLock
-    send lockSaved = lockItem(aimed, not aimedLocked)
-  // The detail's Delete asks first: it is a loss the item's own screen confirms.
-  action askRemove(id: string)
-    aimed = id
-    showModal("remove")
-  // A row's swipe, its menu, or the alert's Delete; the detail closes if it showed this item.
-  action remove(id: string)
-    send removed = removeItem(id)
-    if selected == id
-      nav = back(nav)
+
+  action toggleEnvironment(id: string, enabled: bool)
+    send changed = command("toggle", id, enabled ? "true" : "false")
+
+  action editComposer(value: string)
+    composer = value
+
+  action sendMessage
+    if canSend and currentThreadId != ""
+      send changed = command("send", currentThreadId, composer.trim())
+      composer = ""
 
   view
-    main navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow testId="app" width="100%" height="100%"
+    main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%"
       for e in stack(nav) key=e.id
-        if e.name == "items"
-          column navigationKey=`${e.id}` navigationScroll="items-list" position="absolute" inset=0
-            display="flex" flex-direction="column"
-            header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
-              text "Exact Ios App" role="heading" aria-level=1 flex=1
-              button press=openAdd aria-label="Add Item" testId="add-item"
-                image "symbol:add"
-              // The bar's search field (iOS: UIKit's search controller), filtering as you type.
-              input type="search" value=query input=search placeholder="Search" aria-label="Search Items"
-                testId="search" width="100%"
-            // In place of the list: a failed read, no items, no match. Before the file's first
-            // answer the list is blank, a moment too short for a spinner.
-            if failed(lib)
-              EmptyState(symbol="symbol:alert", title="Can’t Open Items", message="Something went wrong reading them.")
-                button press=reload testId="retry"
-                  text "Try Again"
-            else if lib.length == 0 and not pending(lib)
-              EmptyState(symbol="symbol:document", title="No Items", message="Items you add appear here.")
-                button press=openAdd testId="empty-add"
-                  text "Add Item"
-            else if shown.length == 0 and not pending(lib)
-              EmptyState(symbol="symbol:search", title=`No Results for “${query.trim()}”`, message="Check the spelling or try a new search.")
+        if e.name == "home"
+          column navigationKey=`${e.id}` navigationScroll="home" position="absolute" inset=0 display="flex" flex-direction="column"
+            header display="flex" align-items="center" gap=8 padding="8px 16px"
+              text "T3 Code" role="heading" aria-level=1 flex=1
+              button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button"
+                image "symbol:sf/point.3.connected.trianglepath.dotted"
+            input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" margin="0 16px 8px"
+            row gap=8 padding="0 16px 10px"
+              button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
+                text "All environments"
+              for environment in catalog.environments key=environment.id
+                button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
+                  text environment.label
+            if failed(catalog)
+              EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
+            else if visibleThreads.length == 0 and not pending(catalog)
+              EmptyState(symbol="symbol:messages", title="No threads yet", message="Create a task to start a new coding session.")
             else
-              list id="items-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+              list id="home" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                 section
-                  // A title over its notes; the chevron says the row pushes. It only navigates, so it is a link.
-                  // `delete=` is its swipe to delete (UIKit's on iOS), none while locked: the row still opens.
-                  // A swipe deletes at once, without asking, as iOS's own lists do.
-                  for it in shown key=it.id
-                    link href=path("item", it.id) delete=remove(it.id) disabled=it.locked contextmenu=aim(it.id)
-                      contextPopover="item-menu" testId=`item-${it.id}`
-                      column flex=1 min-width=0
-                        text it.title
-                        if it.notes != ""
-                          text it.notes line-clamp=1
-                      // A status is a badge, not coloured text: `some("-exact-system-orange")` for Full.
-                      if it.locked
-                        Badge(label="Locked", tint=none)
+                  for thread in visibleThreads key=thread.id
+                    link href=path("thread", thread.id) testId=`thread-${thread.id}`
+                      column flex=1 min-width=0 gap=3
+                        row align-items="center" gap=6
+                          text thread.title font="-exact-body" flex=1 min-width=0
+                          text thread.status font="-exact-footnote" color="-exact-secondary-label"
+                        row align-items="center" gap=6
+                          text thread.project font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0
+                          text thread.updatedAt font="-exact-footnote" color="-exact-tertiary-label"
                       image "symbol:forward-chevron"
-        if e.name == "item"
-          column navigationKey=`${e.id}` navigationScroll="item-detail" position="absolute" inset=0
-            display="flex" flex-direction="column"
+        if e.name == "environments"
+          column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column"
             header display="flex" align-items="center" padding="8px 16px"
-              text (found(lib, e.params.id) or pending(lib) ? titleOf(lib, e.params.id) : "Not Found") role="heading" aria-level=2 testId="detail-title"
-            // An id that names nothing (a stale link, /item/999) says so, once the list has loaded.
-            if found(lib, e.params.id) or pending(lib)
-              list id="item-detail" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                for it in lib.filter(x => x.id == e.params.id) key=it.id
-                  ItemSections(item=it, setLock=setLock(it.id), askRemove=askRemove(it.id))
-            else
-              EmptyState(symbol="symbol:alert", title="No such item", message="It may have been deleted.")
-                button press=back buttonStyle="filled" testId="missing-back"
-                  text "Back to Items"
-        if e.name == "add"
-          column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="add-form" position="absolute" inset=0
-            header display="flex" align-items="center" justify-content="space-between" padding="8px 16px"
-              button id="back" press=back aria-label="Cancel" testId="add-cancel"
+              button press=back buttonStyle="glass" aria-label="Close environments" testId="environments-close"
                 image "symbol:close"
-              text "New Item" role="heading"
-              button press=save buttonStyle="bordered-prominent" aria-label="Save" testId="add-save"
-                disabled=(draftTitle.trim() == "" or pending(added))
-                image "symbol:checkmark"
-            list id="add-form" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-              section
-                // Red is for a refusal, in the field's row under the field; why Save is disabled is the footer.
-                row
-                  column flex=1 min-width=0 gap=4
-                    input value=draftTitle input=editTitle placeholder="Title" aria-label="Title"
-                      autofocus=true submit=save aria-invalid=(refusal != "") testId="add-title"
-                    if refusal != ""
-                      text refusal font="-exact-footnote" color="-exact-system-red" testId="add-error"
-                footer
-                  text saveHint testId="add-hint"
+              text "Environments" role="heading" aria-level=1 flex=1
+            list id="environments" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 padding="16px 20px"
               section
                 header
-                  text "Notes"
-                row padding-top=8 padding-bottom=8
-                  textarea value=draftNotes input=editNotes placeholder="Optional" aria-label="Notes"
-                    rows=4 testId="add-notes" flex=1 min-width=0
-      // One long-press menu for every row, acting on `aimed` (iOS: a UIMenu over the row).
-      column id="item-menu" popover="auto" role="menu"
-        button press=flipLock popovertarget="item-menu" popovertargetaction="hide" testId="menu-lock"
-          image "symbol:lock"
-          text (aimedLocked ? "Unlock" : "Lock")
-        button press=remove(aimed) destructive=true disabled=aimedLocked popovertarget="item-menu"
-          popovertargetaction="hide" testId="menu-delete"
-          image "symbol:delete"
-          text "Delete"
-      dialog id="remove" role="alertdialog" aria-label="Delete Item?"
-        text "This can’t be undone."
-        button press=remove(aimed) destructive=true commandfor="remove" command="close" testId="remove-confirm"
-          text "Delete"
-        button commandfor="remove" command="close" testId="remove-cancel"
-          text "Cancel"
-
-// One item: its notes, its lock, and Delete, which asks first, or says why it can't.
-component ItemSections
-  props
-    item: Item
-    setLock: action
-    askRemove: action
-  view
-    section
-      header
-        text "Notes"
-      row padding-top=10 padding-bottom=10
-        text (item.notes == "" ? "No notes." : item.notes) flex=1 min-width=0
-          color=(item.notes == "" ? "-exact-secondary-label" : "-exact-label") testId="detail-notes"
-    section
-      row
-        text "Locked"
-        input type="checkbox" switch checked=item.locked change=setLock aria-label="Locked" testId="lock-item"
-      button press=askRemove destructive=true disabled=item.locked testId="delete-item"
-        text "Delete Item"
-      footer
-        text (item.locked ? "Unlock this item to delete it." : "") testId="delete-reason"
+                  text "Connected"
+                for environment in catalog.environments key=environment.id
+                  row gap=12 padding="12px 4px"
+                    column flex=1 min-width=0 gap=3
+                      row align-items="center" gap=7
+                        text environment.label font="-exact-body" flex=1 min-width=0
+                        text environment.status font="-exact-footnote" color="-exact-secondary-label"
+                      text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+                    input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+              section
+                footer
+                  text "Environments connect T3 Code to your machines and remote workspaces." font="-exact-footnote" color="-exact-secondary-label"
+        if e.name == "thread"
+          column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction="column"
+            for thread in currentThread key=thread.id
+              header display="flex" align-items="center" padding="8px 16px"
+                column flex=1 min-width=0 gap=2
+                  text thread.title role="heading" aria-level=1
+                  text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label"
+                button buttonStyle="glass" aria-label="Thread actions" testId="thread-actions"
+                  image "symbol:ellipsis"
+              list id="thread" appearance="none" flex=1 min-height=0 padding="16px"
+                for message in thread.messages key=message.id
+                  row justify-content=(message.role == "user" ? "flex-end" : "flex-start") padding="5px 0" width="100%"
+                    if message.role == "user"
+                      text message.body user-select="text" overflow-wrap="break-word" max-width="84%" padding="11px 15px" border-radius=22 background-color="AccentColor" color="AccentColorText" testId=`message-${message.id}`
+                    else
+                      text message.body user-select="text" overflow-wrap="break-word" max-width="94%" padding="8px 0" testId=`message-${message.id}`
+              row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)"
+                row flex=1 align-items="flex-end" gap=8 padding="5px 6px 5px 16px" border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
+                  textarea id="composer" value=composer input=editComposer rows=1 max-height=140 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
+                  button press=sendMessage disabled=not canSend buttonStyle="prominent-glass" retainFocus=true aria-label="Send" testId="send"
+                    image "symbol:send"
