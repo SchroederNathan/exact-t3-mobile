@@ -93,8 +93,8 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" position="absolute" inset=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" gap=8 padding="8px 16px"
                     button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button" font-size=18
-                      image "symbol:chooser"
-                    text "T3 Code" role="heading" aria-level=1 flex=1
+                      image "symbol:sf/point.3.connected.trianglepath.dotted"
+                    text "T3 Code" role="heading" aria-level=2 flex=1
                     text "MacBook Pro" role="status" font="-exact-footnote" color="-exact-secondary-label" overflow="hidden" text-overflow="ellipsis"
                     button popovertarget="home-filter" buttonStyle="glass" aria-label="Filter threads" testId="home-filter-button"
                       image "symbol:filter"
@@ -106,7 +106,7 @@ component T3Code
                   else
                     list id="home" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                       section
-                        row gap=8 padding="0 16px 10px" overflow-x="auto"
+                        row gap=8 padding="0 16px 10px" flex-wrap="wrap"
                           button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
                             text "All environments"
                           for environment in catalog.environments key=environment.id
@@ -136,12 +136,12 @@ component T3Code
                       header
                         text "Connected"
                       for environment in catalog.environments key=environment.id
-                        row gap=12 padding="12px 4px" flex-wrap="wrap"
-                          column flex=1 min-width=0 gap=3
+                        row gap=12 padding="12px 4px" flex-wrap="wrap" align-items="flex-start"
+                          column flex=1 min-width="12rem" gap=3
                             row align-items="center" gap=7
                               image "symbol:home" width=14 height=14
                               text environment.label font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
-                              text environment.status font="-exact-footnote" color="-exact-secondary-label"
+                            text environment.status font="-exact-footnote" color="-exact-secondary-label"
                             text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                             text (environment.enabled ? "Enabled" : "Off") font="-exact-footnote" color=(environment.enabled ? "-exact-secondary-label" : "-exact-tertiary-label")
                           input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
@@ -154,7 +154,7 @@ component T3Code
                   for thread in currentThread key=thread.id
                     header display="flex" align-items="center" padding="8px 16px"
                       column flex=1 min-width=0 gap=2
-                        text thread.title role="heading" aria-level=1 overflow-wrap="break-word"
+                        text thread.title role="heading" aria-level=2 overflow-wrap="break-word"
                         text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word"
                       button buttonStyle="glass" aria-label="Thread actions" testId="thread-actions" popovertarget="thread-menu"
                         image "symbol:ellipsis"
