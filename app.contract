@@ -158,7 +158,7 @@ component T3Code
                         text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word"
                       button buttonStyle="glass" aria-label="Thread actions" testId="thread-actions" popovertarget="thread-menu"
                         image "symbol:ellipsis"
-                    list id="thread" appearance="none" flex=1 min-height=0 padding="16px 16px 240px"
+                    list id="thread" appearance="none" flex=1 min-height=0 margin-bottom=96 padding="16px"
                       for message in thread.messages key=message.id
                         row justify-content=(message.role == "user" ? "flex-end" : "flex-start") padding="5px 0" width="100%"
                           if message.role == "user"
