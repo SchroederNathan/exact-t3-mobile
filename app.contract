@@ -107,11 +107,10 @@ component T3Code
                     list id="home" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                       section
                         row gap=8 padding="0 16px 10px" flex-wrap="wrap"
-                          button press=filterEnvironment("") buttonStyle=(selectedEnvironment == "" ? "filled" : "glass") testId="all-environments"
-                            text "All environments"
-                          for environment in catalog.environments key=environment.id
-                            button press=filterEnvironment(environment.id) buttonStyle=(selectedEnvironment == environment.id ? "filled" : "glass") testId=`filter-${environment.id}`
-                              text environment.label
+                          button popovertarget="environment-filter-menu" buttonStyle="glass" testId="all-environments"
+                            text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
+                          button popovertarget="project-filter-menu" buttonStyle="glass" testId="all-projects"
+                            text "All projects"
                       section
                         for thread in visibleThreads key=thread.id
                           link href=path("thread", thread.id) testId=`thread-${thread.id}`
@@ -200,6 +199,15 @@ component T3Code
                       row
                         text "T3 Code" font="-exact-body"
                         text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
+      column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
+        button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
+          text "All environments"
+        for environment in catalog.environments key=environment.id
+          button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
+            text environment.label
+      column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
+        button role="menuitemradio" aria-checked=true popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
+          text "All projects"
       row role="tablist" aria-label="Workspace" testId="tabs"
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
           image "symbol:sf/text.bubble"

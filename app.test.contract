@@ -2,7 +2,7 @@ test "home shows seeded environments and threads"
   clock data
   expect tree has "root"
   expect tree has "thread-offline-launch"
-  expect tree has "filter-moonbase"
+  expect tree has "all-projects"
 
 test "environment toggles persist"
   clock data
