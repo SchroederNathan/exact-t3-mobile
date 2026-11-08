@@ -92,8 +92,8 @@ component T3Code
               if e.name == "threads"
                 column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" position="absolute" inset=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" gap=8 padding="8px 16px"
-                    button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button"
-                      image "symbol:sf/point.3.connected.trianglepath.dotted"
+                    button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button" font-size=18
+                      image "symbol:chooser"
                     text "T3 Code" role="heading" aria-level=1 flex=1
                     text "MacBook Pro" role="status" font="-exact-footnote" color="-exact-secondary-label" overflow="hidden" text-overflow="ellipsis"
                     button popovertarget="home-filter" buttonStyle="glass" aria-label="Filter threads" testId="home-filter-button"
@@ -122,7 +122,7 @@ component T3Code
                               row align-items="center" gap=6
                                 text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 overflow-wrap="break-word"
                                 text thread.updatedAt font="-exact-footnote" color="-exact-tertiary-label"
-                              image "symbol:forward-chevron"
+                              image "symbol:forward-chevron" width=12 height=12
               if e.name == "environments"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" padding="8px 16px"
@@ -139,13 +139,13 @@ component T3Code
                         row gap=12 padding="12px 4px" flex-wrap="wrap"
                           column flex=1 min-width=0 gap=3
                             row align-items="center" gap=7
-                              image "symbol:sf/computer" width=14 height=14
+                              image "symbol:home" width=14 height=14
                               text environment.label font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
                               text environment.status font="-exact-footnote" color="-exact-secondary-label"
                             text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                             text (environment.enabled ? "Enabled" : "Off") font="-exact-footnote" color=(environment.enabled ? "-exact-secondary-label" : "-exact-tertiary-label")
                           input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
-                          image "symbol:forward-chevron"
+                          image "symbol:forward-chevron" width=12 height=12
                     section
                       footer
                         text "Environments connect T3 Code to your machines and remote workspaces." font="-exact-footnote" color="-exact-secondary-label"
