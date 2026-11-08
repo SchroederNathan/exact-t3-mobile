@@ -166,8 +166,8 @@ component T3Code
                             text message.body user-select="text" overflow-wrap="break-word" max-width="84%" padding="11px 15px" border-radius=22 background-color="AccentColor" color="AccentColorText" testId=`message-${message.id}`
                           else
                             text message.body user-select="text" overflow-wrap="break-word" max-width="94%" padding="8px 0" testId=`message-${message.id}`
-                    row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)" flex-wrap="wrap"
-                      row flex=1 align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
+                    row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)" flex-wrap="wrap" width="100%" min-width=0
+                      row flex=1 min-width=0 width="100%" align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
                         textarea id="composer" value=composer input=editComposer rows=1 max-height=140 min-height=44 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
                         button press=sendMessage disabled=not canSend buttonStyle="prominent-glass" retainFocus=true aria-label="Send" testId="send"
                           image "symbol:send"
