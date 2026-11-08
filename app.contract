@@ -98,7 +98,7 @@ component T3Code
                     text "MacBook Pro" role="status" font="-exact-footnote" color="-exact-secondary-label" overflow="hidden" text-overflow="ellipsis"
                     button popovertarget="home-filter" buttonStyle="glass" aria-label="Filter threads" testId="home-filter-button"
                       image "symbol:filter"
-                  input type="search" value=query input=search placeholder="Search" aria-label="Search threads" testId="search" margin="0 16px 8px"
+                    input type="search" value=query input=search placeholder="Search" aria-label="Search threads" testId="search" margin="0 16px 8px"
                   if failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
                   else if visibleThreads.length == 0 and not pending(catalog)
@@ -137,15 +137,16 @@ component T3Code
                         text "Connected"
                       for environment in catalog.environments key=environment.id
                         row gap=12 padding="12px 4px" flex-wrap="wrap" align-items="flex-start"
-                          column flex=1 min-width="12rem" gap=3
+                          column flex=1 min-width=0 gap=3
                             row align-items="center" gap=7
                               image "symbol:home" width=14 height=14
                               text environment.label font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
                             text environment.status font="-exact-footnote" color="-exact-secondary-label"
                             text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                             text (environment.enabled ? "Enabled" : "Off") font="-exact-footnote" color=(environment.enabled ? "-exact-secondary-label" : "-exact-tertiary-label")
-                          input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
-                          image "symbol:forward-chevron" width=12 height=12
+                          row gap=8 flex-shrink=0 align-items="center"
+                            input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                            image "symbol:forward-chevron" width=12 height=12
                     section
                       footer
                         text "Environments connect T3 Code to your machines and remote workspaces." font="-exact-footnote" color="-exact-secondary-label"
@@ -165,7 +166,7 @@ component T3Code
                             text message.body user-select="text" overflow-wrap="break-word" max-width="84%" padding="11px 15px" border-radius=22 background-color="AccentColor" color="AccentColorText" testId=`message-${message.id}`
                           else
                             text message.body user-select="text" overflow-wrap="break-word" max-width="94%" padding="8px 0" testId=`message-${message.id}`
-                    row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)"
+                    row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)" flex-wrap="wrap"
                       row flex=1 align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
                         textarea id="composer" value=composer input=editComposer rows=1 max-height=140 min-height=44 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
                         button press=sendMessage disabled=not canSend buttonStyle="prominent-glass" retainFocus=true aria-label="Send" testId="send"
