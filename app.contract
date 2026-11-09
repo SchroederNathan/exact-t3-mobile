@@ -364,67 +364,71 @@ component T3Code
                       case none
                         view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction="column"
-                  for thread in currentThread key=thread.id
-                    header display="flex" align-items="center" padding="8px 16px"
-                      button id="thread-back" press=back aria-label="Back"
-                        image "symbol:sf/chevron.left"
-                      text thread.title role="heading" aria-level=2
-                      text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`
-                      row role="toolbar" aria-label="Thread controls"
-                        button aria-label="Terminal" popovertarget="terminal-menu"
-                          image "symbol:sf/terminal"
-                        button aria-label="Git controls" popovertarget="git-menu"
-                          image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
-                        button press=inspect("files") aria-label="Open files"
-                          image "symbol:sf/folder"
-                      if viewport.width >= 600
-                        button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
-                          image "symbol:sf/square.and.pencil"
-                    if openError != ""
-                      text openError color="-exact-system-red" padding=16
-                    column flex=1 min-height=0 height="100%" position="relative"
-                      column position="absolute" inset=0 z-index=0
-                        list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 max-height="100%" padding=(viewport.width >= 600 ? "12px 20px 128px" : "12px 16px 112px")
-                          for message in thread.messages key=message.id
-                            column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                              if message.role == "user"
-                                text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                                row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                                  text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                                  button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                                    image "symbol:sf/document.on.document" width=13 height=13
-                              else
-                                column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                                  for block in message.blocks key=block.id
-                                    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                      if block.depth > 0
-                                        if block.marker == "•"
-                                          column width=14 height=23 justify-content="center"
-                                            view width=6 height=6 border-radius=3 background-color="foreground"
+                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
+                  if viewport.width >= 600
+                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
+                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
+                    for thread in currentThread key=thread.id
+                      header display="flex" align-items="center" padding="8px 16px"
+                        button id="thread-back" press=back aria-label="Back"
+                          image "symbol:sf/chevron.left"
+                        text thread.title role="heading" aria-level=2
+                        text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`
+                        row role="toolbar" aria-label="Thread controls"
+                          button aria-label="Terminal" popovertarget="terminal-menu"
+                            image "symbol:sf/terminal"
+                          button aria-label="Git controls" popovertarget="git-menu"
+                            image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
+                          button press=inspect("files") aria-label="Open files"
+                            image "symbol:sf/folder"
+                        if viewport.width >= 600
+                          button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
+                            image "symbol:sf/square.and.pencil"
+                      if openError != ""
+                        text openError color="-exact-system-red" padding=16
+                      column flex=1 min-height=0 height="100%" position="relative"
+                        column position="absolute" inset=0 z-index=0
+                          list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 max-height="100%" padding=(viewport.width >= 600 ? "12px 20px 128px" : "12px 16px 112px")
+                            for message in thread.messages key=message.id
+                              column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+                                if message.role == "user"
+                                  text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
+                                  row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+                                    text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+                                    button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+                                      image "symbol:sf/document.on.document" width=13 height=13
+                                else
+                                  column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
+                                    for block in message.blocks key=block.id
+                                      row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
+                                        if block.depth > 0
+                                          if block.marker == "•"
+                                            column width=14 height=23 justify-content="center"
+                                              view width=6 height=6 border-radius=3 background-color="foreground"
+                                          else
+                                            text block.marker width=14 font-size=16 line-height="23px" color="foreground"
+                                        if block.kind == "thematic-break"
+                                          view height=1 flex=1 margin="8px 0" background-color="edge"
+                                        else if block.kind == "code"
+                                          text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
                                         else
-                                          text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                      if block.kind == "thematic-break"
-                                        view height=1 flex=1 margin="8px 0" background-color="edge"
-                                      else if block.kind == "code"
-                                        text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
-                                      else
-                                        text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
-                    row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
-                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
-                        workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
-                        button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
-                          image "symbol:sf/plus" width=20 height=20
-                        textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
-                          ::placeholder
-                            color="muted"
-                        button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
-                          row align-items="center" gap=7
-                            image "assets/openai.svg" width=16 height=16
-                            image "symbol:sf/chevron.down" font-size=10
-                        button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label="Send" testId="send" width=44 height=44
-                          row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
-                            image "symbol:sf/arrow.up" font-size=16 font-weight=600
+                                          text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                      row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
+                        row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
+                          workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
+                          button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
+                            image "symbol:sf/plus" width=20 height=20
+                          textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
+                            ::placeholder
+                              color="muted"
+                          button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
+                            row align-items="center" gap=7
+                              image "assets/openai.svg" width=16 height=16
+                              image "symbol:sf/chevron.down" font-size=10
+                          button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label="Send" testId="send" width=44 height=44
+                            row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
+                              image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -516,4 +520,59 @@ component T3Code
         button role="tab" aria-controls="panel-settings" aria-selected=(nav.tab == "settings") press=selectTab("settings") testId="tab-settings" flex=1
           image "symbol:settings"
           text "Settings"
+
+
+component ThreadList
+  props
+    catalog: Catalog
+    visibleThreads: Thread[]
+    selectedEnvironment: string
+    selectedProjectLabel: string
+    showSettled: bool
+    currentThreadId: string
+    query: string
+    search: action
+    filterEnvironment: action
+    filterProject: action
+    toggleSettled: action
+    openThread: action
+  view
+    column navigationScroll="home" data-workspace-header="true" data-search-placement="integrated" data-brand-stage="DEV" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
+      header display="flex" align-items="center" gap=8 padding="8px 16px"
+        text "T3 Code" role="heading" aria-level=2 flex=1
+        input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0
+      list id="home" appearance="none" flex=1 min-height=0 background-color="drawer"
+        section
+          row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
+            button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
+              text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
+              image "symbol:sf/chevron.down" width=11 height=11
+            button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
+              text selectedProjectLabel
+              image "symbol:sf/chevron.down" width=11 height=11
+        section
+          for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
+            link href=path("thread", thread.id) testId=`thread-${thread.id}` margin="0 8px" border-radius=12 background-color=(currentThreadId == thread.id ? "thread-selected" : "transparent")
+              column flex=1 min-width=0 gap=3.5 padding="10px 12px"
+                row align-items="flex-start" gap=7
+                  if thread.projectIcon != ""
+                    image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
+                  else
+                    text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
+                  text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
+                  text thread.updatedAt font-size=13 line-height="18px" color=(currentThreadId == thread.id ? "foreground" : "muted")
+                row align-items="center" gap=6 min-height=14
+                  if catalog.environments.length > 1
+                    image "symbol:sf/laptopcomputer" font-size=12 color="muted"
+                    text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
+                  else
+                    view flex=1
+                  image "assets/openai.svg" width=14 height=14 opacity=0.6
+        if visibleThreads.filter(thread => thread.settled).length > 0
+          section
+            button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
+              row align-items="center" gap=10 width="100%"
+                text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
+                view flex=1 height=1 background-color="edge"
+                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
 
