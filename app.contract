@@ -383,33 +383,34 @@ component T3Code
                           image "symbol:sf/square.and.pencil"
                     if openError != ""
                       text openError color="-exact-system-red" padding=16
-                    column flex-shrink=1 min-height=0 max-height="100%" margin-top="auto"
-                      list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex-shrink=1 max-height="100%" min-height=0 padding=(viewport.width >= 600 ? "12px 20px 0" : "12px 16px 0")
-                        for message in thread.messages key=message.id
-                          column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                            if message.role == "user"
-                              text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                              row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                                text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                                button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                                  image "symbol:sf/document.on.document" width=13 height=13
-                            else
-                              column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                                for block in message.blocks key=block.id
-                                  row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                    if block.depth > 0
-                                      if block.marker == "•"
-                                        column width=14 height=23 justify-content="center"
-                                          view width=6 height=6 border-radius=3 background-color="foreground"
+                    column flex=1 min-height=0 height="100%" position="relative"
+                      column position="absolute" inset=0 z-index=0
+                        list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 max-height="100%" padding=(viewport.width >= 600 ? "12px 20px 128px" : "12px 16px 112px")
+                          for message in thread.messages key=message.id
+                            column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+                              if message.role == "user"
+                                text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
+                                row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+                                  text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+                                  button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+                                    image "symbol:sf/document.on.document" width=13 height=13
+                              else
+                                column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
+                                  for block in message.blocks key=block.id
+                                    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
+                                      if block.depth > 0
+                                        if block.marker == "•"
+                                          column width=14 height=23 justify-content="center"
+                                            view width=6 height=6 border-radius=3 background-color="foreground"
+                                        else
+                                          text block.marker width=14 font-size=16 line-height="23px" color="foreground"
+                                      if block.kind == "thematic-break"
+                                        view height=1 flex=1 margin="8px 0" background-color="edge"
+                                      else if block.kind == "code"
+                                        text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
                                       else
-                                        text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                    if block.kind == "thematic-break"
-                                      view height=1 flex=1 margin="8px 0" background-color="edge"
-                                    else if block.kind == "code"
-                                      text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
-                                    else
-                                      text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
-                    row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
+                                        text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                    row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
                       row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
                         workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
                         button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
