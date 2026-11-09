@@ -356,21 +356,25 @@ component T3Code
                                   color="muted"
                           text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
               if e.name == "newThread"
-                column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header
-                    text "New thread" role="heading" aria-level=2
-                  list id="projects" appearance="none" flex=1
-                    section
-                      text "Select a project" font-size=21 font-weight=700 padding=20
-                      for project in catalog.projects key=project.id
-                        button press=createProjectThread(project.id) disabled=pending(created) appearance="none" padding=16 width="100%"
-                          text project.title font-size=16
-                    match created
-                      case some(reply)
-                        if not reply.ok
-                          text reply.error color="-exact-system-red" padding=16
-                      case none
-                        view
+                column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
+                  if viewport.width >= 600
+                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
+                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
+                    header
+                      text "New thread" role="heading" aria-level=2
+                    list id="projects" appearance="none" flex=1
+                      section
+                        text "Select a project" font-size=21 font-weight=700 padding=20
+                        for project in catalog.projects key=project.id
+                          button press=createProjectThread(project.id) disabled=pending(created) appearance="none" padding=16 width="100%"
+                            text project.title font-size=16
+                      match created
+                        case some(reply)
+                          if not reply.ok
+                            text reply.error color="-exact-system-red" padding=16
+                        case none
+                          view
               if e.name == "thread"
                 column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
                   if viewport.width >= 600
@@ -439,31 +443,35 @@ component T3Code
                             row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
                               image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "inspector"
-                column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header
-                    text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
-                  scroll id="inspector" flex=1 min-height=0 padding=16
-                    if pending(inspected)
-                      text "Loading…" color="muted"
-                    else
-                      match inspected
-                        case some(result)
-                          if result.error != ""
-                            text result.error color="-exact-system-red"
-                          else
-                            column gap=10
-                              text result.title font-size=21 font-weight=700
-                              text result.body user-select="text" white-space="pre-wrap" font-size=14 line-height="21px" color="muted"
-                              for item in result.items key=item.id
-                                button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left"
-                                  row align-items="center" gap=10
-                                    image (item.kind == "directory" ? "symbol:sf/folder" : "symbol:sf/document") width=20 height=20
-                                    column flex=1 min-width=0 gap=3
-                                      text item.label font-size=16
-                                      if item.detail != ""
-                                        text item.detail font-size=13 color="muted"
-                        case none
-                          view
+                column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
+                  if viewport.width >= 600
+                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
+                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
+                    header
+                      text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
+                    scroll id="inspector" flex=1 min-height=0 padding=16
+                      if pending(inspected)
+                        text "Loading…" color="muted"
+                      else
+                        match inspected
+                          case some(result)
+                            if result.error != ""
+                              text result.error color="-exact-system-red"
+                            else
+                              column gap=10
+                                text result.title font-size=21 font-weight=700
+                                text result.body user-select="text" white-space="pre-wrap" font-size=14 line-height="21px" color="muted"
+                                for item in result.items key=item.id
+                                  button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left"
+                                    row align-items="center" gap=10
+                                      image (item.kind == "directory" ? "symbol:sf/folder" : "symbol:sf/document") width=20 height=20
+                                      column flex=1 min-width=0 gap=3
+                                        text item.label font-size=16
+                                        if item.detail != ""
+                                          text item.detail font-size=13 color="muted"
+                          case none
+                            view
               if e.name == "pullRequests"
                 column navigationKey=`${e.id}` navigationScroll="pulls" position="absolute" inset=0 display="flex" flex-direction="column"
                   header padding="8px 16px"

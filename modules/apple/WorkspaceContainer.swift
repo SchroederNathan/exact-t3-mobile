@@ -198,7 +198,10 @@ private final class WorkspaceColumnPair: UIViewController {
   }
 
   private func updateColumns() {
-    let wide = traitCollection.horizontalSizeClass == .regular
+    // A pushed Exact route can temporarily report a compact trait from its
+    // navigation controller even while the Duo window remains wide. Use the
+    // actual canvas width so detail screens stay in the secondary column.
+    let wide = view.bounds.width >= 600
     if showingSplit != wide {
       if showingSplit == true {
         split.setViewController(nil, for: .primary)
