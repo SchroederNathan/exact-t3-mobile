@@ -332,18 +332,19 @@ component T3Code
                           else
                             text message.body markup="markdown" user-select="text" overflow-wrap="break-word" width="100%" padding="8px 4px" font-size=16 line-height="23px" testId=`message-${message.id}`
                     row align-items="flex-end" gap=8 padding="6px 12px" flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
-                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="flex-end" gap=0 padding="2px 6px" min-height=48 border-radius=27 backgroundMaterial="glass"
-                        button appearance="none" aria-label="Add attachment" width=36 height=44
-                          image "symbol:add" font-size=24
-                        textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=140 height=44 min-height=44 flex=1 min-width=0 padding="10px 6px" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
+                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 backgroundMaterial="glass"
+                        button appearance="none" aria-label="Add attachment" width=44 height=44
+                          image "symbol:add" font-size=20
+                        textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
                           ::placeholder
                             color="muted"
-                        button appearance="none" aria-label="Model and reasoning settings" width=48 height=44
-                          row align-items="center" gap=8
-                            image "assets/openai.svg" width=18 height=18
-                            image "symbol:sf/chevron.down" font-size=11
-                        button press=sendMessage disabled=not canSend appearance="none" retainFocus=true aria-label="Send" testId="send" width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") margin-bottom=7
-                          image "symbol:sf/arrow.up" font-size=19 font-weight=600
+                        button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
+                          row align-items="center" gap=7
+                            image "assets/openai.svg" width=16 height=16
+                            image "symbol:sf/chevron.down" font-size=10
+                        button press=sendMessage disabled=not canSend appearance="none" retainFocus=true aria-label="Send" testId="send" width=44 height=44
+                          row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
+                            image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "pullRequests"
                 column navigationKey=`${e.id}` navigationScroll="pulls" position="absolute" inset=0 display="flex" flex-direction="column"
                   header padding="8px 16px"
