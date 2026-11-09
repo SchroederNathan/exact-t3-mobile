@@ -53,8 +53,14 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
       setNeedsLayout()
     }
   }
-  var appearance = "light" {
-    didSet { overrideUserInterfaceStyle = appearance == "dark" ? .dark : .light }
+  var appearance = "system" {
+    didSet {
+      switch appearance {
+      case "dark": overrideUserInterfaceStyle = .dark
+      case "light": overrideUserInterfaceStyle = .light
+      default: overrideUserInterfaceStyle = .unspecified
+      }
+    }
   }
 
   override init(frame: CGRect) {
@@ -168,10 +174,17 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
 
 final class T3NativeModule: ExactModule {
   override func route(_ route: ExactRoute) {
-    guard route.data[.workspaceHeader] == "true" else { return }
     let item = route.controller.navigationItem
+    guard route.data[.workspaceHeader] == "true" else {
+      configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
+      return
+    }
+    item.style = .editor
+    if #available(iOS 27.2, *) { item.titleAlignment = .leading }
     let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
-    title.preferredWidth = max(120, route.controller.view.bounds.width - 160)
+    let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
+    let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
+    title.preferredWidth = max(120, route.controller.view.bounds.width - 32 - CGFloat(itemCount) * 44)
     title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
     title.stageName = route.data[.brandStage] ?? "DEV"
     item.titleView = title
@@ -218,11 +231,16 @@ private final class WorkspaceTabBarInstance: ExactNativeInstance {
     bar.selectedTab = props["selected-tab"] ?? "threads"
     bar.compact = props["compact"] == "true"
     bar.showsCompose = props["shows-compose"] == "true"
-    bar.appearance = props["appearance"] ?? "light"
-    let hex = props["selected-color"]?.replacingOccurrences(of: "#", with: "") ?? "1b4ed8"
-    let rgb = UInt32(hex, radix: 16) ?? 0x1b4ed8
-    bar.selectedColor = UIColor(red: CGFloat((rgb >> 16) & 255) / 255,
-                               green: CGFloat((rgb >> 8) & 255) / 255,
-                               blue: CGFloat(rgb & 255) / 255, alpha: 1)
+    bar.appearance = props["appearance"] ?? "system"
+    if let hex = props["selected-color"]?.replacingOccurrences(of: "#", with: ""),
+       let rgb = UInt32(hex, radix: 16) {
+      bar.selectedColor = UIColor(red: CGFloat((rgb >> 16) & 255) / 255,
+                                 green: CGFloat((rgb >> 8) & 255) / 255,
+                                 blue: CGFloat(rgb & 255) / 255, alpha: 1)
+    } else {
+      bar.selectedColor = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 52 / 255, green: 107 / 255, blue: 241 / 255, alpha: 1)
+        : UIColor(red: 27 / 255, green: 78 / 255, blue: 216 / 255, alpha: 1) }
+    }
   }
 }

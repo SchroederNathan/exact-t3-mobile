@@ -1,5 +1,18 @@
 import UIKit
 
+func configureWorkspacePageTitle(_ item: UINavigationItem, bar: UINavigationBar?) {
+  func appearance(_ base: UINavigationBarAppearance?, transparent: Bool = false) -> UINavigationBarAppearance {
+    let result = base?.copy() as? UINavigationBarAppearance ?? UINavigationBarAppearance()
+    if base == nil && transparent { result.configureWithTransparentBackground() }
+    result.titleTextAttributes[.font] = UIFont.systemFont(ofSize: 18, weight: .heavy)
+    return result
+  }
+  item.standardAppearance = appearance(item.standardAppearance ?? bar?.standardAppearance)
+  item.compactAppearance = appearance(item.compactAppearance ?? bar?.compactAppearance ?? item.standardAppearance)
+  item.scrollEdgeAppearance = appearance(item.scrollEdgeAppearance ?? bar?.scrollEdgeAppearance, transparent: true)
+  item.compactScrollEdgeAppearance = appearance(item.compactScrollEdgeAppearance ?? bar?.compactScrollEdgeAppearance, transparent: true)
+}
+
 final class WorkspaceBrandTitleView: UIView {
   private let wordmark = WorkspaceWordmarkView()
   private let code = UILabel()
