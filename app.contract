@@ -138,6 +138,7 @@ component T3Code
   derive currentThreadId = current.name == "thread" or current.name == "inspector" ? current.params.id : ""
   derive currentThread = selectedThread(catalog, currentThreadId)
   derive wide = viewport.width >= 600 or viewport.horizontalViewportSegments == 2
+  derive duo = viewport.width >= 800
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive canSend = composer.trim() != "" and not pending(sent)
@@ -237,10 +238,10 @@ component T3Code
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
       column flex=1 min-height=0 position="relative" display="flex" flex-direction=(wide ? "row" : "column")
         for t in nav.tabs key=t.name
-          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name or (wide and ((visibleTab == "threads" and (t.name == "threads" or t.name == "threadDetail")) or (visibleTab == "settings" and (t.name == "settings" or t.name == "settingsDetail")))) ? "flex" : "none") flex=1 min-height=0 position=(wide ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(wide and (t.name == "threads" or t.name == "settings") ? 320 : wide ? "auto" : "100%") flex-grow=(wide and (t.name == "threads" or t.name == "settings") ? 0 : wide ? 1 : 0) flex-shrink=0 flex-direction="column"
+          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name or (wide and ((visibleTab == "threads" and (t.name == "threads" or t.name == "threadDetail")) or (visibleTab == "settings" and (t.name == "settings" or t.name == "settingsDetail")))) ? "flex" : "none") flex=1 min-height=0 position=(wide ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(wide and (t.name == "threads" or t.name == "settings") ? 200 : wide ? "auto" : "100%") flex-grow=(wide and (t.name == "threads" or t.name == "settings") ? 0 : wide ? 1 : 0) flex-shrink=0 flex-direction="column"
             for e in t.stack key=e.id
               if e.name == "threads"
-                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" data-workspace-header="true" data-search-placement=(not wide ? "button" : "integrated") data-brand-stage="DEV" background-color=(wide ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="200" data-workspace-header="true" data-search-placement=(not wide ? "button" : "integrated") data-brand-stage="DEV" background-color=(wide ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" gap=8 padding="8px 16px"
                     text "T3 Code" role="heading" aria-level=2 flex=1
                     input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0
@@ -385,7 +386,7 @@ component T3Code
               if e.name == "thread"
                 column navigationKey=`${e.id}` navigationScroll="thread" navigationBar="none" position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
                   if wide
-                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
@@ -569,7 +570,10 @@ component ThreadList
   view
     column navigationScroll="home" data-workspace-header="true" data-search-placement="integrated" data-brand-stage="DEV" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
       header display="flex" align-items="center" gap=8 padding="8px 16px"
-        text "T3 Code" role="heading" aria-level=2 flex=1
+        row align-items="center" gap=5
+          text "T3 Code" role="heading" aria-level=2
+          text "DEV" font-size=12 line-height="16px" font-weight=700 color="muted" background-color="card" border-radius=999 padding="2px 6px"
+        view flex=1
         if showSearch
           input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0 width=150 min-width=0
       list id="home" appearance="none" flex=1 min-height=0 background-color="drawer"
