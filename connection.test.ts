@@ -90,7 +90,7 @@ describe("direct T3 connection", () => {
           {
             kind: "snapshot",
             snapshot: {
-              projects: [{ id: "p", title: "T3 Code" }],
+              projects: [{ id: "p", title: "T3 Code", workspaceRoot: "/workspace" }],
               threads: [
                 {
                   id: "t",
@@ -98,6 +98,10 @@ describe("direct T3 connection", () => {
                   title: "Fix startup",
                   status: "idle",
                   updatedAt: "2026-11-08T12:00:00Z",
+                  latestUserMessageAt: "2026-11-08T11:58:00Z",
+                  modelSelection: { instanceId: "provider-instance", model: "model-slug" },
+                  settledOverride: "settled",
+                  settledAt: "2026-11-08T11:59:00Z",
                   lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "t" },
                 },
                 {
@@ -127,18 +131,87 @@ describe("direct T3 connection", () => {
         ],
       }),
     );
-    expect(session.threads()).toEqual([
+    const configRequest = sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.tag === "subscribeServerConfig");
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: configRequest.id,
+        values: [
+          {
+            type: "snapshot",
+            config: {
+              providers: [
+                {
+                  instanceId: "provider-instance",
+                  driver: "codex",
+                  models: [{ slug: "model-slug", shortName: "GPT Test" }],
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    expect(session.projectList()).toEqual([
+      { id: "env:p", title: "T3 Code", environmentId: "env" },
+    ]);
+    expect(session.threads(Date.parse("2026-11-08T12:00:00Z"))).toEqual([
       {
         id: scopedThreadId("env", "t"),
         environmentId: "env",
         title: "Fix startup",
         project: "T3 Code",
+        projectId: "env:p",
+        projectIcon: "",
+        projectInitials: "T3",
+        projectIconColor: "#f6339a",
+        provider: "codex",
+        model: "GPT Test",
+        activityAt: Date.parse("2026-11-08T11:59:00Z"),
+        settled: true,
         status: "Done",
-        updatedAt: "2026-11-08T12:00:00Z",
+        updatedAt: "1m",
         messages: [],
       },
     ]);
-    expect(JSON.parse(sent.at(-1)!)).toEqual({ _tag: "Ack", requestId: "1" });
+    expect(sent.map((frame) => JSON.parse(frame))).toContainEqual({ _tag: "Ack", requestId: "1" });
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "1",
+        values: [
+          {
+            kind: "snapshot",
+            resolvedRepositoryIdentityRoots: ["/workspace"],
+            snapshot: {
+              projects: [{ id: "p", title: "Enriched T3 Code", workspaceRoot: "/workspace" }],
+              threads: [],
+              archivedThreads: [],
+            },
+          },
+        ],
+      }),
+    );
+    expect(session.threads()).toHaveLength(1);
+    expect(session.threads()[0]?.project).toBe("Enriched T3 Code");
+    const faviconRequest = sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.tag === "assets.createUrl");
+    expect(faviconRequest.payload).toEqual({
+      resource: { _tag: "project-favicon", cwd: "/workspace" },
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: faviconRequest.id,
+        exit: { _tag: "Success", value: { relativeUrl: "/api/assets/favicon?token=test" } },
+      }),
+    );
+    expect(session.threads()[0]?.projectIcon).toBe(
+      "http://localhost:13773/api/assets/favicon?token=test",
+    );
     session.select("t");
     const request = JSON.parse(sent.at(-1)!);
     expect(request.tag).toBe("orchestration.subscribeThread");
@@ -234,6 +307,73 @@ describe("direct T3 connection", () => {
       }),
     );
     await expect(reply).resolves.toEqual({ ok: true, error: "" });
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "1",
+        values: [
+          {
+            kind: "snapshot",
+            snapshot: {
+              projects: [
+                {
+                  id: "p",
+                  title: "Project",
+                  defaultModelSelection: { instanceId: "test", model: "model" },
+                },
+              ],
+              threads: [],
+            },
+          },
+        ],
+      }),
+    );
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "2",
+        values: [
+          {
+            type: "snapshot",
+            config: {
+              providers: [
+                {
+                  instanceId: "test",
+                  driver: "codex",
+                  enabled: true,
+                  installed: true,
+                  models: [{ slug: "model" }],
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const created = session.create("p", "New thread", "create-command", "new-thread");
+    const createRequest = JSON.parse(sent.at(-1)!);
+    expect(createRequest.payload).toEqual({
+      type: "thread.create",
+      commandId: "create-command",
+      threadId: "new-thread",
+      projectId: "p",
+      title: "New thread",
+      createdBy: "user",
+      creationSource: "mobile",
+      modelSelection: { instanceId: "test", model: "model" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: createRequest.id,
+        exit: { _tag: "Success", value: { sequence: 3 } },
+      }),
+    );
+    await expect(created).resolves.toEqual({ ok: true, error: "" });
     const denied = session.send("thread", "Again", "c2", "m2");
     const deniedId = JSON.parse(sent.at(-1)!).id;
     session.receive(

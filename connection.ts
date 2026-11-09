@@ -161,14 +161,115 @@ function failure(exit: ObjectValue): string {
   return "The server could not complete this request.";
 }
 
+const iconColors = [
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+];
+const iconHex = [
+  "#6a7282",
+  "#fb2c36",
+  "#ff6900",
+  "#fe9a00",
+  "#efb100",
+  "#9ae600",
+  "#00c950",
+  "#00bc7d",
+  "#00bba7",
+  "#00b8db",
+  "#00a6f4",
+  "#2b7fff",
+  "#615fff",
+  "#8e51ff",
+  "#ad46ff",
+  "#e12afb",
+  "#f6339a",
+  "#ff2056",
+];
+
+function projectIcon(project: ObjectValue) {
+  const title = string(project.title).normalize("NFKC").trim();
+  const words = title.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const glyphs = Array.from(words[0] ?? "");
+  const first = glyphs[0] ?? "P";
+  const second =
+    glyphs.slice(1).find((glyph) => /\p{N}/u.test(glyph)) ??
+    (words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : glyphs.at(-1)) ??
+    first;
+  const initials = words.length
+    ? Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("")
+    : "PR";
+  let colorIndex = 0;
+  for (const glyph of title.toLocaleLowerCase("en-US") || "project")
+    colorIndex = (colorIndex * 31 + (glyph.codePointAt(0) ?? 0)) % iconColors.length;
+  const override = object(project.projectIcon);
+  return {
+    projectIcon:
+      override.kind === "emoji"
+        ? string(override.emoji)
+        : override.kind === "lucide" && override.name === "message-square-dashed"
+          ? "symbol:text.bubble"
+          : "",
+    projectInitials: override.kind === "monogram" ? string(override.text) : initials,
+    projectIconColor:
+      iconHex[iconColors.indexOf(string(override.color))] || iconHex[colorIndex] || "#2b7fff",
+  };
+}
+
+function timestamp(value: unknown): number {
+  const parsed = Date.parse(string(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function activity(thread: ObjectValue, settled: boolean): number {
+  if (settled && timestamp(thread.settledAt)) return timestamp(thread.settledAt);
+  return (
+    Math.max(
+      ...[
+        thread.latestUserMessageAt,
+        thread.latestRunRequestedAt,
+        thread.latestRunStartedAt,
+        thread.latestRunCompletedAt,
+      ].map(timestamp),
+    ) || timestamp(thread.updatedAt)
+  );
+}
+
+function relativeTime(at: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  if (!at || seconds < 60) return "<1m";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
 export class DirectSession {
   readonly environment: Environment;
   private socket: StreamSocket | undefined;
   private nextId = 0;
   private shellRequest = "";
+  private configRequest = "";
   private threadRequest = "";
   private selected = "";
-  private projects = new Map<string, string>();
+  private projects = new Map<string, ObjectValue>();
+  private config: ObjectValue = {};
+  private faviconRequests = new Map<string, string>();
+  private favicons = new Map<string, { revision: string; url: string }>();
   private shells = new Map<string, ObjectValue>();
   private transcripts = new Map<string, Message[]>();
   private replies = new Map<string, (reply: Reply) => void>();
@@ -189,6 +290,10 @@ export class DirectSession {
     this.socket = socket;
     this.environment.status = "Connected";
     this.shellRequest = this.request("orchestration.subscribeShell", {});
+    this.configRequest = this.request("subscribeServerConfig", {
+      workspaceSnapshotsOnDemand: true,
+      providerCatalogsOnDemand: true,
+    });
     if (this.selected)
       this.threadRequest = this.request("orchestration.subscribeThread", {
         threadId: this.selected,
@@ -220,6 +325,65 @@ export class DirectSession {
     return new Promise((resolve) => this.replies.set(id, resolve));
   }
 
+  create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
+    const project = this.projects.get(projectId);
+    if (!project || project.archivedAt || project.deletedAt)
+      throw new Error("Choose an available project.");
+    const settings = object(this.config.settings);
+    const overrides = object(object(settings.projectSettingsOverrides)[projectId]);
+    const providers = records(this.config.providers).filter((provider) => {
+      const override = object(object(overrides.providerInstances)[string(provider.instanceId)]);
+      return (
+        (override.enabled ?? provider.enabled) === true &&
+        provider.installed === true &&
+        object(provider.auth).status !== "unauthenticated" &&
+        provider.availability !== "unavailable"
+      );
+    });
+    const preferred = [project.defaultModelSelection, settings.defaultModelSelection]
+      .map(object)
+      .find((selection) =>
+        providers.some(
+          (provider) =>
+            provider.instanceId === selection.instanceId &&
+            records(provider.models).some(
+              (model) => model.slug === selection.model && model.isLegacy !== true,
+            ),
+        ),
+      );
+    const models = providers.flatMap((provider) =>
+      records(provider.models)
+        .filter((model) => model.isLegacy !== true)
+        .map((model) => ({
+          instanceId: string(provider.instanceId),
+          model: string(model.slug),
+          isDefault: model.isDefault === true,
+        })),
+    );
+    const fallback = models.find((model) => model.isDefault) ?? models[0];
+    const selection =
+      preferred ??
+      (fallback ? { instanceId: fallback.instanceId, model: fallback.model } : undefined);
+    if (!selection)
+      throw new Error("Configure an available model in T3 Code before creating a thread.");
+    const id = this.request("orchestration.dispatchCommand", {
+      type: "thread.create",
+      commandId,
+      threadId,
+      projectId,
+      title: title.trim() || "New thread",
+      createdBy: "user",
+      creationSource: "mobile",
+      modelSelection: selection,
+      runtimeMode:
+        settings.defaultRuntimeMode === "approval-required" ? "approval-required" : "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    });
+    return new Promise((resolve) => this.replies.set(id, resolve));
+  }
+
   disconnected(reason: string) {
     this.socket = undefined;
     this.environment.status = reason;
@@ -235,11 +399,33 @@ export class DirectSession {
         for (const item of records(frame.values)) {
           if (id === this.shellRequest) this.shell(item);
           if (id === this.threadRequest) this.transcript(item);
+          if (id === this.configRequest) {
+            if (item.type === "snapshot") this.config = object(item.config);
+            if (item.type === "providerStatuses")
+              this.config.providers = object(item.payload).providers;
+            if (item.type === "settingsUpdated")
+              this.config.settings = object(item.payload).settings;
+          }
         }
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
       } else if (frame._tag === "Exit") {
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
+        const projectId = this.faviconRequests.get(id);
+        if (projectId) {
+          this.faviconRequests.delete(id);
+          const relativeUrl = string(object(exit.value).relativeUrl);
+          const favicon = this.favicons.get(projectId);
+          if (
+            !error &&
+            relativeUrl &&
+            favicon &&
+            !new URL(relativeUrl, this.environment.url).pathname.endsWith(
+              "/project-favicon-missing",
+            )
+          )
+            favicon.url = new URL(relativeUrl, this.environment.url).toString();
+        }
         this.replies.get(id)?.({ ok: !error, error });
         this.replies.delete(id);
         if (error && (id === this.shellRequest || id === this.threadRequest))
@@ -255,13 +441,20 @@ export class DirectSession {
   private shell(item: ObjectValue) {
     if (item.kind === "snapshot") {
       const snapshot = object(item.snapshot);
-      this.projects = new Map(
-        records(snapshot.projects).map((project) => [string(project.id), string(project.title)]),
-      );
-      this.shells = new Map(records(snapshot.threads).map((thread) => [string(thread.id), thread]));
+      const projects = records(snapshot.projects);
+      if (Array.isArray(item.resolvedRepositoryIdentityRoots)) {
+        for (const project of projects) this.projects.set(string(project.id), project);
+      } else {
+        this.projects = new Map(projects.map((project) => [string(project.id), project]));
+        this.shells = new Map(
+          records(snapshot.threads).map((thread) => [string(thread.id), thread]),
+        );
+      }
+      for (const project of this.projects.values()) this.requestFavicon(project);
     } else if (item.kind === "project.updated") {
       const project = object(item.project);
-      this.projects.set(string(project.id), string(project.title));
+      this.projects.set(string(project.id), project);
+      this.requestFavicon(project);
     } else if (item.kind === "project.removed") {
       this.projects.delete(string(item.projectId));
     } else if (item.kind === "thread.updated" && item.location === "active") {
@@ -271,6 +464,23 @@ export class DirectSession {
       this.shells.delete(string(item.threadId));
       this.transcripts.delete(string(item.threadId));
     }
+  }
+
+  private requestFavicon(project: ObjectValue) {
+    const id = string(project.id);
+    const cwd = string(project.workspaceRoot);
+    if (!cwd || project.projectIcon) return;
+    const revision = JSON.stringify([cwd, project.faviconPath ?? null]);
+    if (this.favicons.get(id)?.revision === revision) return;
+    this.favicons.set(id, { revision, url: "" });
+    const request = this.request("assets.createUrl", {
+      resource: {
+        _tag: "project-favicon",
+        cwd,
+        ...(project.faviconPath ? { path: project.faviconPath } : {}),
+      },
+    });
+    this.faviconRequests.set(request, id);
   }
 
   private transcript(item: ObjectValue) {
@@ -297,7 +507,17 @@ export class DirectSession {
     }
   }
 
-  threads(): Thread[] {
+  projectList(): Catalog["projects"] {
+    return [...this.projects.entries()]
+      .filter(([, project]) => !project.archivedAt && !project.deletedAt)
+      .map(([id, project]) => ({
+        id: scopedThreadId(this.environment.id, id),
+        title: string(project.title),
+        environmentId: this.environment.id,
+      }));
+  }
+
+  threads(now = 0): Thread[] {
     return [...this.shells.entries()]
       .filter(
         ([, thread]) =>
@@ -307,14 +527,43 @@ export class DirectSession {
           object(thread.lineage).sideChat !== true,
       )
       .sort(([, left], [, right]) => string(right.updatedAt).localeCompare(string(left.updatedAt)))
-      .map(([id, thread]) => ({
-        id: scopedThreadId(this.environment.id, id),
-        environmentId: this.environment.id,
-        project: this.projects.get(string(thread.projectId)) || "Project",
-        title: string(thread.title),
-        status: status(thread),
-        updatedAt: string(thread.updatedAt),
-        messages: this.transcripts.get(id) ?? [],
-      }));
+      .map(([id, thread]) => {
+        const project = this.projects.get(string(thread.projectId)) ?? {};
+        const selection = object(thread.modelSelection);
+        const provider =
+          records(this.config.providers).find(
+            (entry) => entry.instanceId === selection.instanceId,
+          ) ?? {};
+        const model =
+          records(provider.models).find((entry) => entry.slug === selection.model) ?? {};
+        const settled = thread.settledOverride === "settled" && thread.status !== "queued";
+        const activityAt = activity(thread, settled);
+        return {
+          id: scopedThreadId(this.environment.id, id),
+          environmentId: this.environment.id,
+          project: string(project.title) || "Project",
+          projectId: scopedThreadId(this.environment.id, string(thread.projectId)),
+          ...projectIcon(project),
+          ...(!project.projectIcon && this.favicons.get(string(thread.projectId))?.url
+            ? { projectIcon: this.favicons.get(string(thread.projectId))!.url }
+            : {}),
+          provider:
+            string(provider.driver) ||
+            string(
+              object(
+                object(object(this.config.settings).providerInstances)[
+                  string(selection.instanceId)
+                ],
+              ).driver,
+            ),
+          model: string(model.shortName) || string(model.name) || string(selection.model),
+          settled,
+          activityAt,
+          title: string(thread.title),
+          status: status(thread),
+          updatedAt: relativeTime(activityAt, now),
+          messages: this.transcripts.get(id) ?? [],
+        };
+      });
   }
 }
