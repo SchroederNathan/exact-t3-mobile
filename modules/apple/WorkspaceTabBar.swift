@@ -173,7 +173,17 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
 }
 
 final class T3NativeModule: ExactModule {
+  override func tabContainer(_ contents: ExactTabContents) -> UIViewController? {
+    WorkspaceContainer.make(contents)
+  }
+
   override func route(_ route: ExactRoute) {
+    configureWorkspaceBack(route)
+    if route.isNew {
+      route.controller.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak route] (_: UIViewController, _: UITraitCollection) in
+        if let route { configureWorkspaceBack(route) }
+      }
+    }
     let item = route.controller.navigationItem
     guard route.data[.workspaceHeader] == "true" else {
       configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
