@@ -7,14 +7,12 @@ font "DM Sans"
 
 routes nav
   tab threads "/"
-    threadDetail "/thread-detail"
     newThread "/threads/new"
     thread "/threads/:id"
     inspector "/threads/:id/inspect/:kind"
   tab pullRequests "/pulls"
   tab usage "/usage"
   tab settings "/settings"
-    settingsDetail "/settings-detail"
     environments "/environments"
     addEnvironment "/environments/new"
 
@@ -286,17 +284,6 @@ component T3Code
                       image "symbol:sf/sidebar.left" font-size=28 color="muted"
                       text "Select a thread" font-size=21 line-height="28px" font-weight=700
                       text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" text-align="center"
-              if e.name == "threadDetail" or e.name == "settingsDetail"
-                column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
-                  if e.name == "threadDetail" and viewport.width >= 600
-                    header
-                      text "" role="heading" aria-level=2
-                      button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
-                        image "symbol:sf/square.and.pencil"
-                  column flex=1 align-items="center" justify-content="center" gap=21 padding=48
-                    image "symbol:sf/sidebar.left" font-size=28 color="muted"
-                    text (e.name == "threadDetail" ? "Select a thread" : "Settings") font-size=21 line-height="28px" font-weight=700
-                    text (e.name == "threadDetail" ? "Choose a thread from the sidebar or start a new task." : "Choose a setting from the sidebar.") font-size=16 line-height="24px" color="muted" text-align="center"
               if e.name == "environments"
                 column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
