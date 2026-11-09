@@ -5,7 +5,7 @@
   "id": "com.schroedernathan.t3code.exactios",
   "start_url": "/",
   "display": "standalone",
-  "modules": ["workspace-tab-bar"],
+  "modules": ["workspace-tab-bar", "workspace-composer-glass"],
   "app": {
     "id": "com.schroedernathan.t3code.exactios",
     "name": "T3 Code Exact iOS"

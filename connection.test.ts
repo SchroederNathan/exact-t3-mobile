@@ -154,6 +154,7 @@ describe("direct T3 connection", () => {
           {
             type: "snapshot",
             config: {
+              environment: { platform: { machine: "mac-mini" } },
               providers: [
                 {
                   instanceId: "provider-instance",
@@ -166,6 +167,11 @@ describe("direct T3 connection", () => {
         ],
       }),
     );
+    expect(session.environment.machineSymbol).toBe("macmini");
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: configRequest.id, values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: "cloud" } } }] }));
+    expect(session.environment.machineSymbol).toBe("cloud");
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: configRequest.id, values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: null } } }] }));
+    expect(session.environment.machineSymbol).toBe("macmini");
     expect(session.projectList()).toEqual([
       { id: "env:p", title: "T3 Code", environmentId: "env" },
     ]);

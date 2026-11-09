@@ -180,6 +180,7 @@ final class T3NativeModule: ExactModule {
   override func route(_ route: ExactRoute) {
     MainActor.assumeIsolated {
       configureWorkspaceBack(route)
+      configureWorkspaceCompose(route)
       if route.isNew {
         route.controller.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak route] (_: UIViewController, _: UITraitCollection) in
           if let route { configureWorkspaceBack(route) }
@@ -209,14 +210,27 @@ final class T3NativeModule: ExactModule {
           let integrated = route.data[.searchPlacement] == "integrated"
           item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
           item.searchBarPlacementAllowsToolbarIntegration = integrated
+          let placement = item.searchBarPlacementBarButtonItem
+          var toolbar = (route.controller.toolbarItems ?? []).filter { $0 !== placement }
+          if integrated { toolbar.append(placement) }
+          route.controller.toolbarItems = toolbar.isEmpty ? nil : toolbar
+          if let navigation = route.navigation?.controller ?? route.controller.navigationController,
+             navigation.topViewController == nil || navigation.topViewController === route.controller {
+            navigation.setToolbarHidden(toolbar.isEmpty, animated: false)
+          }
         }
       }
     }
   }
   override class var views: [String: ExactNativeFactory] {
-    ["workspace-tab-bar": ExactNativeFactory { props, events in
-      WorkspaceTabBarInstance(props: props, events: events)
-    }]
+    [
+      "workspace-tab-bar": ExactNativeFactory { props, events in
+        WorkspaceTabBarInstance(props: props, events: events)
+      },
+      "workspace-composer-glass": ExactNativeFactory { props, events in
+        ComposerGlassInstance(props: props, events: events)
+      },
+    ]
   }
 }
 

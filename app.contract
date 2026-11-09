@@ -145,7 +145,7 @@ component T3Code
     nav = open(nav, "/environments")
 
   action addEnvironment
-    nav = open(nav, "/environments/new")
+    nav = push(nav, "/environments/new")
 
   action editAddress(value: string)
     address = value
@@ -210,7 +210,7 @@ component T3Code
   action inspect(kind: string)
     inspectorPath = ""
     send inspected = inspectThread(currentThreadId, kind, "")
-    nav = open(nav, path("inspector", currentThreadId, kind))
+    nav = push(nav, path("inspector", currentThreadId, kind))
 
   action inspectEntry(id: string, kind: string)
     inspectorPath = id
@@ -260,11 +260,11 @@ component T3Code
                             column flex=1 min-width=0 gap=3.5 padding=(viewport.width >= 600 ? "10px 12px" : "8.75px 17.5px")
                               row align-items="flex-start" gap=7
                                 if thread.projectIcon != ""
-                                  image thread.projectIcon width=20 height=20 border-radius=4
+                                  image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
                                 else
                                   text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
                                 text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                                text thread.updatedAt font-size=13 line-height="18px" color="muted"
+                                text thread.updatedAt font-size=13 line-height="18px" color=(viewport.width >= 600 and currentThreadId == thread.id ? "foreground" : "muted")
                               row align-items="center" gap=6 min-height=14
                                 if catalog.environments.length > 1
                                   image "symbol:sf/laptopcomputer" font-size=12 color="muted"
@@ -281,6 +281,11 @@ component T3Code
                               image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
               if e.name == "threadDetail" or e.name == "settingsDetail"
                 column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  if e.name == "threadDetail" and viewport.width >= 600
+                    header
+                      text "" role="heading" aria-level=2
+                      button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
+                        image "symbol:sf/square.and.pencil"
                   column flex=1 align-items="center" justify-content="center" gap=21 padding=48
                     image "symbol:sf/sidebar.left" font-size=28 color="muted"
                     text (e.name == "threadDetail" ? "Select a thread" : "Settings") font-size=21 line-height="28px" font-weight=700
@@ -308,9 +313,8 @@ component T3Code
                               image "symbol:sf/laptopcomputer" width=14 height=14 color="muted"
                               text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
                             text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
-                            if environment.status != "Connected"
-                              text environment.status font-size=13 line-height="17px" color="muted"
-                          input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                            text environment.status font-size=13 line-height="17px" color="muted"
+                          input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
                           button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
                             image "symbol:forward-chevron" width=12 height=12
               if e.name == "addEnvironment"
@@ -372,6 +376,9 @@ component T3Code
                           image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                         button press=inspect("files") aria-label="Open files"
                           image "symbol:sf/folder"
+                      if viewport.width >= 600
+                        button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
+                          image "symbol:sf/square.and.pencil"
                     if openError != ""
                       text openError color="-exact-system-red" padding=16
                     column flex-shrink=1 min-height=0 max-height="100%" margin-top="auto"
