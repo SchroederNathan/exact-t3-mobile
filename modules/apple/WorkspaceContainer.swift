@@ -58,6 +58,7 @@ final class WorkspaceContainer: UITabBarController, UITabBarControllerDelegate {
       view.addInteraction(UIHingeInteraction { [weak self] _, update in
         guard let self, update.hinge != nil, !self.hasHinge else { return }
         self.hasHinge = true
+        self.stacks.compactMap { $0 as? WorkspaceColumnPair }.forEach { $0.setHingeWide(true) }
         self.updateTabVisibility()
       })
     }
@@ -66,6 +67,8 @@ final class WorkspaceContainer: UITabBarController, UITabBarControllerDelegate {
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    let wide = view.bounds.width >= 600 || (view.window?.bounds.width ?? 0) >= 600 || tabBar.bounds.height > tabBar.bounds.width
+    stacks.compactMap { $0 as? WorkspaceColumnPair }.forEach { $0.setHingeWide(wide) }
     updateTabVisibility()
   }
 
@@ -154,10 +157,17 @@ private final class WorkspaceColumnPair: UIViewController {
   private let secondary: UINavigationController
   private let split = UISplitViewController(style: .doubleColumn)
   private var showingSplit: Bool?
+  private var hingeWide = false
   private weak var compactStack: UINavigationController?
   var onNeedsSecondary: (() -> Void)?
   var detailSelected = false {
     didSet { if isViewLoaded { updateColumns() } }
+  }
+
+  func setHingeWide(_ value: Bool) {
+    guard hingeWide != value else { return }
+    hingeWide = value
+    if isViewLoaded { updateColumns() }
   }
 
   init(primary: UINavigationController, secondary: UINavigationController) {
@@ -201,7 +211,10 @@ private final class WorkspaceColumnPair: UIViewController {
     // A pushed Exact route can temporarily report a compact trait from its
     // navigation controller even while the Duo window remains wide. Use the
     // actual canvas width so detail screens stay in the secondary column.
-    let wide = view.bounds.width >= 600
+    // Duo lays the hosted controller out in one segment while its window spans
+    // both segments. Use the window width so the native split agrees with the
+    // Contract's two-segment wide layout.
+    let wide = hingeWide || traitCollection.horizontalSizeClass == .regular || max(view.bounds.width, view.window?.bounds.width ?? 0) >= 600
     if showingSplit != wide {
       if showingSplit == true {
         split.setViewController(nil, for: .primary)
