@@ -105,6 +105,8 @@ shape Inspection
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
+fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
+fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 
 component T3Code
@@ -379,30 +381,24 @@ component T3Code
                           view
               if e.name == "thread"
                 column navigationKey=`${e.id}` navigationScroll="thread" navigationBar="none" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
+                  header display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
+                    button id="thread-back" press=back aria-label="Back" display=(viewport.width >= 600 ? "none" : "flex") appearance="none" width=44 height=44 border-radius=22 backgroundMaterial="glass" color="foreground" align-items="center" justify-content="center"
+                      image "symbol:sf/chevron.left" width=22 height=22
+                    column flex=1 min-width=0 gap=0
+                      text currentThreadTitle(currentThread) role="heading" aria-level=2 line-clamp=1 font-size=18 line-height="23px" font-weight=700
+                      text currentThreadSubtitle(catalog, currentThread) color="muted" line-clamp=1 font-size=14 line-height="19px"
+                    row role="toolbar" aria-label="Thread controls" backgroundMaterial="glass" border-radius=26 padding="0 4px" gap=0
+                      button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                        image "symbol:sf/terminal" width=20 height=20
+                      button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                        image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
+                      button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                        image "symbol:sf/folder" width=20 height=20
                   if viewport.width >= 600
                     column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     for thread in currentThread key=thread.id
-                      // Exact projects this authored header into UIKit's native navigation bar.
-                      // Keep the source node live for title/subtitle/actions while taking no
-                      // authored layout space, so iOS does not render a duplicate header row.
-                      header display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
-                        button id="thread-back" press=back aria-label="Back" display=(viewport.width >= 600 ? "none" : "flex") appearance="none" width=44 height=44 border-radius=22 backgroundMaterial="glass" color="foreground" align-items="center" justify-content="center"
-                          image "symbol:sf/chevron.left" width=22 height=22
-                        column flex=1 min-width=0 gap=0
-                          text thread.title role="heading" aria-level=2 line-clamp=1 font-size=18 line-height="23px" font-weight=700
-                          text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` color="muted" line-clamp=1 font-size=14 line-height="19px"
-                        row role="toolbar" aria-label="Thread controls" backgroundMaterial="glass" border-radius=26 padding="0 4px" gap=0
-                          button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/terminal" width=20 height=20
-                          button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
-                          button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/folder" width=20 height=20
-                        if viewport.width >= 600
-                          button id="workspace-compose" testId="workspace-compose" press=workspaceAction("compose") aria-label="New task"
-                            image "symbol:sf/square.and.pencil"
                       if openError != ""
                         text openError color="-exact-system-red" padding=16
                       column flex=1 min-height=0 height="100%" position="relative"
