@@ -367,14 +367,15 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
                   if viewport.width >= 600
                     column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
-                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
+                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     for thread in currentThread key=thread.id
-                      header display="flex" align-items="center" padding="8px 16px"
-                        button id="thread-back" press=back aria-label="Back"
+                      header display="flex" align-items="center" gap=8 padding="8px 16px"
+                        button id="thread-back" press=back aria-label="Back" display=(viewport.width >= 600 ? "none" : "flex")
                           image "symbol:sf/chevron.left"
-                        text thread.title role="heading" aria-level=2
-                        text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`
+                        column flex=1 min-width=0 gap=1
+                          text thread.title role="heading" aria-level=2 line-clamp=2
+                          text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` color="muted" line-clamp=1
                         row role="toolbar" aria-label="Thread controls"
                           button aria-label="Terminal" popovertarget="terminal-menu"
                             image "symbol:sf/terminal"
@@ -531,6 +532,7 @@ component ThreadList
     showSettled: bool
     currentThreadId: string
     query: string
+    showSearch: bool
     search: action
     filterEnvironment: action
     filterProject: action
@@ -540,7 +542,8 @@ component ThreadList
     column navigationScroll="home" data-workspace-header="true" data-search-placement="integrated" data-brand-stage="DEV" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
       header display="flex" align-items="center" gap=8 padding="8px 16px"
         text "T3 Code" role="heading" aria-level=2 flex=1
-        input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0
+        if showSearch
+          input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0 width=150 min-width=0
       list id="home" appearance="none" flex=1 min-height=0 background-color="drawer"
         section
           row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
