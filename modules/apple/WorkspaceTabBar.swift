@@ -174,40 +174,42 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
 
 final class T3NativeModule: ExactModule {
   override func tabContainer(_ contents: ExactTabContents) -> UIViewController? {
-    WorkspaceContainer.make(contents)
+    MainActor.assumeIsolated { WorkspaceContainer.make(contents) }
   }
 
   override func route(_ route: ExactRoute) {
-    configureWorkspaceBack(route)
-    if route.isNew {
-      route.controller.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak route] (_: UIViewController, _: UITraitCollection) in
-        if let route { configureWorkspaceBack(route) }
+    MainActor.assumeIsolated {
+      configureWorkspaceBack(route)
+      if route.isNew {
+        route.controller.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak route] (_: UIViewController, _: UITraitCollection) in
+          if let route { configureWorkspaceBack(route) }
+        }
       }
-    }
-    let item = route.controller.navigationItem
-    guard route.data[.workspaceHeader] == "true" else {
-      configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
-      return
-    }
-    item.style = .editor
-    if #available(iOS 27.2, *) { item.titleAlignment = .leading }
-    let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
-    let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
-    let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
-    title.preferredWidth = max(120, route.controller.view.bounds.width - 32 - CGFloat(itemCount) * 44)
-    title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
-    title.stageName = route.data[.brandStage] ?? "DEV"
-    item.titleView = title
-    route.owns(view: title, "T3 wordmark and build-stage title")
-    if let search = item.searchController {
-      search.hidesNavigationBarDuringPresentation = false
-      search.obscuresBackgroundDuringPresentation = false
-      search.searchBar.autocapitalizationType = .none
-      item.hidesSearchBarWhenScrolling = false
-      if #available(iOS 26.0, *) {
-        let integrated = route.data[.searchPlacement] == "integrated"
-        item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
-        item.searchBarPlacementAllowsToolbarIntegration = integrated
+      let item = route.controller.navigationItem
+      guard route.data[.workspaceHeader] == "true" else {
+        configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
+        return
+      }
+      item.style = .editor
+      if #available(iOS 27.2, *) { item.titleAlignment = .leading }
+      let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
+      let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
+      let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
+      title.preferredWidth = max(120, route.controller.view.bounds.width - 32 - CGFloat(itemCount) * 44)
+      title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
+      title.stageName = route.data[.brandStage] ?? "DEV"
+      item.titleView = title
+      route.owns(view: title, "T3 wordmark and build-stage title")
+      if let search = item.searchController {
+        search.hidesNavigationBarDuringPresentation = false
+        search.obscuresBackgroundDuringPresentation = false
+        search.searchBar.autocapitalizationType = .none
+        item.hidesSearchBarWhenScrolling = false
+        if #available(iOS 26.0, *) {
+          let integrated = route.data[.searchPlacement] == "integrated"
+          item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
+          item.searchBarPlacementAllowsToolbarIntegration = integrated
+        }
       }
     }
   }
