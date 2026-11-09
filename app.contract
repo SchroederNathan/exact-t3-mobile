@@ -64,6 +64,8 @@ shape Thread
   projectInitials: string
   projectIconColor: string
   provider: string
+  lastError: string
+  lastErrorTime: string
   title: string
   status: string
   updatedAt: string
@@ -376,13 +378,16 @@ component T3Code
                         case none
                           view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
+                column navigationKey=`${e.id}` navigationScroll="thread" navigationBar="none" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column")
                   if viewport.width >= 600
                     column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     for thread in currentThread key=thread.id
-                      header display="flex" align-items="center" gap=8 padding="8px 16px" min-height=64 box-sizing="border-box"
+                      // Exact projects this authored header into UIKit's native navigation bar.
+                      // Keep the source node live for title/subtitle/actions while taking no
+                      // authored layout space, so iOS does not render a duplicate header row.
+                      header display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
                         button id="thread-back" press=back aria-label="Back" display=(viewport.width >= 600 ? "none" : "flex") appearance="none" width=44 height=44 border-radius=22 backgroundMaterial="glass" color="foreground" align-items="center" justify-content="center"
                           image "symbol:sf/chevron.left" width=22 height=22
                         column flex=1 min-width=0 gap=0
@@ -427,6 +432,14 @@ component T3Code
                                           text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
                                         else
                                           text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                          if thread.lastError != ""
+                            row align-items="flex-start" gap=8 position="absolute" left=20 right=16 bottom=64 z-index=1
+                              image "symbol:alert-fill" width=16 height=16 color="-exact-system-red"
+                              column gap=2 flex=1 min-width=0
+                                row align-items="center" gap=8
+                                  text "Provider error" flex=1 color="-exact-system-red" font-size=14 line-height="19px"
+                                  text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
+                                text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
                       row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
                         row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
                           workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"

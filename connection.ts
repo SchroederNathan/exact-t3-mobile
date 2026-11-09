@@ -189,6 +189,19 @@ function message(value: ObjectValue): Message | null {
   return { id, role, body, createdAt, timeLabel, blocks: markdownBlocks(body, id) };
 }
 
+function errorDetails(thread: ObjectValue): { message: string; time: string } {
+  const message = string(thread.lastError) || string(object(thread.runtime).lastError);
+  const createdAt =
+    string(thread.latestRunCompletedAt) ||
+    string(thread.latestRunStartedAt) ||
+    string(thread.updatedAt);
+  const date = new Date(createdAt);
+  const time = Number.isNaN(date.getTime())
+    ? ""
+    : `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })} at ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+  return { message, time };
+}
+
 function status(thread: ObjectValue): string {
   if (thread.pendingRuntimeRequest) return "Waiting";
   switch (thread.status) {
@@ -689,6 +702,8 @@ export class DirectSession {
           records(provider.models).find((entry) => entry.slug === selection.model) ?? {};
         const settled = thread.settledOverride === "settled" && thread.status !== "queued";
         const activityAt = activity(thread, settled);
+        const transcript = this.transcripts.get(id) ?? [];
+        const error = errorDetails(thread);
         return {
           id: scopedThreadId(this.environment.id, id),
           environmentId: this.environment.id,
@@ -708,12 +723,14 @@ export class DirectSession {
               ).driver,
             ),
           model: string(model.shortName) || string(model.name) || string(selection.model),
+          lastError: error.message,
+          lastErrorTime: error.time,
           settled,
           activityAt,
           title: string(thread.title),
           status: status(thread),
           updatedAt: relativeTime(activityAt, now),
-          messages: this.transcripts.get(id) ?? [],
+          messages: transcript,
         };
       })
       .sort(
