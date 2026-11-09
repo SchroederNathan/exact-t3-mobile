@@ -1,4 +1,5 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
+import { markdownBlocks } from "./markdown";
 
 export type Catalog = Result<"loadCatalog">;
 export type Environment = Catalog["environments"][number];
@@ -6,6 +7,13 @@ type Thread = Catalog["threads"][number];
 type Message = Thread["messages"][number];
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
+export interface Inspection {
+  ok: boolean;
+  error: string;
+  title: string;
+  body: string;
+  items: { id: string; label: string; detail: string; kind: string }[];
+}
 
 export function object(value: unknown): ObjectValue {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -142,7 +150,13 @@ function message(value: ObjectValue): Message | null {
   const id = string(value.id);
   const role = string(value.role);
   if (!id || (role !== "user" && role !== "assistant" && role !== "system")) return null;
-  return { id, role, body: string(value.text), createdAt: string(value.createdAt) };
+  const createdAt = string(value.createdAt);
+  const date = new Date(createdAt);
+  const timeLabel = Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const body = string(value.text);
+  return { id, role, body, createdAt, timeLabel, blocks: markdownBlocks(body, id) };
 }
 
 function status(thread: ObjectValue): string {
@@ -282,6 +296,10 @@ export class DirectSession {
   private shells = new Map<string, ObjectValue>();
   private transcripts = new Map<string, Message[]>();
   private replies = new Map<string, (reply: Reply) => void>();
+  private queries = new Map<
+    string,
+    { resolve: (value: ObjectValue) => void; reject: (error: Error) => void }
+  >();
 
   constructor(environment: Environment) {
     this.environment = { ...environment, status: "Connecting" };
@@ -293,6 +311,90 @@ export class DirectSession {
     const id = String(++this.nextId);
     this.socket.send(JSON.stringify({ _tag: "Request", id, tag, payload, headers: [] }));
     return id;
+  }
+
+  private query(tag: string, payload: unknown): Promise<ObjectValue> {
+    if (this.queries.size >= 32)
+      throw new Error("Too many requests are pending. Wait for them to finish.");
+    const id = this.request(tag, payload);
+    return new Promise((resolve, reject) => this.queries.set(id, { resolve, reject }));
+  }
+
+  async inspect(threadId: string, kind: string, path: string): Promise<Inspection> {
+    const shell = this.shells.get(threadId);
+    if (!shell) throw new Error("This thread is no longer available.");
+    const project = this.projects.get(string(shell.projectId));
+    const cwd = string(shell.worktreePath) || string(project?.workspaceRoot);
+    if (!cwd) throw new Error("This thread has no available workspace.");
+    if (kind === "file") {
+      const result = await this.query("projects.readFile", { cwd, relativePath: path });
+      return {
+        ok: true,
+        error: "",
+        title: string(result.relativePath),
+        body:
+          string(result.contents) +
+          (result.truncated === true ? "\n\nFile preview truncated." : ""),
+        items: [],
+      };
+    }
+    if (kind === "files") {
+      const result = await this.query("projects.listEntries", { cwd, directoryPath: path });
+      return {
+        ok: true,
+        error: "",
+        title: "Files",
+        body: `${cwd}${path ? `/${path}` : ""}${result.truncated === true ? "\nResults truncated." : ""}`,
+        items: records(result.entries).map((entry) => ({
+          id: string(entry.path),
+          label: string(entry.path).split("/").at(-1) || string(entry.path),
+          detail: entry.ignored === true ? "Ignored" : string(entry.path),
+          kind: string(entry.kind),
+        })),
+      };
+    }
+    if (kind === "git") {
+      const result = await this.query("vcs.refreshStatus", { cwd, localOnly: true });
+      if (result.isRepo !== true)
+        return {
+          ok: true,
+          error: "",
+          title: "Source Control",
+          body: `${cwd}\nThis workspace is not a repository.`,
+          items: [],
+        };
+      const workingTree = object(result.workingTree);
+      return {
+        ok: true,
+        error: "",
+        title: "Source Control",
+        body: `${string(workingTree.rootPath) || cwd}\n${result.hasWorkingTreeChanges === true ? "Uncommitted changes" : "Working tree clean"}`,
+        items: [
+          {
+            id: "branch",
+            label: string(result.refName) || "Detached HEAD",
+            detail: result.isDefaultRef === true ? "Default branch" : "Current branch",
+            kind: "info",
+          },
+          {
+            id: "upstream",
+            label: "Upstream",
+            detail:
+              result.hasUpstream === true
+                ? `${Number(result.aheadCount ?? 0)} ahead · ${Number(result.behindCount ?? 0)} behind`
+                : "No upstream configured",
+            kind: "info",
+          },
+          ...records(workingTree.files).map((file) => ({
+            id: string(file.path),
+            label: string(file.path),
+            detail: `+${Number(file.insertions ?? 0)} −${Number(file.deletions ?? 0)}`,
+            kind: "file",
+          })),
+        ],
+      };
+    }
+    throw new Error("This inspector is not available.");
   }
 
   open(socket: StreamSocket) {
@@ -398,6 +500,8 @@ export class DirectSession {
     this.environment.status = reason;
     for (const resolve of this.replies.values()) resolve({ ok: false, error: reason });
     this.replies.clear();
+    for (const query of this.queries.values()) query.reject(new Error(reason));
+    this.queries.clear();
   }
 
   receive(data: string) {
@@ -420,6 +524,10 @@ export class DirectSession {
       } else if (frame._tag === "Exit") {
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
+        const query = this.queries.get(id);
+        this.queries.delete(id);
+        if (error) query?.reject(new Error(error));
+        else query?.resolve(object(exit.value));
         const projectId = this.faviconRequests.get(id);
         if (projectId) {
           this.faviconRequests.delete(id);

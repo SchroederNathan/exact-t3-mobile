@@ -412,6 +412,124 @@ describe("direct T3 connection", () => {
       }),
     );
     await expect(created).resolves.toEqual({ ok: true, error: "" });
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "1",
+        values: [
+          {
+            kind: "project.updated",
+            project: { id: "p", title: "Project", workspaceRoot: "/project" },
+          },
+          {
+            kind: "thread.updated",
+            location: "active",
+            thread: { id: "thread", projectId: "p", worktreePath: "/worktree" },
+          },
+        ],
+      }),
+    );
+    const files = session.inspect("thread", "files", "src");
+    const filesRequest = JSON.parse(sent.at(-1)!);
+    expect(filesRequest).toMatchObject({
+      tag: "projects.listEntries",
+      payload: { cwd: "/worktree", directoryPath: "src" },
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: filesRequest.id,
+        exit: {
+          _tag: "Success",
+          value: {
+            entries: [
+              { path: "src/nested", kind: "directory" },
+              { path: "src/app.ts", kind: "file" },
+            ],
+            truncated: true,
+          },
+        },
+      }),
+    );
+    await expect(files).resolves.toMatchObject({
+      ok: true,
+      title: "Files",
+      items: [
+        { id: "src/nested", label: "nested", kind: "directory" },
+        { id: "src/app.ts", label: "app.ts", kind: "file" },
+      ],
+    });
+    expect((await files).body).toContain("truncated");
+    const file = session.inspect("thread", "file", "src/app.ts");
+    const fileRequest = JSON.parse(sent.at(-1)!);
+    expect(fileRequest).toMatchObject({
+      tag: "projects.readFile",
+      payload: { cwd: "/worktree", relativePath: "src/app.ts" },
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: fileRequest.id,
+        exit: {
+          _tag: "Success",
+          value: { relativePath: "src/app.ts", contents: "const answer = 42;", truncated: false },
+        },
+      }),
+    );
+    await expect(file).resolves.toMatchObject({
+      title: "src/app.ts",
+      body: "const answer = 42;",
+      items: [],
+    });
+    const git = session.inspect("thread", "git", "");
+    const gitRequest = JSON.parse(sent.at(-1)!);
+    expect(gitRequest).toMatchObject({
+      tag: "vcs.refreshStatus",
+      payload: { cwd: "/worktree", localOnly: true },
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: gitRequest.id,
+        exit: {
+          _tag: "Success",
+          value: {
+            isRepo: true,
+            refName: "feature",
+            hasWorkingTreeChanges: true,
+            hasUpstream: true,
+            aheadCount: 2,
+            behindCount: 1,
+            workingTree: {
+              files: [{ path: "src/app.ts", insertions: 3, deletions: 1 }],
+              insertions: 3,
+              deletions: 1,
+            },
+          },
+        },
+      }),
+    );
+    await expect(git).resolves.toMatchObject({
+      ok: true,
+      title: "Source Control",
+      items: [
+        { id: "branch", label: "feature", kind: "info" },
+        { id: "upstream", detail: "2 ahead · 1 behind", kind: "info" },
+        { id: "src/app.ts", label: "src/app.ts", detail: "+3 −1", kind: "file" },
+      ],
+    });
+    const deniedFiles = session.inspect("thread", "files", "");
+    session.receive(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: JSON.parse(sent.at(-1)!).id,
+        exit: {
+          _tag: "Failure",
+          cause: [{ _tag: "Fail", error: { message: "Read access denied" } }],
+        },
+      }),
+    );
+    await expect(deniedFiles).rejects.toThrow("Read access denied");
     const denied = session.send("thread", "Again", "c2", "m2");
     const deniedId = JSON.parse(sent.at(-1)!).id;
     session.receive(
@@ -423,8 +541,29 @@ describe("direct T3 connection", () => {
     );
     await expect(denied).resolves.toEqual({ ok: false, error: "Access denied" });
     const interrupted = session.send("thread", "Again", "c3", "m3");
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "1",
+        values: [
+          {
+            kind: "thread.updated",
+            location: "active",
+            thread: { id: "thread", projectId: "p", worktreePath: null },
+          },
+        ],
+      }),
+    );
+    const interruptedFiles = session.inspect("thread", "files", "");
+    expect(JSON.parse(sent.at(-1)!).payload).toEqual({ cwd: "/project", directoryPath: "" });
+    const remainingQueries = Promise.allSettled(
+      Array.from({ length: 31 }, () => session.inspect("thread", "files", "")),
+    );
+    await expect(session.inspect("thread", "files", "")).rejects.toThrow("Too many requests");
     session.disconnected("Connection lost");
     await expect(interrupted).resolves.toEqual({ ok: false, error: "Connection lost" });
-    expect(session.threads()).toEqual([]);
+    await expect(interruptedFiles).rejects.toThrow("Connection lost");
+    expect((await remainingQueries).every((result) => result.status === "rejected")).toBe(true);
+    expect(session.threads()[0]?.messages).toEqual([]);
   });
 });

@@ -124,6 +124,22 @@ async function loadCatalog(
 const sources: Sources = {
   loadCatalog: (args, store, storage) =>
     loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage),
+  inspectThread: async ([id, kind, path]) => {
+    try {
+      const identity = threadIdentity(id);
+      if (current?.environment.id !== identity.environmentId)
+        throw new Error("Select this thread’s environment to connect.");
+      return await current.inspect(identity.threadId, kind, path);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "The workspace could not be inspected.",
+        title: kind === "git" ? "Source Control" : "Files",
+        body: "",
+        items: [],
+      };
+    }
+  },
   createThread: async ([projectId, title]) => {
     try {
       const identity = threadIdentity(projectId);
