@@ -293,60 +293,68 @@ component T3Code
                     text (e.name == "threadDetail" ? "Select a thread" : "Settings") font-size=21 line-height="28px" font-weight=700
                     text (e.name == "threadDetail" ? "Choose a thread from the sidebar or start a new task." : "Choose a setting from the sidebar.") font-size=16 line-height="24px" color="muted" text-align="center"
               if e.name == "environments"
-                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
-                  header
-                    button id="environment-back" press=back aria-label="Back"
-                      image "symbol:sf/chevron.left"
-                    text "Environments" role="heading" aria-level=2
-                    button press=addEnvironment aria-label="Add environment" testId="environment-add"
-                      image "symbol:add"
-                  scroll id="environments" flex=1 min-height=0 padding="14px 17.5px 36px"
-                    column border-radius=24 background-color="card" overflow="hidden"
-                      if catalog.environments.length == 0
-                        column align-items="center" gap=10.5 padding="28px 21px"
-                          row width=42 height=42 border-radius=16 background-color="bubble" align-items="center" justify-content="center"
-                            image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
-                          text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
-                      for environment in catalog.environments key=environment.id
-                        row gap=10.5 padding="12.25px 14px" align-items="center"
-                          column flex=1 min-width=0 gap=1.75
-                            row align-items="center" gap=5.25
-                              view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
-                              image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
-                              text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
-                            text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
-                            text environment.status font-size=13 line-height="17px" color="muted"
-                          input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
-                          button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
-                            image "symbol:forward-chevron" width=12 height=12
+                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column") background-color="screen"
+                  if viewport.width >= 600
+                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                      SettingsList(openEnvironments=openEnvironments)
+                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
+                    header
+                      button id="environment-back" press=back aria-label="Back"
+                        image "symbol:sf/chevron.left"
+                      text "Environments" role="heading" aria-level=2
+                      button press=addEnvironment aria-label="Add environment" testId="environment-add"
+                        image "symbol:add"
+                    scroll id="environments" flex=1 min-height=0 padding="14px 17.5px 36px"
+                      column border-radius=24 background-color="card" overflow="hidden"
+                        if catalog.environments.length == 0
+                          column align-items="center" gap=10.5 padding="28px 21px"
+                            row width=42 height=42 border-radius=16 background-color="bubble" align-items="center" justify-content="center"
+                              image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
+                            text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
+                        for environment in catalog.environments key=environment.id
+                          row gap=10.5 padding="12.25px 14px" align-items="center"
+                            column flex=1 min-width=0 gap=1.75
+                              row align-items="center" gap=5.25
+                                view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
+                                image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
+                                text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
+                              text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
+                              text environment.status font-size=13 line-height="17px" color="muted"
+                            input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                            button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
+                              image "symbol:forward-chevron" width=12 height=12
               if e.name == "addEnvironment"
-                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
-                  header
-                    text "Add environment" role="heading" aria-level=2
-                    button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
-                      image "symbol:sf/checkmark"
-                  scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
-                    column gap=22.75
-                      column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
-                        column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
-                          image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
-                          text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
-                        text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
-                      column gap=7
-                        text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
-                        column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"
-                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
-                            text "Address" width=70 color="muted" line-height="23px"
-                            input value=address input=editAddress placeholder="192.168.1.100:3773" aria-label="Address" testId="address" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
-                              ::placeholder
-                                color="muted"
-                          view height=1 margin-left=14 background-color="edge"
-                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
-                            text "Code" width=70 color="muted" line-height="23px"
-                            input value=code input=editCode submit=pair placeholder="Pairing code" aria-label="Code" testId="pair-code" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
-                              ::placeholder
-                                color="muted"
-                        text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
+                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction=(viewport.width >= 600 ? "row" : "column") background-color="screen"
+                  if viewport.width >= 600
+                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                      SettingsList(openEnvironments=openEnvironments)
+                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
+                    header
+                      text "Add environment" role="heading" aria-level=2
+                      button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
+                        image "symbol:sf/checkmark"
+                    scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
+                      column gap=22.75
+                        column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
+                          column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
+                            image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
+                            text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
+                          text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
+                        column gap=7
+                          text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
+                          column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"
+                            row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                              text "Address" width=70 color="muted" line-height="23px"
+                              input value=address input=editAddress placeholder="192.168.1.100:3773" aria-label="Address" testId="address" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
+                                ::placeholder
+                                  color="muted"
+                            view height=1 margin-left=14 background-color="edge"
+                            row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                              text "Code" width=70 color="muted" line-height="23px"
+                              input value=code input=editCode submit=pair placeholder="Pairing code" aria-label="Code" testId="pair-code" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
+                                ::placeholder
+                                  color="muted"
+                          text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
               if e.name == "newThread"
                 column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -578,4 +586,21 @@ component ThreadList
                 text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
                 view flex=1 height=1 background-color="edge"
                 image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
+
+component SettingsList
+  props
+    openEnvironments: action
+  view
+    column navigationScroll="settings" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
+      header display="flex" align-items="center" padding="8px 16px"
+        text "T3 Code" role="heading" aria-level=2 flex=1
+        text "DEV" font-size=12 color="muted"
+      list id="settings" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+        section
+          row
+            text "T3 Code" font="-exact-body"
+            text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
+          row
+            button press=openEnvironments testId="environments-button" aria-label="Environments"
+              text "Environments"
 
