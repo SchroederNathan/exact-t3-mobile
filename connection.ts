@@ -62,6 +62,15 @@ export function threadIdentity(id: string): { environmentId: string; threadId: s
   };
 }
 
+export function threadIdFromUrl(url: string): string {
+  const path = new URL(url, "https://t3.invalid").pathname;
+  const match = /^\/threads\/([^/]+)$/.exec(path);
+  if (!match) throw new Error("This address is not associated with a thread.");
+  const id = decodeURIComponent(match[1]!);
+  threadIdentity(id);
+  return id;
+}
+
 export async function readJson(url: string, options: RequestInit = {}): Promise<ObjectValue> {
   const response = await fetch(url, { ...options, exactTimeout: 10000 });
   const text = await response.text();
@@ -526,7 +535,6 @@ export class DirectSession {
           object(thread.lineage).relationshipToParent !== "subagent" &&
           object(thread.lineage).sideChat !== true,
       )
-      .sort(([, left], [, right]) => string(right.updatedAt).localeCompare(string(left.updatedAt)))
       .map(([id, thread]) => {
         const project = this.projects.get(string(thread.projectId)) ?? {};
         const selection = object(thread.modelSelection);
@@ -564,6 +572,12 @@ export class DirectSession {
           updatedAt: relativeTime(activityAt, now),
           messages: this.transcripts.get(id) ?? [],
         };
-      });
+      })
+      .sort(
+        (left, right) =>
+          Number(left.settled) - Number(right.settled) ||
+          right.activityAt - left.activityAt ||
+          left.id.localeCompare(right.id),
+      );
   }
 }

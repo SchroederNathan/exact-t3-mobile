@@ -4,8 +4,10 @@ import {
   object,
   pair,
   socketUrl,
+  scopedThreadId,
   string,
   threadIdentity,
+  threadIdFromUrl,
   type Catalog,
   type Environment,
 } from "./connection";
@@ -55,14 +57,19 @@ async function saveEnvironments(storage: Storage, environments: Environment[]): 
   await storage.fs.atomicWriteFile(FILE, new TextEncoder().encode(JSON.stringify(environments)));
 }
 
-async function loadCatalog(selected: string, store: Store, storage: Storage): Promise<Catalog> {
+async function loadCatalog(
+  selected: string,
+  now: number,
+  store: Store,
+  storage: Storage,
+): Promise<Catalog> {
   current?.disconnected("Disconnected");
   current = undefined;
   const environments = await loadEnvironments(storage);
   const environment = selected
     ? environments.find((entry) => entry.id === selected && entry.enabled)
     : environments.find((entry) => entry.enabled);
-  if (!environment) return { environments, threads: [] };
+  if (!environment) return { environments, threads: [], projects: [] };
   const token = credentials(store)[environment.id];
   if (!token)
     return {
@@ -70,6 +77,7 @@ async function loadCatalog(selected: string, store: Store, storage: Storage): Pr
         entry.id === environment.id ? { ...entry, status: "Pairing required" } : entry,
       ),
       threads: [],
+      projects: [],
     };
   const session = new DirectSession(environment);
   current = session;
@@ -81,7 +89,8 @@ async function loadCatalog(selected: string, store: Store, storage: Storage): Pr
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,
     ),
-    threads: session.threads(),
+    threads: session.threads(now),
+    projects: session.projectList(),
   });
   try {
     const url = await socketUrl(environment, token);
@@ -90,11 +99,13 @@ async function loadCatalog(selected: string, store: Store, storage: Storage): Pr
         if (event.type === "open" && socket) session.open(socket);
         else if (event.type === "message") {
           try {
-            session.receive(
-              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data),
+            const data =
+              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+            session.receive(data);
+          } catch (error) {
+            session.disconnected(
+              error instanceof Error ? error.message : "The server sent an invalid response.",
             );
-          } catch {
-            session.disconnected("The server sent an invalid response.");
           }
         } else if (event.type === "close" || event.type === "error") {
           session.disconnected(event.message || event.reason || "Disconnected");
@@ -112,12 +123,32 @@ async function loadCatalog(selected: string, store: Store, storage: Storage): Pr
 
 const sources: Sources = {
   loadCatalog: (args, store, storage) =>
-    loadCatalog((args as readonly string[])[0] ?? "", store, storage),
+    loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage),
+  createThread: async ([projectId, title]) => {
+    try {
+      const identity = threadIdentity(projectId);
+      if (current?.environment.id !== identity.environmentId)
+        throw new Error("Select this project’s environment to connect.");
+      const threadId = crypto.randomUUID();
+      const reply = await current.create(identity.threadId, title, crypto.randomUUID(), threadId);
+      return {
+        ...reply,
+        threadId: reply.ok ? scopedThreadId(identity.environmentId, threadId) : "",
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "The thread could not be created.",
+        threadId: "",
+      };
+    }
+  },
   command: async ([operation, id, value], store, storage): Promise<Result<"command">> => {
     try {
-      if (operation === "open") {
-        const identity = threadIdentity(id);
-        selectedThread = id;
+      if (operation === "open" || operation === "open-url") {
+        const threadId = operation === "open-url" ? threadIdFromUrl(id) : id;
+        const identity = threadIdentity(threadId);
+        selectedThread = threadId;
         if (current?.environment.id !== identity.environmentId)
           throw new Error("Select this thread’s environment to connect.");
         current.select(identity.threadId);

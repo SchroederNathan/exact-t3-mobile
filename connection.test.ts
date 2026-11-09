@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { DirectSession, pair, parsePairingAddress, scopedThreadId } from "./connection";
+import {
+  DirectSession,
+  pair,
+  parsePairingAddress,
+  scopedThreadId,
+  threadIdFromUrl,
+  threadIdentity,
+} from "./connection";
 
 describe("direct T3 connection", () => {
   test("normalizes pairing links without retaining a credential in the origin", () => {
@@ -21,6 +28,11 @@ describe("direct T3 connection", () => {
     ).toEqual({ origin: "http://127.0.0.1:13773", credential: "nested" });
     expect(() => parsePairingAddress("file:///etc/passwd#token=x", "")).toThrow("HTTP");
     expect(() => parsePairingAddress("https://example.test", "")).toThrow("pairing code");
+    const scopedId = scopedThreadId("env:one", "thread/100%");
+    const routedId = threadIdFromUrl(`/threads/${encodeURIComponent(scopedId)}`);
+    expect(routedId).toBe(scopedId);
+    expect(threadIdentity(routedId)).toEqual({ environmentId: "env:one", threadId: "thread/100%" });
+    expect(() => threadIdFromUrl("/threads/new")).toThrow("associated");
   });
 
   test("exchanges the pairing credential with the OAuth form encoding", async () => {
@@ -255,17 +267,43 @@ describe("direct T3 connection", () => {
           {
             kind: "thread.updated",
             location: "active",
-            thread: { id: "t", projectId: "p", title: "Fixed startup", status: "completed" },
+            thread: {
+              id: "t",
+              projectId: "p",
+              title: "Fixed startup",
+              status: "completed",
+              updatedAt: "2026-11-08T13:00:00Z",
+              latestUserMessageAt: "2026-11-08T12:00:00Z",
+            },
+          },
+          {
+            kind: "thread.updated",
+            location: "active",
+            thread: {
+              id: "older",
+              projectId: "p",
+              title: "Older activity",
+              status: "completed",
+              updatedAt: "2026-11-08T14:00:00Z",
+              latestUserMessageAt: "2026-11-08T11:00:00Z",
+            },
           },
         ],
       }),
     );
     expect(session.threads()[0]?.title).toBe("Fixed startup");
+    expect(session.threads().map((thread) => thread.title)).toEqual([
+      "Fixed startup",
+      "Older activity",
+    ]);
     session.receive(
       JSON.stringify({
         _tag: "Chunk",
         requestId: "1",
-        values: [{ kind: "thread.removed", location: "active", threadId: "t" }],
+        values: [
+          { kind: "thread.removed", location: "active", threadId: "t" },
+          { kind: "thread.removed", location: "active", threadId: "older" },
+        ],
       }),
     );
     expect(session.threads()).toEqual([]);
