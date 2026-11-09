@@ -228,10 +228,10 @@ component T3Code
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
       column flex=1 min-height=0 position="relative"
         for t in nav.tabs key=t.name
-          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position="absolute" inset=0
+          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position="absolute" inset=0 flex-direction=(viewport.width >= 600 ? "row" : "column")
             for e in t.stack key=e.id
               if e.name == "threads"
-                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" data-workspace-header="true" data-search-placement=(viewport.width < 600 ? "button" : "integrated") data-brand-stage="DEV" background-color=(viewport.width >= 600 ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" data-workspace-header="true" data-search-placement=(viewport.width < 600 ? "button" : "integrated") data-brand-stage="DEV" background-color=(viewport.width >= 600 ? "drawer" : "screen") position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? 320 : "100%") flex-shrink=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" gap=8 padding="8px 16px"
                     text "T3 Code" role="heading" aria-level=2 flex=1
                     input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0
@@ -280,12 +280,12 @@ component T3Code
                               view flex=1 height=1 background-color="edge"
                               image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
                   if currentThreadId == ""
-                    column navigationSplit="placeholder" align-items="center" justify-content="center" gap=21 padding=48 testId="thread-empty-detail"
+                    column navigationSplit="placeholder" align-items="center" justify-content="center" gap=21 padding=48 testId="thread-empty-detail" display=(viewport.width < 600 ? "none" : "flex")
                       image "symbol:sf/sidebar.left" font-size=28 color="muted"
                       text "Select a thread" font-size=21 line-height="28px" font-weight=700
                       text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" text-align="center"
               if e.name == "environments"
-                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll="environments" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? "auto" : "100%") flex-grow=(viewport.width >= 600 ? 1 : 0) min-width=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     button id="environment-back" press=back aria-label="Back"
                       image "symbol:sf/chevron.left"
@@ -312,7 +312,7 @@ component T3Code
                           button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
                             image "symbol:forward-chevron" width=12 height=12
               if e.name == "addEnvironment"
-                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll="add-environment" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? "auto" : "100%") flex-grow=(viewport.width >= 600 ? 1 : 0) min-width=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     text "Add environment" role="heading" aria-level=2
                     button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
@@ -340,7 +340,7 @@ component T3Code
                                 color="muted"
                         text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
               if e.name == "newThread"
-                column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="projects" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? "auto" : "100%") flex-grow=(viewport.width >= 600 ? 1 : 0) min-width=0 display="flex" flex-direction="column"
                   header
                     text "New thread" role="heading" aria-level=2
                   list id="projects" appearance="none" flex=1
@@ -356,7 +356,7 @@ component T3Code
                       case none
                         view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="thread" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? "auto" : "100%") flex-grow=(viewport.width >= 600 ? 1 : 0) min-width=0 display="flex" flex-direction="column"
                   for thread in currentThread key=thread.id
                     header display="flex" align-items="center" padding="8px 16px"
                       button id="thread-back" press=back aria-label="Back"
@@ -418,7 +418,7 @@ component T3Code
                           row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
                             image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "inspector"
-                column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="inspector" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? "auto" : "100%") flex-grow=(viewport.width >= 600 ? 1 : 0) min-width=0 display="flex" flex-direction="column"
                   header
                     text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
                   scroll id="inspector" flex=1 min-height=0 padding=16
@@ -464,7 +464,7 @@ component T3Code
                           text "This month" font="-exact-body"
                           text "0 agent minutes" font="-exact-footnote" color="-exact-secondary-label"
               if e.name == "settings"
-                column navigationKey=`${e.id}` navigationScroll="settings" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="settings" position=(viewport.width >= 600 ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(viewport.width >= 600 ? 320 : "100%") flex-shrink=0 display="flex" flex-direction="column"
                   header padding="8px 16px"
                     text "Settings" role="heading" aria-level=1
                   list id="settings" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
@@ -475,6 +475,11 @@ component T3Code
                       row
                         button press=openEnvironments testId="environments-button" aria-label="Environments"
                           text "Environments"
+            if t.name == "threads" and viewport.width >= 600 and currentThreadId == ""
+              column position="absolute" top=0 bottom=0 left=320 right=0 align-items="center" justify-content="center" gap=21 padding=48 background-color="screen" testId="thread-empty-detail"
+                image "symbol:sf/sidebar.left" font-size=28 color="muted"
+                text "Select a thread" font-size=21 line-height="28px" font-weight=700
+                text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" text-align="center"
       column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
         button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
           text "All environments"
