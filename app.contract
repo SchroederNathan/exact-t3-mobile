@@ -7,14 +7,14 @@ font "DM Sans"
 
 routes nav
   tab threads "/"
-  tab threadDetail "/thread-detail"
+    threadDetail "/thread-detail"
     newThread "/threads/new"
     thread "/threads/:id"
     inspector "/threads/:id/inspect/:kind"
   tab pullRequests "/pulls"
   tab usage "/usage"
   tab settings "/settings"
-  tab settingsDetail "/settings-detail"
+    settingsDetail "/settings-detail"
     environments "/environments"
     addEnvironment "/environments/new"
 
@@ -127,7 +127,7 @@ component T3Code
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive openError = match opened { case some(reply) => reply.error, case none => "" }
   derive sendError = match sent { case some(reply) => reply.error, case none => "" }
-  derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
+  derive visibleTab = nav.tab
   derive current = top(nav)
   derive currentThreadId = current.name == "thread" or current.name == "inspector" ? current.params.id : ""
   derive currentThread = selectedThread(catalog, currentThreadId)
@@ -230,7 +230,7 @@ component T3Code
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
       column flex=1 min-height=0 position="relative"
         for t in nav.tabs key=t.name
-          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name or (viewport.width >= 600 and ((visibleTab == "threads" and (t.name == "threads" or t.name == "threadDetail")) or (visibleTab == "settings" and (t.name == "settings" or t.name == "settingsDetail")))) ? "flex" : "none") flex=1 min-height=0 position="absolute" inset=0
+          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position="absolute" inset=0
             for e in t.stack key=e.id
               if e.name == "threads"
                 column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" data-workspace-header="true" data-search-placement=(viewport.width < 600 ? "button" : "integrated") data-brand-stage="DEV" background-color=(viewport.width >= 600 ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction="column"
@@ -281,6 +281,11 @@ component T3Code
                               text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
                               view flex=1 height=1 background-color="edge"
                               image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
+                  if currentThreadId == ""
+                    column navigationSplit="placeholder" align-items="center" justify-content="center" gap=21 padding=48 testId="thread-empty-detail"
+                      image "symbol:sf/sidebar.left" font-size=28 color="muted"
+                      text "Select a thread" font-size=21 line-height="28px" font-weight=700
+                      text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" text-align="center"
               if e.name == "threadDetail" or e.name == "settingsDetail"
                 column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   if e.name == "threadDetail" and viewport.width >= 600
@@ -517,9 +522,3 @@ component T3Code
           image "symbol:settings"
           text "Settings"
 
-        button role="tab" aria-controls="panel-threadDetail" aria-selected=(nav.tab == "threadDetail") press=selectTab("threadDetail") testId="tab-threadDetail"
-          image "symbol:sf/text.bubble"
-          text "Thread"
-        button role="tab" aria-controls="panel-settingsDetail" aria-selected=(nav.tab == "settingsDetail") press=selectTab("settingsDetail") testId="tab-settingsDetail"
-          image "symbol:settings"
-          text "Settings detail"
