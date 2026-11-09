@@ -31,6 +31,7 @@ shape Environment
   url: string
   status: string
   enabled: bool
+  machineSymbol: string
 
 shape Message
   id: string
@@ -107,6 +108,7 @@ fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thr
 component T3Code
   state query = ""
   state selectedEnvironment = ""
+  state selectedProject = ""
   state composer = ""
   state address = ""
   state code = ""
@@ -129,7 +131,8 @@ component T3Code
   derive current = top(nav)
   derive currentThreadId = current.name == "thread" or current.name == "inspector" ? current.params.id : ""
   derive currentThread = selectedThread(catalog, currentThreadId)
-  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query)
+  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive canSend = composer.trim() != "" and not pending(sent)
 
   action selectTab(name: string)
@@ -140,6 +143,10 @@ component T3Code
 
   action filterEnvironment(id: string)
     selectedEnvironment = id
+    selectedProject = ""
+
+  action filterProject(id: string)
+    selectedProject = id
 
   action openEnvironments
     nav = open(nav, "/environments")
@@ -252,7 +259,7 @@ component T3Code
                             text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
                             image "symbol:sf/chevron.down" width=11 height=11
                           button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
-                            text "All projects"
+                            text selectedProjectLabel
                             image "symbol:sf/chevron.down" width=11 height=11
                       section
                         for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
@@ -310,7 +317,7 @@ component T3Code
                           column flex=1 min-width=0 gap=1.75
                             row align-items="center" gap=5.25
                               view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
-                              image "symbol:sf/laptopcomputer" width=14 height=14 color="muted"
+                              image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
                               text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
                             text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
                             text environment.status font-size=13 line-height="17px" color="muted"
@@ -487,8 +494,11 @@ component T3Code
           button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
             text environment.label
       column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
-        button role="menuitemradio" aria-checked=true popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
+        button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
           text "All projects"
+        for project in catalog.projects key=project.id
+          button press=filterProject(project.id) role="menuitemradio" aria-checked=(selectedProject == project.id) popovertarget="project-filter-menu" popovertargetaction="hide" testId=`project-${project.id}`
+            text project.title
       column id="terminal-menu" popover="auto" role="menu" aria-label="Terminal"
         button role="menuitem" disabled=true
           text "No project scripts"

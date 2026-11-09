@@ -1,6 +1,7 @@
 import type { Answer, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import {
   DirectSession,
+  normalizeEnvironmentUrl,
   object,
   pair,
   socketUrl,
@@ -49,6 +50,7 @@ async function loadEnvironments(storage: Storage): Promise<Environment[]> {
       url: string(environment.url),
       enabled: environment.enabled === true,
       status: environment.enabled === true ? "Disconnected" : "Off",
+      machineSymbol: string(environment.machineSymbol) || "server.rack",
     };
   });
 }
@@ -192,6 +194,34 @@ const sources: Sources = {
           environments
             .filter((entry) => entry.id !== paired.environment.id)
             .concat(paired.environment),
+        );
+      } else if (operation === "reconnect") {
+        const environment = environments.find((entry) => entry.id === id);
+        if (!environment) throw new Error("This environment is no longer available.");
+        if (!environment.enabled) throw new Error("Turn on this environment before reconnecting.");
+      } else if (operation === "update-environment") {
+        const environment = environments.find((entry) => entry.id === id);
+        if (!environment) throw new Error("This environment is no longer available.");
+        const input: unknown = JSON.parse(value);
+        const fields = object(input);
+        const label = string(fields.label).trim();
+        if (!label) throw new Error("Enter an environment name.");
+        const url = normalizeEnvironmentUrl(string(fields.url));
+        await saveEnvironments(
+          storage,
+          environments.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  label,
+                  url,
+                  machineSymbol:
+                    current?.environment.id === id
+                      ? current.environment.machineSymbol
+                      : entry.machineSymbol,
+                }
+              : entry,
+          ),
         );
       } else if (operation === "toggle") {
         await saveEnvironments(

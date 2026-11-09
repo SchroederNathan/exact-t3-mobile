@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DirectSession,
+  normalizeEnvironmentUrl,
   pair,
   parsePairingAddress,
   scopedThreadId,
@@ -28,6 +29,16 @@ describe("direct T3 connection", () => {
     ).toEqual({ origin: "http://127.0.0.1:13773", credential: "nested" });
     expect(() => parsePairingAddress("file:///etc/passwd#token=x", "")).toThrow("HTTP");
     expect(() => parsePairingAddress("https://example.test", "")).toThrow("pairing code");
+    expect(normalizeEnvironmentUrl("localhost:13773/path#token=discarded")).toBe(
+      "http://localhost:13773",
+    );
+    expect(normalizeEnvironmentUrl("https://remote.example:444/path")).toBe(
+      "https://remote.example:444",
+    );
+    expect(() => normalizeEnvironmentUrl("file:///workspace")).toThrow("HTTP");
+    expect(() => normalizeEnvironmentUrl("https://user:password@example.test")).toThrow(
+      "credentials",
+    );
     const scopedId = scopedThreadId("env:one", "thread/100%");
     const routedId = threadIdFromUrl(`/threads/${encodeURIComponent(scopedId)}`);
     expect(routedId).toBe(scopedId);
@@ -64,6 +75,7 @@ describe("direct T3 connection", () => {
           url: `http://127.0.0.1:${server.port}`,
           enabled: true,
           status: "Connecting",
+          machineSymbol: "server.rack",
         },
         token: "returned-token",
       });
@@ -80,6 +92,7 @@ describe("direct T3 connection", () => {
       url: "http://localhost:13773",
       enabled: true,
       status: "Connecting",
+      machineSymbol: "server.rack",
     });
     session.open({
       readyState: 1,
@@ -168,9 +181,21 @@ describe("direct T3 connection", () => {
       }),
     );
     expect(session.environment.machineSymbol).toBe("macmini");
-    session.receive(JSON.stringify({ _tag: "Chunk", requestId: configRequest.id, values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: "cloud" } } }] }));
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: configRequest.id,
+        values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: "cloud" } } }],
+      }),
+    );
     expect(session.environment.machineSymbol).toBe("cloud");
-    session.receive(JSON.stringify({ _tag: "Chunk", requestId: configRequest.id, values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: null } } }] }));
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: configRequest.id,
+        values: [{ type: "settingsUpdated", payload: { settings: { environmentIcon: null } } }],
+      }),
+    );
     expect(session.environment.machineSymbol).toBe("macmini");
     expect(session.projectList()).toEqual([
       { id: "env:p", title: "T3 Code", environmentId: "env" },
@@ -323,6 +348,7 @@ describe("direct T3 connection", () => {
       url: "http://localhost:13773",
       enabled: true,
       status: "Connecting",
+      machineSymbol: "server.rack",
     });
     session.open({
       readyState: 1,

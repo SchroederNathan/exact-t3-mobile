@@ -29,10 +29,7 @@ export function string(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export function parsePairingAddress(
-  address: string,
-  code: string,
-): { origin: string; credential: string } {
+function addressParts(address: string): { origin: string; credential: string } {
   let input = address.trim();
   if (!input) throw new Error("Enter your server address or pairing URL.");
   if (!input.includes("://")) {
@@ -41,20 +38,52 @@ export function parsePairingAddress(
   }
   let url = new URL(input);
   const nested = url.searchParams.get("pairingUrl");
-  if (nested && url.protocol.startsWith("t3code")) return parsePairingAddress(nested, code);
+  if (nested && url.protocol.startsWith("t3code")) return addressParts(nested);
   const credential =
-    code.trim() ||
-    new URLSearchParams(url.hash.slice(1)).get("token") ||
-    url.searchParams.get("token") ||
-    "";
+    new URLSearchParams(url.hash.slice(1)).get("token") || url.searchParams.get("token") || "";
   const host = url.searchParams.get("host");
   if (host) url = new URL(host);
   if (url.protocol !== "http:" && url.protocol !== "https:")
     throw new Error("Use an HTTP or HTTPS server address.");
   if (url.username || url.password)
     throw new Error("Use a pairing code instead of credentials in the address.");
-  if (!credential) throw new Error("Enter the pairing code from T3 Code on your computer.");
   return { origin: url.origin, credential };
+}
+
+export function parsePairingAddress(
+  address: string,
+  code: string,
+): { origin: string; credential: string } {
+  const parsed = addressParts(address);
+  const credential = code.trim() || parsed.credential;
+  if (!credential) throw new Error("Enter the pairing code from T3 Code on your computer.");
+  return { origin: parsed.origin, credential };
+}
+
+export function normalizeEnvironmentUrl(address: string): string {
+  return addressParts(address).origin;
+}
+
+function machineSymbol(config: ObjectValue): string {
+  const kind =
+    string(object(config.settings).environmentIcon) ||
+    string(object(object(config.environment).platform).machine);
+  switch (kind) {
+    case "cloud":
+      return "cloud";
+    case "linux":
+      return "terminal";
+    case "desktop":
+      return "desktopcomputer";
+    case "laptop":
+      return "laptopcomputer";
+    case "mac-mini":
+      return "macmini";
+    case "mac-studio":
+      return "macstudio";
+    default:
+      return "server.rack";
+  }
 }
 
 export function scopedThreadId(environmentId: string, threadId: string): string {
@@ -127,6 +156,7 @@ export async function pair(
       url: origin,
       enabled: true,
       status: "Connecting",
+      machineSymbol: machineSymbol({ environment: descriptor }),
     },
     token,
   };
@@ -302,7 +332,11 @@ export class DirectSession {
   >();
 
   constructor(environment: Environment) {
-    this.environment = { ...environment, status: "Connecting" };
+    this.environment = {
+      ...environment,
+      machineSymbol: environment.machineSymbol || "server.rack",
+      status: "Connecting",
+    };
   }
 
   private request(tag: string, payload: unknown): string {
@@ -518,6 +552,7 @@ export class DirectSession {
               this.config.providers = object(item.payload).providers;
             if (item.type === "settingsUpdated")
               this.config.settings = object(item.payload).settings;
+            this.environment.machineSymbol = machineSymbol(this.config);
           }
         }
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
