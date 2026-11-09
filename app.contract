@@ -149,7 +149,7 @@ component T3Code
     selectedProject = id
 
   action openEnvironments
-    nav = open(nav, "/environments")
+    nav = push(nav, "/environments")
 
   action addEnvironment
     nav = push(nav, "/environments/new")
@@ -170,22 +170,17 @@ component T3Code
       code = ""
 
   action openThread(url: string)
-    nav = open(nav, url)
+    nav = push(nav, url)
     send opened = command("open-url", url, "")
 
   action workspaceAction(value: string)
     if value.startsWith("tab:")
       nav = select(nav, value.replaceAll("tab:", ""))
     else if value == "compose"
-      nav = open(nav, "/threads/new")
+      nav = push(nav, "/threads/new")
 
   action back
-    if current.name == "thread"
-      nav = select(nav, "threads")
-    else if current.name == "environments"
-      nav = select(nav, "settings")
-    else
-      nav = back(nav)
+    nav = back(nav)
 
   action createProjectThread(id: string)
     send created = createThread(id, "New thread")
@@ -194,7 +189,7 @@ component T3Code
     match created
       case some(reply)
         if reply.ok
-          nav = open(nav, path("thread", reply.threadId))
+          nav = push(nav, path("thread", reply.threadId))
           send opened = command("open", reply.threadId, "")
       case none
         composer = composer
