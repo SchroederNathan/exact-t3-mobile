@@ -1,99 +1,176 @@
-import type { Answer, Result, Sources, Storage } from './app.contract.d.ts';
+import type { Answer, Result, Sources, Storage, Store } from "./app.contract.d.ts";
+import {
+  DirectSession,
+  object,
+  pair,
+  socketUrl,
+  string,
+  threadIdentity,
+  type Catalog,
+  type Environment,
+} from "./connection";
 
-export const grants = 'fs.read app:/data/catalog.json\nfs.write app:/data/catalog.json';
+export const grants =
+  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
-const FILE = 'app:/data/catalog.json';
-type Catalog = Result<'loadCatalog'>;
-type Thread = Catalog['threads'][number];
+const FILE = "app:/data/environments-v1.json";
+const SECRET = "t3-environment-tokens";
+let current: DirectSession | undefined;
+let selectedThread = "";
 
-const seed: Catalog = {
-  environments: [
-    { id: 'macbook', label: 'MacBook Pro', url: 'http://192.168.1.24:3773', status: 'Connected', enabled: true },
-    { id: 'moonbase', label: 'Moonbase Terminal', url: 'https://moonbase.t3.sh', status: 'Connected', enabled: true },
-    { id: 'pocket-pi', label: 'Pocket Pi', url: 'https://pocket-pi.t3.sh', status: 'Available', enabled: false },
-  ],
-  threads: [
-    {
-      id: 'offline-launch',
-      environmentId: 'macbook',
-      project: 'T3 Code',
-      title: 'Ship the offline launch checklist',
-      status: 'Waiting',
-      updatedAt: '8m ago',
-      messages: [
-        { id: 'offline-launch-1', role: 'user', body: 'Ship the offline launch checklist before touchdown.', createdAt: '09:24' },
-        { id: 'offline-launch-2', role: 'assistant', body: 'I will check the mobile startup path, cache the last environment snapshot, and verify the reconnect flow.', createdAt: '09:25' },
-      ],
-    },
-    {
-      id: 'suspense-handoff',
-      environmentId: 'moonbase',
-      project: 'React',
-      title: 'Polish the Suspense handoff',
-      status: 'Working',
-      updatedAt: '27m ago',
-      messages: [
-        { id: 'suspense-handoff-1', role: 'user', body: 'Polish the Suspense handoff for the train tunnel.', createdAt: '09:05' },
-        { id: 'suspense-handoff-2', role: 'assistant', body: 'The handoff is staged. I am checking the loading boundary and the final transition now.', createdAt: '09:08' },
-      ],
-    },
-    {
-      id: 'remote-command',
-      environmentId: 'moonbase',
-      project: 'T3 Code',
-      title: 'Remote command center',
-      status: 'Done',
-      updatedAt: '1h ago',
-      messages: [
-        { id: 'remote-command-1', role: 'user', body: 'Make the remote command center ready for review.', createdAt: '08:12' },
-        { id: 'remote-command-2', role: 'assistant', body: 'The command center is ready. All checks passed and the review notes are attached.', createdAt: '08:18' },
-      ],
-    },
-  ],
-};
+function credentials(store: Store): Record<string, string> {
+  const saved: unknown = JSON.parse(store.get(SECRET) || "{}");
+  return Object.fromEntries(
+    Object.entries(object(saved)).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
 
-async function load(storage: Storage): Promise<Catalog> {
+async function loadEnvironments(storage: Storage): Promise<Environment[]> {
+  let bytes: ArrayBuffer;
   try {
-    const bytes = await storage.fs.readFile(FILE);
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as Catalog;
-    if (Array.isArray(value.environments) && Array.isArray(value.threads)) return value;
-  } catch {}
-  return structuredClone(seed);
+    bytes = await storage.fs.readFile(FILE);
+  } catch (error) {
+    if (object(error).code === "ENOENT") return [];
+    throw error;
+  }
+  const saved: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  if (!Array.isArray(saved)) throw new Error("The saved environment list could not be read.");
+  return saved.map((value: unknown) => {
+    const environment = object(value);
+    if (!string(environment.id) || !string(environment.url))
+      throw new Error("A saved environment is missing its address.");
+    return {
+      id: string(environment.id),
+      label: string(environment.label),
+      url: string(environment.url),
+      enabled: environment.enabled === true,
+      status: environment.enabled === true ? "Disconnected" : "Off",
+    };
+  });
 }
 
-async function save(storage: Storage, catalog: Catalog): Promise<Result<'command'>> {
-  await storage.fs.atomicWriteFile(FILE, new TextEncoder().encode(JSON.stringify(catalog)));
-  return { ok: true, error: '' };
+async function saveEnvironments(storage: Storage, environments: Environment[]): Promise<void> {
+  await storage.fs.atomicWriteFile(FILE, new TextEncoder().encode(JSON.stringify(environments)));
 }
 
-function appendMessage(thread: Thread, body: string): Thread {
-  const number = thread.messages.length + 1;
-  return {
-    ...thread,
-    status: 'Working',
-    updatedAt: 'now',
-    messages: thread.messages.concat([
-      { id: `${thread.id}-${number}`, role: 'user', body, createdAt: 'now' },
-      { id: `${thread.id}-${number + 1}`, role: 'assistant', body: `I received “${body}”. I am working on it in ${thread.project}.`, createdAt: 'now' },
-    ]),
-  };
+async function loadCatalog(selected: string, store: Store, storage: Storage): Promise<Catalog> {
+  current?.disconnected("Disconnected");
+  current = undefined;
+  const environments = await loadEnvironments(storage);
+  const environment = selected
+    ? environments.find((entry) => entry.id === selected && entry.enabled)
+    : environments.find((entry) => entry.enabled);
+  if (!environment) return { environments, threads: [] };
+  const token = credentials(store)[environment.id];
+  if (!token)
+    return {
+      environments: environments.map((entry) =>
+        entry.id === environment.id ? { ...entry, status: "Pairing required" } : entry,
+      ),
+      threads: [],
+    };
+  const session = new DirectSession(environment);
+  current = session;
+  if (selectedThread) {
+    const identity = threadIdentity(selectedThread);
+    if (identity.environmentId === environment.id) session.select(identity.threadId);
+  }
+  const snapshot = (): Catalog => ({
+    environments: environments.map((entry) =>
+      entry.id === environment.id ? { ...session.environment } : entry,
+    ),
+    threads: session.threads(),
+  });
+  try {
+    const url = await socketUrl(environment, token);
+    return fetch(url, {
+      exactStream(event, socket) {
+        if (event.type === "open" && socket) session.open(socket);
+        else if (event.type === "message") {
+          try {
+            session.receive(
+              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data),
+            );
+          } catch {
+            session.disconnected("The server sent an invalid response.");
+          }
+        } else if (event.type === "close" || event.type === "error") {
+          session.disconnected(event.message || event.reason || "Disconnected");
+        }
+        return snapshot();
+      },
+    });
+  } catch (error) {
+    session.disconnected(
+      error instanceof Error ? error.message : "Could not connect to the environment.",
+    );
+    return snapshot();
+  }
 }
 
 const sources: Sources = {
-  loadCatalog: async (_args, _store, storage): Promise<Result<'loadCatalog'>> => load(storage),
-  command: async ([operation, id, value], _store, storage): Promise<Result<'command'>> => {
-    const catalog = await load(storage);
-    if (operation === 'toggle') {
-      const environments = catalog.environments.map((environment) =>
-        environment.id === id ? { ...environment, enabled: value === 'true' } : environment,
-      );
-      return save(storage, { ...catalog, environments });
+  loadCatalog: (args, store, storage) =>
+    loadCatalog((args as readonly string[])[0] ?? "", store, storage),
+  command: async ([operation, id, value], store, storage): Promise<Result<"command">> => {
+    try {
+      if (operation === "open") {
+        const identity = threadIdentity(id);
+        selectedThread = id;
+        if (current?.environment.id !== identity.environmentId)
+          throw new Error("Select this thread’s environment to connect.");
+        current.select(identity.threadId);
+        return { ok: true, error: "" };
+      }
+      if (operation === "send") {
+        const identity = threadIdentity(id);
+        if (!value.trim()) return { ok: false, error: "Write a message first." };
+        if (current?.environment.id !== identity.environmentId)
+          throw new Error("This environment is disconnected.");
+        return current.send(
+          identity.threadId,
+          value.trim(),
+          crypto.randomUUID(),
+          crypto.randomUUID(),
+        );
+      }
+      const environments = await loadEnvironments(storage);
+      if (operation === "pair") {
+        const paired = await pair(id, value);
+        const tokens = credentials(store);
+        store.set(SECRET, JSON.stringify({ ...tokens, [paired.environment.id]: paired.token }));
+        await saveEnvironments(
+          storage,
+          environments
+            .filter((entry) => entry.id !== paired.environment.id)
+            .concat(paired.environment),
+        );
+      } else if (operation === "toggle") {
+        await saveEnvironments(
+          storage,
+          environments.map((entry) =>
+            entry.id === id ? { ...entry, enabled: value === "true" } : entry,
+          ),
+        );
+      } else if (operation === "remove") {
+        const tokens = credentials(store);
+        delete tokens[id];
+        store.set(SECRET, JSON.stringify(tokens));
+        await saveEnvironments(
+          storage,
+          environments.filter((entry) => entry.id !== id),
+        );
+      } else {
+        return { ok: false, error: "The requested change is not available." };
+      }
+      return { ok: true, error: "" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "The requested change failed.",
+      };
     }
-    if (operation === 'send' && typeof id === 'string' && typeof value === 'string' && value.trim() !== '') {
-      const threads = catalog.threads.map((thread) => thread.id === id ? appendMessage(thread, value.trim()) : thread);
-      return save(storage, { ...catalog, threads });
-    }
-    return { ok: false, error: 'The requested change is not available.' };
   },
 };
 
