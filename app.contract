@@ -372,7 +372,7 @@ component T3Code
                         case none
                           view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
+                column navigationKey=`${e.id}` navigationScroll="thread" navigationBar="none" position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
                   if wide
                     column width=(duo ? 300 : 320) min-width=(duo ? 300 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
@@ -383,24 +383,24 @@ component T3Code
                       column flex=1 min-width=0 gap=0
                         text currentThreadTitle(currentThread) role="heading" aria-level=2 line-clamp=1 font-size=18 line-height="23px" font-weight=700
                         text currentThreadSubtitle(catalog, currentThread) color="muted" line-clamp=1 font-size=14 line-height="19px"
-                    row role="toolbar" aria-label="Thread controls" display=(wide ? "none" : "flex") backgroundMaterial="glass" border-radius=26 padding="0 4px" gap=0
-                        button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/terminal" width=20 height=20
-                        button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
-                        button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/folder" width=20 height=20
-                  if wide
-                    column role="toolbar" aria-label="Thread controls" position="absolute" right=16 top=72 z-index=3 gap=8
-                      button press=workspaceAction("compose") aria-label="New chat" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 border-radius=26 backgroundMaterial="glass" color="foreground"
-                        image "symbol:sf/square.and.pencil" width=24 height=24
-                      column backgroundMaterial="glass" border-radius=26 padding="4px 0" gap=0
-                        button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
-                          image "symbol:sf/terminal" width=24 height=24
-                        button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
-                          image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=24 height=24
-                        button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
-                          image "symbol:sf/folder" width=24 height=24
+                      row role="toolbar" aria-label="Thread controls" display=(wide ? "none" : "flex") backgroundMaterial="glass" border-radius=26 padding="0 4px" gap=0
+                          button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                            image "symbol:sf/terminal" width=20 height=20
+                          button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                            image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
+                          button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
+                            image "symbol:sf/folder" width=20 height=20
+                    if wide
+                      column role="toolbar" aria-label="Thread controls" position="absolute" right=16 top=72 z-index=3 gap=8
+                        button press=workspaceAction("compose") aria-label="New chat" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 border-radius=26 backgroundMaterial="glass" color="foreground"
+                          image "symbol:sf/square.and.pencil" width=24 height=24
+                        column backgroundMaterial="glass" border-radius=26 padding="4px 0" gap=0
+                          button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
+                            image "symbol:sf/terminal" width=24 height=24
+                          button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
+                            image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=24 height=24
+                          button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=52 height=52 color="foreground"
+                            image "symbol:sf/folder" width=24 height=24
                     for thread in currentThread key=thread.id
                       if openError != ""
                         text openError color="-exact-system-red" padding=16
