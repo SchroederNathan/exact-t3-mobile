@@ -1,12 +1,22 @@
 use EmptyState from "exact:content"
 
+font "DM Sans"
+  400 = "assets/fonts/DMSans_400Regular.ttf"
+  500 = "assets/fonts/DMSans_500Medium.ttf"
+  700 = "assets/fonts/DMSans_700Bold.ttf"
+
 routes nav
   tab threads "/"
-    environments "/environments"
     thread "/threads/:id"
   tab pullRequests "/pulls"
   tab usage "/usage"
   tab settings "/settings"
+    environments "/environments"
+    addEnvironment "/environments/new"
+
+shape Viewport
+  width: number
+  height: number
 
 shape Environment
   id: string
@@ -46,13 +56,21 @@ component T3Code
   state query = ""
   state selectedEnvironment = ""
   state composer = ""
-  resource catalog = loadCatalog() as shape Catalog else empty()
+  state address = ""
+  state code = ""
+  resource viewport = exactViewport() as shape Viewport
+  resource catalog = loadCatalog(selectedEnvironment) as shape Catalog else empty()
   mutation changed as shape Reply refreshes catalog
+  mutation sent as shape Reply then afterSend
+  mutation opened as shape Reply
+  mutation paired as shape Reply refreshes catalog then afterPair
+  derive pairError = match paired { case some(reply) => reply.error, case none => "" }
+  derive sendError = match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
   derive currentThreadId = current.name == "thread" ? current.params.id : ""
   derive currentThread = selectedThread(catalog, currentThreadId)
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query)
-  derive canSend = composer.trim() != "" and not pending(changed)
+  derive canSend = composer.trim() != "" and not pending(sent)
 
   action selectTab(name: string)
     nav = select(nav, name)
@@ -64,10 +82,35 @@ component T3Code
     selectedEnvironment = id
 
   action openEnvironments
-    nav = push(nav, "/environments")
+    nav = open(nav, "/environments")
+
+  action addEnvironment
+    nav = open(nav, "/environments/new")
+
+  action editAddress(value: string)
+    address = value
+
+  action editCode(value: string)
+    code = value
+
+  action pair
+    send paired = command("pair", address.trim(), code.trim())
+
+  action afterPair
+    if pairError == ""
+      nav = open(nav, "/environments")
+      address = ""
+      code = ""
 
   action openThread(url: string)
     nav = go(nav, url)
+    send opened = command("open", url.replaceAll("/threads/", ""), "")
+
+  action workspaceAction(value: string)
+    if value.startsWith("tab:")
+      nav = select(nav, value.replaceAll("tab:", ""))
+    else if value == "compose"
+      nav = open(nav, "/environments/new")
 
   action back
     nav = back(nav)
@@ -80,93 +123,119 @@ component T3Code
 
   action sendMessage
     if canSend and currentThreadId != ""
-      send changed = command("send", currentThreadId, composer.trim())
+      send sent = command("send", currentThreadId, composer.trim())
+
+  action afterSend
+    if sendError == ""
       composer = ""
 
   view
-    main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column"
+    main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
       column flex=1 min-height=0 position="relative"
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position="absolute" inset=0
             for e in t.stack key=e.id
               if e.name == "threads"
-                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll="home" navigationSplit="320" data-workspace-header="true" data-search-placement=(viewport.width < 600 ? "button" : "integrated") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header display="flex" align-items="center" gap=8 padding="8px 16px"
-                    button press=openEnvironments buttonStyle="glass" aria-label="Environments" testId="environments-button" font-size=18
-                      image "symbol:sf/point.3.connected.trianglepath.dotted"
                     text "T3 Code" role="heading" aria-level=2 flex=1
-                    text "MacBook Pro" role="status" font="-exact-footnote" color="-exact-secondary-label" overflow="hidden" text-overflow="ellipsis"
-                    button popovertarget="home-filter" buttonStyle="glass" aria-label="Filter threads" testId="home-filter-button"
-                      image "symbol:filter"
-                    input type="search" value=query input=search placeholder="Search" aria-label="Search threads" testId="search" margin="0 16px 8px"
+                    input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0
                   if failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
                   else if visibleThreads.length == 0 and not pending(catalog)
-                    EmptyState(symbol="symbol:messages", title="No threads yet", message="Create a task to start a new coding session.")
+                    column flex=1 align-items="center" justify-content="center" padding="28px 60px 128px" gap=7
+                      text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
+                      text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
+                      if catalog.environments.length == 0
+                        button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="12px 18px" margin-top=10 font-weight=700
+                          text "Add environment"
                   else
-                    list id="home" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                    list id="home" appearance="none" flex=1 min-height=0 background-color="screen"
                       section
-                        row gap=8 padding="0 16px 10px" flex-wrap="wrap"
+                        row gap=8 padding="2px 20px 10px" flex-wrap="wrap"
                           button popovertarget="environment-filter-menu" buttonStyle="glass" testId="all-environments"
                             text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
+                            image "symbol:sf/chevron.down" font-size=11
                           button popovertarget="project-filter-menu" buttonStyle="glass" testId="all-projects"
                             text "All projects"
+                            image "symbol:sf/chevron.down" font-size=11
                       section
                         for thread in visibleThreads key=thread.id
                           link href=path("thread", thread.id) testId=`thread-${thread.id}`
-                            column flex=1 min-width=0 gap=3 padding="4px 0"
+                            column flex=1 min-width=0 gap=3 padding="8.75px 17.5px" border-bottom-width=0.33 border-bottom-style="solid" border-bottom-color="edge"
                               row align-items="center" gap=6
-                                text thread.title font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
-                                text thread.status font="-exact-footnote" color="-exact-secondary-label"
+                                text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 overflow-wrap="break-word"
+                                text thread.updatedAt font-size=12 line-height="16px" color="muted"
                               row align-items="center" gap=6
-                                text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 overflow-wrap="break-word"
-                                text thread.updatedAt font="-exact-footnote" color="-exact-tertiary-label"
-                              image "symbol:forward-chevron" width=12 height=12
+                                text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font-size=13 line-height="17px" color="muted" flex=1 min-width=0 overflow-wrap="break-word"
+                                text thread.status font-size=12 color="muted"
               if e.name == "environments"
-                column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header display="flex" align-items="center" padding="8px 16px"
-                    button id="back" press=back buttonStyle="glass" aria-label="Close environments" testId="environments-close"
-                      image "symbol:close"
-                    text "Environments" role="heading" aria-level=1 flex=1
-                    button disabled=true buttonStyle="glass" aria-label="Add environment" testId="environment-add"
+                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Environments" role="heading" aria-level=2
+                    button press=addEnvironment aria-label="Add environment" testId="environment-add"
                       image "symbol:add"
-                  list id="environments" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 padding="16px 20px"
-                    section
-                      header
-                        text "Connected"
+                  scroll id="environments" flex=1 min-height=0 padding="14px 17.5px 36px"
+                    column border-radius=24 background-color="card" overflow="hidden"
+                      if catalog.environments.length == 0
+                        column align-items="center" gap=10.5 padding="28px 21px"
+                          row width=42 height=42 border-radius=16 background-color="bubble" align-items="center" justify-content="center"
+                            image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
+                          text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
                       for environment in catalog.environments key=environment.id
-                        row gap=12 padding="12px 4px" flex-wrap="wrap" align-items="flex-start"
-                          column flex=1 min-width=0 gap=3
-                            row align-items="center" gap=7
-                              image "symbol:home" width=14 height=14
-                              text environment.label font="-exact-body" flex=1 min-width=0 overflow-wrap="break-word"
-                            text environment.status font="-exact-footnote" color="-exact-secondary-label"
-                            text environment.url font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
-                            text (environment.enabled ? "Enabled" : "Off") font="-exact-footnote" color=(environment.enabled ? "-exact-secondary-label" : "-exact-tertiary-label")
-                          row gap=8 flex-shrink=0 align-items="center"
-                            input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                        row gap=10.5 padding="12.25px 14px" align-items="center"
+                          column flex=1 min-width=0 gap=1.75
+                            row align-items="center" gap=5.25
+                              view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
+                              image "symbol:sf/laptopcomputer" width=14 height=14 color="muted"
+                              text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
+                            text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
+                            if environment.status != "Connected"
+                              text environment.status font-size=13 line-height="17px" color="muted"
+                          input type="checkbox" switch checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                          button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
                             image "symbol:forward-chevron" width=12 height=12
-                    section
-                      footer
-                        text "Environments connect T3 Code to your machines and remote workspaces." font="-exact-footnote" color="-exact-secondary-label"
+              if e.name == "addEnvironment"
+                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Add environment" role="heading" aria-level=2
+                    button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
+                      image "symbol:sf/checkmark"
+                  scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
+                    column gap=22.75
+                      column height=250 border-radius=26 background-image="radial-gradient(circle, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
+                        column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
+                          image "symbol:sf/qrcode.viewfinder" width=44 height=44 color="#666666"
+                          text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
+                        text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
+                      column gap=7
+                        text "Or enter it" font-size=14 font-weight=500 color="muted" padding="0 14px"
+                        column background-color="card" border-radius=26 overflow="hidden"
+                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                            text "Address" width=70 color="muted" line-height="23px"
+                            input value=address input=editAddress placeholder="192.168.1.100:3773" aria-label="Address" testId="address" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-size=16
+                          view height=0.5 margin-left=14 background-color="edge"
+                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                            text "Code" width=70 color="muted" line-height="23px"
+                            input value=code input=editCode submit=pair placeholder="Pairing code" aria-label="Code" testId="pair-code" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-size=16
+                        text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
               if e.name == "thread"
                 column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction="column"
                   for thread in currentThread key=thread.id
                     header display="flex" align-items="center" padding="8px 16px"
-                      column flex=1 min-width=0 gap=2
-                        text thread.title role="heading" aria-level=2 overflow-wrap="break-word"
-                        text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}` font="-exact-footnote" color="-exact-secondary-label" overflow-wrap="break-word"
+                      text thread.title role="heading" aria-level=2
+                      text `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`
                       button buttonStyle="glass" aria-label="Thread actions" testId="thread-actions" popovertarget="thread-menu"
                         image "symbol:ellipsis"
-                    list id="thread" appearance="none" flex=0 height="calc(100% - 160px)" min-height=0 padding="16px"
+                    list id="thread" appearance="none" flex=1 min-height=0 padding="12px 16px"
                       for message in thread.messages key=message.id
                         row justify-content=(message.role == "user" ? "flex-end" : "flex-start") padding="5px 0" width="100%"
                           if message.role == "user"
-                            text message.body user-select="text" overflow-wrap="break-word" max-width="84%" padding="11px 15px" border-radius=22 background-color="AccentColor" color="AccentColorText" testId=`message-${message.id}`
+                            text message.body user-select="text" overflow-wrap="break-word" max-width="85%" padding="10px 14px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
                           else
                             text message.body user-select="text" overflow-wrap="break-word" max-width="94%" padding="8px 0" testId=`message-${message.id}`
-                    row align-items="flex-end" gap=8 padding="8px 14px calc(env(safe-area-inset-bottom) + 10px)" flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
-                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=24 backgroundMaterial="glass" border-width=1 border-style="solid" border-color="-exact-separator"
+                    row align-items="flex-end" gap=8 padding="6px 12px calc(env(safe-area-inset-bottom) + 6px)" flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
+                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="flex-end" gap=8 padding="5px 6px 5px 16px" min-height=44 border-radius=27 backgroundMaterial="glass"
                         textarea id="composer" value=composer input=editComposer rows=1 max-height=140 min-height=44 flex=1 min-width=0 padding="7px 0" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Message" aria-label="Message" testId="composer"
                         button press=sendMessage disabled=not canSend buttonStyle="prominent-glass" retainFocus=true aria-label="Send" testId="send"
                           image "symbol:send"
@@ -199,6 +268,9 @@ component T3Code
                       row
                         text "T3 Code" font="-exact-body"
                         text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
+                      row
+                        button press=openEnvironments testId="environments-button" aria-label="Environments"
+                          text "Environments"
       column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
         button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
           text "All environments"
@@ -208,7 +280,8 @@ component T3Code
       column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
         button role="menuitemradio" aria-checked=true popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
           text "All projects"
-      row role="tablist" aria-label="Workspace" testId="tabs"
+      workspace-tab-bar selected-tab=nav.tab shows-compose=(nav.tab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(nav.tab == "threads" ? 12 : 76) display=(current.name == "thread" or current.name == "addEnvironment" or current.name == "environments" ? "none" : "flex")
+      row role="tablist" aria-label="Workspace" testId="tabs" display="none"
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
           image "symbol:sf/text.bubble"
           text "Chats"

@@ -1,23 +1,17 @@
-test "home shows seeded environments and threads"
+test "fresh install has no fabricated environments or threads"
   clock data
-  expect tree has "root"
-  expect tree has "thread-offline-launch"
-  expect tree has "all-projects"
+  expect state catalog.environments == []
+  expect state catalog.threads == []
+  expect tree has "empty-add-environment"
 
-test "environment toggles persist"
+test "a refused pairing keeps the address available to correct"
   clock data
-  tap "environments-button"
+  tap "empty-add-environment"
   clock settle
-  type "environment-pocket-pi" "true"
+  type "address" "file:///untrusted"
+  type "pair-code" "example"
+  tap "connect"
   clock data
-  expect state catalog.environments.2.enabled == true
-
-test "a thread opens and sends a local reply"
-  tap "thread-offline-launch"
-  clock settle
-  expect text "message-offline-launch-2" == "I will check the mobile startup path, cache the last environment snapshot, and verify the reconnect flow."
-  type "composer" "Check the cache"
-  tap "send"
-  clock data
-  expect text "composer" == ""
-  expect tree has "message-offline-launch-4"
+  expect state catalog.environments == []
+  expect text "address" == "file:///untrusted"
+  expect state paired.ok == false

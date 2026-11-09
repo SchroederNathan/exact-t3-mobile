@@ -5,6 +5,7 @@
   "id": "com.schroedernathan.t3code.exactios",
   "start_url": "/",
   "display": "standalone",
+  "modules": ["workspace-tab-bar"],
   "app": {
     "id": "com.schroedernathan.t3code.exactios",
     "name": "T3 Code Exact iOS"
@@ -12,12 +13,14 @@
   "host": {
     "ios": {
       "minimumOS": "17.0",
-      "deviceFamily": ["iphone", "ipad"]
+      "deviceFamily": ["iphone", "ipad"],
+      "localNetworking": "Connect to your T3 Code environments on your local network."
     }
   },
   "deploy": {
     "store": {
       "ios": "0"
     }
-  }
+  },
+  "data": ["workspace-header", "search-placement", "brand-stage"]
 }

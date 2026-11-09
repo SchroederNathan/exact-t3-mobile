@@ -171,7 +171,8 @@ final class T3NativeModule: ExactModule {
     guard route.data[.workspaceHeader] == "true" else { return }
     let item = route.controller.navigationItem
     let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
-    title.preferredWidth = max(0, route.controller.view.bounds.width - 160)
+    title.preferredWidth = max(120, route.controller.view.bounds.width - 160)
+    title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
     title.stageName = route.data[.brandStage] ?? "DEV"
     item.titleView = title
     route.owns(view: title, "T3 wordmark and build-stage title")

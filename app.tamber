@@ -8,4 +8,4 @@ theme
   foreground = light-dark(#27272a, #f5f5f5)
   muted = light-dark(#6f6f79, #838383)
   bubble = light-dark(#efeff1, #161616)
-  separator = light-dark(#e4e4e7, #272727)
+  edge = light-dark(#e4e4e7, #272727)
