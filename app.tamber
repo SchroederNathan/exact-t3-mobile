@@ -1,0 +1,11 @@
+tamber t3
+
+theme
+  AccentColor = light-dark(#1b4ed8, #346bf1)
+  screen = light-dark(#fcfcfc, #0a0a0a)
+  card = light-dark(#f4f4f5, #1a1b1b)
+  drawer = light-dark(#fafafa, #161616)
+  foreground = light-dark(#27272a, #f5f5f5)
+  muted = light-dark(#6f6f79, #838383)
+  bubble = light-dark(#efeff1, #161616)
+  separator = light-dark(#e4e4e7, #272727)
