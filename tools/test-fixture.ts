@@ -2,9 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
+import { ActivityFixture } from "./activity-fixture";
 
 const app = resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
+const activityMode = process.argv.includes("--activities");
 const headers = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
@@ -47,6 +49,7 @@ function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
 
 function environment(id: string, label: string, secondary = false) {
   const sockets = new Set<Socket>();
+  const activities = activityMode && !secondary ? new ActivityFixture(!process.argv.includes("--no-command-stream")) : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const held: { socket: Socket; requestId: string }[] = [];
   const projects = secondary
@@ -61,7 +64,7 @@ function environment(id: string, label: string, secondary = false) {
     updatedAt: timestamp,
     latestUserMessageAt: timestamp,
     modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
-  }));
+  })).concat(activities?.threads ?? []);
   const server = Bun.serve<SocketState>({
     hostname: "127.0.0.1",
     port: 0,
@@ -69,6 +72,8 @@ function environment(id: string, label: string, secondary = false) {
     async fetch(request, server) {
       const path = new URL(request.url).pathname;
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      const activityResponse = await activities?.http(request);
+      if (activityResponse) return activityResponse;
       if (request.method === "POST") {
         const assertion = assertions(path, request.signal);
         if (assertion) return assertion;
@@ -120,6 +125,10 @@ function environment(id: string, label: string, secondary = false) {
       },
       message(socket, data) {
         const frame = JSON.parse(String(data));
+        if (activities?.receive(socket, frame)) {
+          changed();
+          return;
+        }
         if (frame._tag !== "Request") return;
         if (frame.tag === "orchestration.subscribeShell") {
           socket.data.shell = true;
@@ -130,7 +139,11 @@ function environment(id: string, label: string, secondary = false) {
             type: "snapshot",
             config: {
               settings: { favorites: modelFavorites },
-              environment: { platform: { machine: secondary ? "laptop" : "mac-mini" } },
+              environment: {
+                platform: { machine: secondary ? "laptop" : "mac-mini" },
+                ...(activities ? { capabilities: activities.config } : {}),
+              },
+              ...(activities ? { threadResumeCompletionMarker: true } : {}),
               providers: [{
                 instanceId: "fixture-provider",
                 driver: "codex",
@@ -170,6 +183,7 @@ function environment(id: string, label: string, secondary = false) {
               }],
             },
           });
+          if (activities) chunk(socket, frame.id, { kind: "synchronized" });
         } else if (frame.tag === "orchestration.dispatchCommand" && (
           frame.payload.type === "thread.runtime-mode.set" || frame.payload.text === "Send chosen settings"
         )) {
@@ -200,6 +214,7 @@ function environment(id: string, label: string, secondary = false) {
       },
       close(socket) {
         sockets.delete(socket);
+        activities?.close(socket);
         for (let i = held.length - 1; i >= 0; i--) {
           if (held[i]?.socket === socket) held.splice(i, 1);
         }
@@ -251,7 +266,7 @@ function assertions(path: string, signal: AbortSignal): Promise<Response> | Resp
 
 const directory = await mkdtemp(join(tmpdir(), "exact-t3-regression-"));
 try {
-  const [host = "ios", ...flags] = process.argv.slice(2);
+  const [host = "ios", ...flags] = process.argv.slice(2).filter((flag) => !["--activities", "--no-command-stream"].includes(flag));
   if (host === "--serve") {
     console.log(JSON.stringify({ primary: primary.server.url.origin, secondary: secondary.server.url.origin, code: "fixture-code" }));
     await new Promise<void>((resolve) => {
