@@ -236,7 +236,7 @@ component T3Code
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
       column flex=1 min-height=0 position="relative" display="flex" flex-direction=(wide ? "row" : "column")
         for t in nav.tabs key=t.name
-          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position=(wide ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(wide and t.name == "threads" ? (duo ? 304 : 320) : wide and t.name == "settings" ? 320 : wide ? "auto" : "100%") flex-grow=(wide and (t.name == "threads" or t.name == "settings") ? 0 : wide ? 1 : 0) flex-shrink=0 flex-direction="column"
+          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=1 min-height=0 position=(wide ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(wide and t.name == "threads" ? (duo ? 200 : 320) : wide and t.name == "settings" ? (duo ? 200 : 320) : wide ? "auto" : "100%") flex-grow=(wide and (t.name == "threads" or t.name == "settings") ? 0 : wide ? 1 : 0) flex-shrink=0 flex-direction="column"
             for e in t.stack key=e.id
               if e.name == "threads"
                 column navigationKey=`${e.id}` navigationScroll="home" navigationSplit=(duo ? "200" : "320") data-workspace-header="true" data-search-placement=(not wide ? "button" : "integrated") data-brand-stage="DEV" background-color=(wide ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction="column"
@@ -280,7 +280,6 @@ component T3Code
                                 else
                                   view flex=1
                                 image "assets/openai.svg" width=14 height=14 opacity=0.6
-                            image "symbol:forward-chevron"
                       if visibleThreads.filter(thread => thread.settled).length > 0
                         section
                           button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
@@ -291,7 +290,7 @@ component T3Code
               if e.name == "environments"
                 column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column") background-color="screen"
                   if wide
-                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       SettingsList(openEnvironments=openEnvironments)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header
@@ -322,7 +321,7 @@ component T3Code
               if e.name == "addEnvironment"
                 column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column") background-color="screen"
                   if wide
-                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       SettingsList(openEnvironments=openEnvironments)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header
@@ -354,7 +353,7 @@ component T3Code
               if e.name == "newThread"
                 column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
                   if wide
-                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header
@@ -372,14 +371,14 @@ component T3Code
                         case none
                           view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" navigationBar="none" position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
+                column navigationKey=`${e.id}` navigationScroll="thread" navigationBar=(wide ? "none" : "auto") position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
+                  header display=(wide ? "none" : "flex")
+                    text "T3 Code Exact iOS" role="heading" aria-level=2
                   if wide
-                    column width=(duo ? 304 : 320) min-width=(duo ? 304 : 320) flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header appearance="none" display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
-                      button id="back" press=back aria-label="Back" display=(wide ? "none" : "flex") appearance="none" width=44 height=44 border-radius=22 backgroundMaterial="glass" color="foreground" align-items="center" justify-content="center"
-                        image "symbol:sf/chevron.left" width=22 height=22
                       column flex=1 min-width=0 gap=0
                         text currentThreadTitle(currentThread) role="heading" aria-level=2 line-clamp=1 font-size=18 line-height="23px" font-weight=700
                         text currentThreadSubtitle(catalog, currentThread) color="muted" line-clamp=1 font-size=14 line-height="19px"
@@ -457,7 +456,7 @@ component T3Code
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
                   if wide
-                    column width=320 min-width=320 flex-shrink=0 position="relative" background-color="drawer"
+                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
                     header
