@@ -316,6 +316,32 @@ const sources: Sources = {
   },
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(["update-environment", id, JSON.stringify({ label, url })], store, storage, native),
+  visitThread: async ([id, visitedAt, opened], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(sessionFor(identity.environmentId).visit(identity.threadId, visitedAt, opened, crypto.randomUUID()), native);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The thread visit could not be saved." };
+    }
+  },
+  loadEarlierThread: async ([id], store) => {
+    try {
+      const identity = threadIdentity(id);
+      const token = credentials(store)[identity.environmentId];
+      const session = sessionFor(identity.environmentId);
+      if (!token) throw new Error("Pair this environment to load earlier messages.");
+      const origin = session.environment.url;
+      return await session.loadEarlier(identity.threadId, async (relativePath) => {
+        const response = await fetch(new URL(relativePath, origin), {
+          headers: { Authorization: `Bearer ${token}`, "x-t3-orchestration-protocol": "2" },
+        });
+        if (!response.ok) throw new Error(`Earlier messages could not be loaded (${response.status}).`);
+        return response.json();
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Earlier messages could not be loaded." };
+    }
+  },
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
     try {
       const identity = threadIdentity(id);
@@ -385,8 +411,12 @@ const sources: Sources = {
         const environment = environments.find((entry) => entry.id === id);
         if (!environment) throw new Error("This environment is no longer available.");
         if (!environment.enabled) throw new Error("Turn on this environment before reconnecting.");
-        connections.get(id)?.session.disconnected("Reconnecting");
-        connections.delete(id);
+        const connection = connections.get(id);
+        if (connection) {
+          connection.open = false;
+          connection.generation = ++nextGeneration;
+          connection.session.disconnected("Reconnecting");
+        }
       } else if (operation === "update-environment") {
         const environment = environments.find((entry) => entry.id === id);
         if (!environment) throw new Error("This environment is no longer available.");

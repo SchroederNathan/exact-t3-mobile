@@ -148,6 +148,56 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const switched = await load();
   expect(switched.threads.find(({ id }) => id === "a:t")?.messages.map(({ body }) => body)).toEqual(["Selected by the route"]);
   expect(switched.threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["Opened by a cold link"]);
+
+  const visiting = answer("visitThread", ["b:t", "2026-11-10T01:00:00Z", true], store, storage, native);
+  const visit = sent.at(-1)!;
+  expect(visit).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.dispatchCommand", payload: {
+    type: "thread.visit", threadId: "t", visitedAt: "2026-11-10T01:00:00Z", opened: true,
+  } } });
+  expect(receipts.size).toBe(1);
+  reply("b", visit.frame.id, { sequence: 3 });
+  await load();
+  expect(await visiting).toEqual({ ok: true, error: "" });
+  expect(receipts.size).toBe(0);
+
+  const updatingVisit = answer("visitThread", ["a:t", "2026-11-10T01:01:00Z", false], store, storage, native);
+  const visitUpdate = sent.at(-1)!;
+  expect(visitUpdate.environmentId).toBe("a");
+  expect(visitUpdate.frame.payload.opened).toBeUndefined();
+  emit("a", "message", JSON.stringify({ _tag: "Exit", requestId: visitUpdate.frame.id,
+    exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Visit refused." } }] },
+  }));
+  await load();
+  expect(await updatingVisit).toEqual({ ok: false, error: "Visit refused." });
+  expect(receipts.size).toBe(0);
+  expect(await answer("visitThread", ["missing:t", "2026-11-10T01:01:00Z", true], store, storage, native)).toEqual({ ok: false, error: "This environment is disconnected." });
+
+  const historyRow = (id: string, ordinal: number) => ({
+    position: ordinal, visibility: "local", sourceThreadId: "t", sourceItemId: id,
+    item: { id, threadId: "t", type: "assistant_message", ordinal, text: id, status: "completed" },
+  });
+  chunk("a", aSubscription, { kind: "snapshot", snapshotSequence: 20,
+    historyCursor: "older/opaque+cursor", hasMoreHistory: true, latestLocalTurnOrdinal: 10,
+    projection: { thread: { id: "t" }, visibleTurnItems: [historyRow("recent", 10)] },
+  });
+  expect((await load()).threads.find(({ id }) => id === "a:t")?.history).toMatchObject({ ready: true, hasMore: true });
+  _fetch.mockResolvedValueOnce(new Response("Unavailable", { status: 503 }));
+  expect(await answer("loadEarlierThread", ["a:t"], store, storage, native)).toEqual({ ok: false, error: "Earlier messages could not be loaded (503)." });
+  expect((await load()).threads.find(({ id }) => id === "a:t")?.history).toMatchObject({ hasMore: true, loading: false, error: "Earlier messages could not be loaded (503)." });
+  const page = Promise.withResolvers<Response>();
+  _fetch.mockImplementationOnce(async (input, init) => {
+    expect(String(input)).toBe("http://a.example/api/orchestration/threads/t/history?cursor=older%2Fopaque%2Bcursor");
+    expect(init?.headers).toEqual({ Authorization: "Bearer token-a", "x-t3-orchestration-protocol": "2" });
+    return page.promise;
+  });
+  const loadingHistory = answer("loadEarlierThread", ["a:t"], store, storage, native);
+  expect((await load()).threads.find(({ id }) => id === "a:t")?.history).toMatchObject({ loading: true, error: "" });
+  page.resolve(Response.json({ items: [historyRow("earlier", 1)], nextCursor: null, hasMoreHistory: false }));
+  expect(await loadingHistory).toEqual({ ok: true, error: "" });
+  const withHistory = (await load()).threads.find(({ id }) => id === "a:t");
+  expect(withHistory?.messages.map(({ body }) => body)).toEqual(["earlier", "recent"]);
+  expect(withHistory?.history).toMatchObject({ hasMore: false, loading: false, error: "" });
+  _fetch.mockClear();
   const afterSwitch = sent.length;
   await load();
   expect(sent.length).toBe(afterSwitch);
@@ -239,6 +289,17 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(connections.find(({ id }) => id === "a")!.generation).not.toBe(beforeRotation);
   expect(connections.find(({ id }) => id === "b")!.generation).toBe(initialGenerations.find(({ id }) => id === "b")!.generation);
 
+  activeThread = "b:t";
+  await load();
+  const retainedSubscription = sent.findLast(({ environmentId, frame }) => environmentId === "b" && frame.tag === "orchestration.subscribeThread")!;
+  chunk("b", retainedSubscription.frame.id, { kind: "snapshot", snapshotSequence: 30,
+    historyCursor: "older-b", hasMoreHistory: true, latestLocalTurnOrdinal: 10,
+    projection: { thread: { id: "t" }, visibleTurnItems: [historyRow("recent-b", 10)] },
+  });
+  await load();
+  _fetch.mockResolvedValueOnce(Response.json({ items: [historyRow("earlier-b", 1)], nextCursor: null, hasMoreHistory: false }));
+  expect(await answer("loadEarlierThread", ["b:t"], store, storage, native)).toEqual({ ok: true, error: "" });
+  _fetch.mockClear();
   const interrupted = answer("command", ["send", "b:t", "pending message"], store, storage, native);
   emit("b", "close", "", "Connection lost");
   const disconnected = await load();
@@ -250,16 +311,25 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   activeThread = "b:t";
   const reconnected = await load();
   expect(connections.find(({ id }) => id === "b")!.generation).not.toBe(reconnecting);
-  expect(reconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connecting");
+  expect(reconnected.threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["earlier-b", "recent-b"]);
+  expect(reconnected.environments.find(({ id }) => id === "b")?.status).toBe("Reconnecting");
   const beforeReopen = sent.length;
   emit("b", "open");
   await load();
   const reopenedConfig = sent.slice(beforeReopen).find(({ frame }) => frame.tag === "subscribeServerConfig")!;
-  chunk("b", reopenedConfig.frame.id, { type: "snapshot", config: {} });
+  chunk("b", reopenedConfig.frame.id, { type: "snapshot", config: { threadSnapshotPagination: true, threadResumeCompletionMarker: true } });
   await load();
-  expect(sent.slice(beforeReopen).filter(({ frame }) => frame.tag === "orchestration.subscribeThread").map(({ environmentId, frame }) => ({ environmentId, threadId: frame.payload.threadId }))).toEqual([
-    { environmentId: "b", threadId: "t" },
+  const resumedSubscriptions = sent.slice(beforeReopen).filter(({ frame }) => frame.tag === "orchestration.subscribeThread");
+  expect(resumedSubscriptions.map(({ environmentId, frame }) => ({ environmentId, ...frame.payload }))).toEqual([
+    { environmentId: "b", threadId: "t", afterSequence: 30, acceptBoundedSnapshot: true, requestCompletionMarker: true },
   ]);
+  chunk("b", resumedSubscriptions[0]!.frame.id, { kind: "event", sequence: 31,
+    event: { threadId: "t", type: "turn-item.updated", payload: { ...historyRow("recent-b", 10).item, text: "resumed-b" } },
+  });
+  chunk("b", resumedSubscriptions[0]!.frame.id, { kind: "synchronized" });
+  const resumed = (await load()).threads.find(({ id }) => id === "b:t");
+  expect(resumed?.messages.map(({ body }) => body)).toEqual(["earlier-b", "resumed-b"]);
+  expect(resumed?.history).toMatchObject({ synchronized: true, hasMore: false });
 
   const beforeEdit = connections.map(({ id, generation }) => ({ id, generation }));
   expect(await answer("updateEnvironment", ["a", " Renamed Mac ", "http://a.example/"], store, storage, native)).toEqual({ ok: true, error: "" });

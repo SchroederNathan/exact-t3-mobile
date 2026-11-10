@@ -113,6 +113,17 @@ shape VisitMetadata
   seen: number
   urgent: bool
 
+shape VisitTracker
+  id: string
+  openPending: bool
+  watermark: number
+  cooling: bool
+  serial: number
+
+shape ThreadOpen
+  id: string
+  at: number
+
 shape ThreadHistory
   ready: bool
   synchronized: bool
@@ -182,6 +193,7 @@ shape Inspection
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
 fn threadMessages(threads: Thread[]): Message[] = match first(threads) { case some(thread) => thread.messages, case none => [] }
+fn threadRows(threads: Thread[]): option<Message>[] = [none].concat(threadMessages(threads).map(message => some(message)))
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
@@ -216,6 +228,9 @@ component T3Code
   state showSettled = false
   state inspectorPath = ""
   state composerBottomAdjustment = 0
+  state visitTracker = VisitTracker(id="", openPending=false, watermark=-1, cooling=false, serial=0)
+  state threadOpens: ThreadOpen[] = []
+  state loadingHistoryId = ""
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
   mutation savedDraft as shape Reply queue
   resource restoredModelSettings = restoreModelSettings() as shape Reply else empty()
@@ -244,6 +259,9 @@ component T3Code
   mutation savedEnvironment as shape Reply refreshes catalog then afterEnvironmentSave
   mutation removed as shape Reply refreshes catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
+  mutation visited as shape Reply queue
+  mutation earlierHistory as shape Reply refreshes catalog
+  derive historyError = failed(earlierHistory) ? "Earlier messages could not be loaded." : match earlierHistory { case some(reply) => reply.error, case none => "" }
   derive environmentError = failed(savedEnvironment) ? "The environment could not be updated." : match savedEnvironment { case some(reply) => reply.error, case none => "" }
   derive changeError = failed(changed) ? "The connection could not be changed." : match changed { case some(reply) => reply.error, case none => "" }
   derive removeError = failed(removed) ? "The environment could not be removed." : match removed { case some(reply) => reply.error, case none => "" }
@@ -257,7 +275,8 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice" ? threadRoute.params.id : ""
+  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
@@ -265,6 +284,42 @@ component T3Code
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
   derive composerError = submission.id == activeThreadId and submission.revision == threadDraft(savedDrafts, draftEdits, activeThreadId).revision and not pending(sent) ? sendError : ""
   derive canSend = draftsReady and modelDraftsReady and composer.trim() != "" and not pending(sent)
+
+  task visitObservation key=`${activeThreadId}:${visitShell.ready}:${visitShell.supported}:${visitShell.at}:${visitShell.watermark}:${visitShell.seen}:${visitShell.urgent}`
+    after(1, observeVisit)
+
+  task visitCooldown when activeThreadId != "" and activeThreadId == visitTracker.id and visitTracker.cooling key=visitTracker.serial
+    after(10000, releaseVisit)
+
+  action observeVisit
+    evaluateVisit(false)
+
+  action releaseVisit
+    evaluateVisit(true)
+
+  action evaluateVisit(expired: bool)
+    let changedThread = visitTracker.id != activeThreadId
+    let openedAt = match first(threadOpens.filter(entry => entry.id == activeThreadId)) { case some(entry) => entry.at, case none => -600000 }
+    let opened = changedThread and activeThreadId != "" and performanceNow() - openedAt >= 600000
+    let next = changedThread ? VisitTracker(id=activeThreadId, openPending=opened, watermark=-1, cooling=false, serial=visitTracker.serial) : VisitTracker(visitTracker, cooling=expired ? false : visitTracker.cooling)
+    if opened
+      threadOpens = threadOpens.filter(entry => entry.id != activeThreadId).concat([ThreadOpen(id=activeThreadId, at=performanceNow())])
+    if activeThreadId == "" or not visitShell.ready or not visitShell.supported
+      visitTracker = next
+    else if next.openPending
+      visitTracker = VisitTracker(next, openPending=false, watermark=visitShell.watermark, cooling=true, serial=next.serial + 1)
+      send visited = visitThread(activeThreadId, visitShell.at, true)
+    else if visitShell.seen >= visitShell.watermark
+      visitTracker = VisitTracker(next, watermark=max(next.watermark, visitShell.watermark))
+    else if visitShell.watermark > next.watermark and (visitShell.urgent or not next.cooling)
+      visitTracker = VisitTracker(next, watermark=visitShell.watermark, cooling=true, serial=next.serial + 1)
+      send visited = visitThread(activeThreadId, visitShell.at, false)
+    else
+      visitTracker = next
+
+  action loadEarlier(id: string)
+    loadingHistoryId = id
+    send earlierHistory = loadEarlierThread(id)
 
   task defaultSettings when split and current.name == "settingsDetail" key=current.id
     after(1, openEnvironments)
@@ -432,7 +487,9 @@ component T3Code
     nav = followed.next == base.next ? followed : open(base, url)
 
   action openThread(url: string)
-    nav = split ? push(go(select(threadNav, "threadDetail"), "/detail"), url) : push(nav, url)
+    let base = split ? threadNav : nav
+    let detail = activeThreadId != "" ? go(base, path("thread", activeThreadId)) : base
+    nav = split and depth(detail) > 1 ? replace(detail, url) : go(detail, url)
 
   action compose
     nav = split ? push(select(threadNav, "threadDetail"), "/threads/new") : push(nav, "/threads/new")
@@ -621,7 +678,7 @@ component T3Code
                       footer
                         text (match created { case some(reply) => reply.error, case none => "" }) color="danger"
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll=`thread-${e.params.id}` data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     if split and sidebarHidden
                       button press=toggleSidebar buttonStyle="glass" aria-label="Show sidebar" testId="thread-sidebar-toggle"
@@ -640,31 +697,42 @@ component T3Code
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     button press=inspect("files") aria-label="Open files" testId="thread-files"
                       image "symbol:sf/folder"
-                  list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(112 + composerBottomAdjustment)
-                    for message in threadMessages(selectedThread(catalog, e.params.id)) key=message.id
-                      column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                        if message.role == "user"
-                          text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                          row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                            text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                            button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                              image "symbol:sf/document.on.document" width=13 height=13
-                        else
-                          column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                            for block in message.blocks key=block.id
-                              row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                if block.depth > 0
-                                  if block.marker == "•"
-                                    column width=14 height=23 justify-content="center"
-                                      view width=6 height=6 border-radius=3 background-color="foreground"
-                                  else
-                                    text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                if block.kind == "thematic-break"
-                                  view height=1 flex=1 margin="8px 0" background-color="edge"
-                                else if block.kind == "code"
-                                  text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
-                                else
-                                  text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                  list id=`thread-${e.params.id}` appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(112 + composerBottomAdjustment)
+                    for item in threadRows(selectedThread(catalog, e.params.id)) key=(match item { case some(message) => `message-${message.id}`, case none => "history" })
+                      column width="100%" box-sizing="border-box"
+                        match item
+                          case none
+                            for thread in selectedThread(catalog, e.params.id) key=thread.id
+                              if thread.history.hasMore
+                                column align-items="center" gap=6 padding-bottom=12
+                                  button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" color="muted" padding="8px 12px" testId="load-earlier"
+                                    text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier messages…" : "Load earlier messages") font-size=14
+                                  if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
+                                    text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
+                          case some(message)
+                            column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+                              if message.role == "user"
+                                text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
+                                row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+                                  text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+                                  button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+                                    image "symbol:sf/document.on.document" width=13 height=13
+                              else
+                                column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
+                                  for block in message.blocks key=block.id
+                                    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
+                                      if block.depth > 0
+                                        if block.marker == "•"
+                                          column width=14 height=23 justify-content="center"
+                                            view width=6 height=6 border-radius=3 background-color="foreground"
+                                        else
+                                          text block.marker width=14 font-size=16 line-height="23px" color="foreground"
+                                      if block.kind == "thematic-break"
+                                        view height=1 flex=1 margin="8px 0" background-color="edge"
+                                      else if block.kind == "code"
+                                        text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
+                                      else
+                                        text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
                   for thread in selectedThread(catalog, e.params.id) key=thread.id
                     if thread.lastError != ""
                       row align-items="flex-start" gap=8 position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=1
