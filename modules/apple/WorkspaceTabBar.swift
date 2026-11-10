@@ -174,11 +174,21 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
 
 final class T3NativeModule: ExactModule {
   private var probe: DeviceProbe?
-  private var device = DeviceTraits(kind: "phone", rail: false)
+  private var device = DeviceTraits(kind: "phone", rail: false, split: false)
+  private weak var container: WorkspaceContainer?
 
   override func call(_ request: [String: Any]) throws -> [String: Any] {
     guard request["op"] as? String == "device" else { throw ExactNativeRefusal("t3 answers device") }
-    return ["kind": device.kind, "rail": device.rail]
+    return ["kind": device.kind, "rail": device.rail, "split": device.split]
+  }
+
+  override func tabContainer(_ contents: ExactTabContents) -> UIViewController? {
+    MainActor.assumeIsolated {
+      let container = WorkspaceContainer.make(contents)
+      container?.apply(device)
+      self.container = container
+      return container
+    }
   }
 
   override func window(_ window: ExactWindow) {
@@ -189,6 +199,7 @@ final class T3NativeModule: ExactModule {
         let probe = DeviceProbe { [weak self] traits in
           guard let self, self.device != traits else { return }
           self.device = traits
+          self.container?.apply(traits)
           self.context.changed("device")
         }
         host.addSubview(probe)
@@ -211,6 +222,14 @@ final class T3NativeModule: ExactModule {
       let item = route.controller.navigationItem
       configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
       item.backButtonDisplayMode = .minimal
+      item.hidesBackButton = route.data[.hidesBack] == "true"
+      if let sidebar = route.data[.sidebar] { container?.setSidebarHidden(sidebar == "hidden") }
+      #if canImport(UIKit, _version: 9127.0.85)
+      if #available(iOS 27.1, *) {
+        // Leading items belong to their own column; only trailing items move to the Duo rail.
+        item.leftBarButtonItems?.forEach { $0.axisBehavior = .horizontalOnly }
+      }
+      #endif
       let style = route.data[.workspaceHeader]
       guard style == "brand" || style == "editor" else { return }
       item.style = .editor
@@ -300,6 +319,8 @@ private final class WorkspaceTabBarInstance: ExactNativeInstance {
 struct DeviceTraits: Equatable {
   var kind: String
   var rail: Bool
+  /// A list and its detail sit side by side: the Expo app's `usesSplitView` on a Duo.
+  var split: Bool
 }
 
 // Mirrors the Expo app's layout metrics: a hinge marks a Duo, its width class the pose.
@@ -344,6 +365,10 @@ private final class DeviceProbe: UIView {
     if #available(iOS 27.1, *) { rail = traitCollection.verticalBarEdge != .unspecified }
     #endif
     let unfolded = traitCollection.horizontalSizeClass == .regular
-    onChange(DeviceTraits(kind: hasHinge ? (unfolded ? "duo-unfolded" : "duo-folded") : "phone", rail: rail))
+    let width = superview?.bounds.width ?? 0
+    onChange(DeviceTraits(
+      kind: hasHinge ? (unfolded ? "duo-unfolded" : "duo-folded") : "phone",
+      rail: rail,
+      split: hasHinge && unfolded && width >= 600))
   }
 }

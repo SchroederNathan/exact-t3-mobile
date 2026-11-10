@@ -125,12 +125,12 @@ async function loadCatalog(
 
 const sources: Sources = {
   deviceTraits: (_args, _store, _storage, native) => {
-    if (!native?.available) return { kind: "phone", rail: false };
+    if (!native?.available) return { kind: "phone", rail: false, split: false };
     native.watch("device");
     try {
       return native.call({ op: "device" }) as Result<"deviceTraits">;
     } catch {
-      return { kind: "phone", rail: false };
+      return { kind: "phone", rail: false, split: false };
     }
   },
   loadCatalog: (args, store, storage) =>

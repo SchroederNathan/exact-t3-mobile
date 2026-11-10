@@ -22,5 +22,5 @@
       "ios": "0"
     }
   },
-  "data": ["workspace-header", "search-placement", "brand-stage"]
+  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar"]
 }
