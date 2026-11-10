@@ -333,6 +333,10 @@ test "native model settings save and cancel through their own navigation stack" 
   clock settle
   expect state current.name == "threadSettings"
   expect state settings.selectedModelId == "fixture-provider:fixture-model"
+  tap "favorite-fixture-provider:fixture-fast"
+  clock data
+  expect state settings.groups.0.models.0.id == "fixture-provider:fixture-fast"
+  expect state settings.groups.0.models.0.isFavorite == true
   tap "model-fixture-provider:fixture-fast"
   clock data
   tap "cancel-settings"
@@ -363,6 +367,27 @@ test "native model settings save and cancel through their own navigation stack" 
   clock settle
   expect state current.name == "thread"
   type "composer" "Send chosen settings"
+  clock data
+  reload
+  clock data
+  clock settle
+  tap "thread-fixture:alpha"
+  clock data
+  clock settle
+  expect text "composer" == "Send chosen settings"
+  tap "model-settings"
+  clock data
+  clock settle
+  expect state settings.selectedModelId == "fixture-provider:fixture-fast"
+  expect state settings.runtimeMode == "approval-required"
+  tap "option-effort"
+  clock settle
+  expect state settings.options.0.value == "high"
+  back
+  clock settle
+  tap "cancel-settings"
+  clock data
+  clock settle
   tap "send"
   clock data
   expect text "composer" == ""

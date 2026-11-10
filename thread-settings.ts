@@ -77,7 +77,7 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function decodeSelection(value: unknown): ModelSelection | null {
+export function decodeSelection(value: unknown): ModelSelection | null {
   const raw = object(value);
   const instanceId = string(raw.instanceId ?? raw.provider).trim();
   const model = string(raw.model).trim();

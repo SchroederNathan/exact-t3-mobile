@@ -4,6 +4,7 @@ import type { DirectSession } from "./connection";
 import {
   projectThreadSettings,
   stageThreadSettings,
+  type ThreadSettingsSelection,
   validateThreadSettings,
 } from "./thread-settings";
 
@@ -38,7 +39,13 @@ function fixture() {
     stageSettings: (id, selection, change) => stageThreadSettings(config, threads.get(id), selection, change),
     validateSettings: (id, selection) => validateThreadSettings(config, threads.get(id), selection),
   };
-  return { session, provider, setConfig: (value: unknown) => { config = value; } };
+  return {
+    session, provider,
+    setConfig: (value: unknown) => { config = value; },
+    setThread: (selection: ThreadSettingsSelection) => {
+      threads.set(selection.threadId, { id: selection.threadId, projectId: "project", ...selection });
+    },
+  };
 }
 
 describe("composer settings", () => {
@@ -57,7 +64,7 @@ describe("composer settings", () => {
 
     expect(settings.close("first:thread-one", "thread-one", session, true)).toEqual({ ok: true, error: "" });
     expect(settings.selection("first:thread-one")).toEqual({
-      threadId: "thread-one", runtimeMode: "full-access",
+      threadId: "thread-one",
       modelSelection: { instanceId: "codex-work", model: "gpt-6-mini" },
     });
     expect(settings.begin("first:thread-one", "thread-one", session)).toEqual({ ok: true, error: "" });
@@ -77,6 +84,14 @@ describe("composer settings", () => {
     expect(settings.project("first:thread-one", "thread-one", session)).toMatchObject({
       selectedModelId: "codex-work:gpt-6-mini", runtimeMode: "approval-required", saveLabel: "Save",
     });
+    settings.change("first:thread-one", "thread-one", session, { type: "model", id: "codex-work:gpt-6" });
+    const returned = settings.project("first:thread-one", "thread-one", session);
+    expect(returned).toMatchObject({
+      selectedModelId: "codex-work:gpt-6", appliedModelId: "codex-work:gpt-6", saveLabel: "Done",
+    });
+    expect(returned.options.map(({ id, value }) => ({ id, value }))).toEqual([
+      { id: "effort", value: "xhigh" }, { id: "fastMode", value: "false" },
+    ]);
 
     expect(settings.close("first:thread-one", "thread-one", session, false)).toEqual({ ok: true, error: "" });
     expect(settings.selection("first:thread-one")).toEqual({
@@ -132,16 +147,15 @@ describe("composer settings", () => {
     settings.change("first:thread-two", "thread-two", first, { type: "runtime", id: "auto" });
 
     expect(settings.selection("first:thread-one")).toEqual({
-      threadId: "thread-one", runtimeMode: "full-access",
+      threadId: "thread-one",
       modelSelection: { instanceId: "codex-work", model: "gpt-6-mini", options: [{ id: "effort", value: "xhigh" }] },
     });
     expect(settings.selection("second:thread-one")).toEqual({
-      threadId: "thread-one", runtimeMode: "full-access",
+      threadId: "thread-one",
       modelSelection: { instanceId: "codex-work", model: "gpt-6", options: [{ id: "fastMode", value: false }] },
     });
     expect(settings.selection("first:thread-two")).toEqual({
       threadId: "thread-two", runtimeMode: "auto",
-      modelSelection: { instanceId: "codex-work", model: "gpt-6" },
     });
     expect(settings.project("first:thread-one", "thread-one", first).selectedModelId).toBe("codex-work:gpt-6-mini");
     expect(settings.project("second:thread-one", "thread-one", second).selectedModelId).toBe("codex-work:gpt-6");
@@ -184,9 +198,67 @@ describe("composer settings", () => {
       selectedModelId: "codex-work:gpt-6", runtimeMode: "full-access", saveLabel: "Done", error: "",
     });
     expect(settings.close("second:thread-one", "thread-one", session, true)).toEqual({ ok: true, error: "" });
-    expect(settings.selection("second:thread-one")).toEqual({
+    expect(settings.selection("second:thread-one")).toBeUndefined();
+  });
+
+  test("live model acknowledgement clears only matching overrides and keeps explicit runtime choices", () => {
+    const { session, setThread } = fixture();
+    const settings = new ComposerSettings();
+    settings.restore([{
+      id: "first:thread-one",
+      selection: {
+        threadId: "thread-one", runtimeMode: "approval-required",
+        modelSelection: {
+          instanceId: "codex-work", model: "gpt-6-mini",
+          options: [{ id: "fastMode", value: false }, { id: "effort", value: "xhigh" }],
+        },
+      },
+    }]);
+    const acknowledged: ThreadSettingsSelection = {
       threadId: "thread-one", runtimeMode: "full-access",
-      modelSelection: { instanceId: "codex-work", model: "gpt-6" },
+      modelSelection: { instanceId: "codex-work", model: "gpt-6-mini", options: [{ id: "effort", value: "xhigh" }] },
+    };
+    expect(settings.reconcile("first:thread-one", acknowledged, false)).toBe(false);
+    expect(settings.reconcile("second:thread-one", acknowledged, true)).toBe(false);
+    expect(settings.reconcile("first:thread-one", { ...acknowledged, threadId: "thread-two" }, true)).toBe(false);
+    expect(settings.reconcile("first:thread-one", {
+      ...acknowledged, modelSelection: { ...acknowledged.modelSelection, options: [{ id: "effort", value: "medium" }] },
+    }, true)).toBe(false);
+    expect(settings.reconcile("first:thread-one", acknowledged, true)).toBe(true);
+    expect(settings.snapshot()).toEqual([{
+      id: "first:thread-one", selection: { threadId: "thread-one", runtimeMode: "approval-required" },
+    }]);
+    expect(settings.reconcile("first:thread-one", acknowledged, true)).toBe(false);
+    setThread(acknowledged);
+    expect(settings.resolve("first:thread-one", "thread-one", session)).toEqual({
+      ...acknowledged, runtimeMode: "approval-required",
     });
+    setThread({ ...acknowledged, modelSelection: { instanceId: "codex-work", model: "gpt-6" } });
+    expect(settings.project("first:thread-one", "thread-one", session)).toMatchObject({
+      selectedModelId: "codex-work:gpt-6", appliedModelId: "codex-work:gpt-6", runtimeMode: "approval-required",
+    });
+  });
+
+  test("acknowledged model-only overrides disappear and a pending sheet pick remains unapplied", () => {
+    const { session, setThread } = fixture();
+    const settings = new ComposerSettings();
+    settings.begin("first:thread-one", "thread-one", session);
+    settings.change("first:thread-one", "thread-one", session, { type: "option", id: "effort", value: "xhigh" });
+    settings.change("first:thread-one", "thread-one", session, { type: "model", id: "codex-work:gpt-6-mini" });
+    const acknowledged: ThreadSettingsSelection = {
+      threadId: "thread-one", runtimeMode: "full-access",
+      modelSelection: { instanceId: "codex-work", model: "gpt-6", options: [{ id: "effort", value: "xhigh" }] },
+    };
+    setThread(acknowledged);
+    expect(settings.reconcile("first:thread-one", acknowledged, true)).toBe(true);
+    expect(settings.snapshot()).toEqual([]);
+    expect(settings.resolve("first:thread-one", "thread-one", session)).toBeUndefined();
+    expect(settings.project("first:thread-one", "thread-one", session)).toMatchObject({
+      selectedModelId: "codex-work:gpt-6-mini", appliedModelId: "codex-work:gpt-6", saveLabel: "Save",
+    });
+    settings.change("first:thread-one", "thread-one", session, { type: "model", id: "codex-work:gpt-6" });
+    expect(settings.project("first:thread-one", "thread-one", session).options[0]?.value).toBe("xhigh");
+    settings.close("first:thread-one", "thread-one", session, true);
+    expect(settings.snapshot()).toEqual([]);
   });
 });

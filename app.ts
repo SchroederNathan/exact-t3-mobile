@@ -2,6 +2,7 @@ import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./ap
 import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft } from "./drafts";
 import { ComposerSettings } from "./composer-settings";
+import { loadModelDrafts, saveModelDrafts } from "./model-drafts";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -17,11 +18,12 @@ import {
 } from "./connection";
 
 export const grants =
-  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
 const composerSettings = new ComposerSettings();
+let modelDraftRevision = 0;
 let current: DirectSession | undefined;
 let savedEnvironments: Promise<Environment[]> | undefined;
 let nextGeneration = 0;
@@ -86,52 +88,20 @@ function sessionFor(environmentId: string): DirectSession {
   return session;
 }
 
-function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
+async function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
   if (!native?.available) return operation;
   const receipt = crypto.randomUUID();
   // Exact must own pending native work until the watched catalog delivers the protocol reply.
   const waiting = native.later({ op: "connections.wait", receipt });
-  const settled = operation.then(
-    (value) => {
-      native.call({ op: "connections.finish", receipt });
-      return value;
-    },
-    (error) => {
-      native.call({ op: "connections.finish", receipt });
-      throw error;
-    },
-  );
-  return Promise.all([settled, waiting]).then(([value]) => value);
+  try {
+    return await operation;
+  } finally {
+    native.call({ op: "connections.finish", receipt });
+    await waiting;
+  }
 }
 
-function nativeCatalog(
-  environments: Environment[],
-  tokens: Record<string, string>,
-  activeThread: ReturnType<typeof threadIdentity> | undefined,
-  now: number,
-  native: NativeModule,
-): Catalog {
-  const enabled = environments.filter((environment) => environment.enabled && tokens[environment.id]);
-  for (const [id, connection] of connections) {
-    const environment = enabled.find((entry) => entry.id === id);
-    if (!environment || connection.origin !== environment.url || connection.token !== tokens[id]) {
-      connection.open = false;
-      connection.session.disconnected("Disconnected");
-      connections.delete(id);
-    }
-  }
-  for (const environment of enabled) {
-    if (!connections.has(environment.id)) {
-      const session = new DirectSession(environment);
-      connections.set(environment.id, {
-        origin: environment.url, token: tokens[environment.id]!,
-        generation: ++nextGeneration, session, open: false,
-      });
-    }
-    const session = connections.get(environment.id)!.session;
-    session.environment.label = environment.label;
-    session.select(activeThread?.environmentId === environment.id ? activeThread.threadId : "");
-  }
+function syncNativeConnections(native: NativeModule) {
   const result = native.call({ op: "connections.sync", connections: [...connections].map(([id, connection]) => ({
     id, generation: connection.generation, origin: connection.origin, token: connection.token,
   })) });
@@ -166,6 +136,37 @@ function nativeCatalog(
       native.call({ op: "connections.close", id, generation });
     }
   }
+}
+
+function nativeCatalog(
+  environments: Environment[],
+  tokens: Record<string, string>,
+  activeThread: ReturnType<typeof threadIdentity> | undefined,
+  now: number,
+  native: NativeModule,
+): Catalog {
+  const enabled = environments.filter((environment) => environment.enabled && tokens[environment.id]);
+  for (const [id, connection] of connections) {
+    const environment = enabled.find((entry) => entry.id === id);
+    if (!environment || connection.origin !== environment.url || connection.token !== tokens[id]) {
+      connection.open = false;
+      connection.session.disconnected("Disconnected");
+      connections.delete(id);
+    }
+  }
+  for (const environment of enabled) {
+    if (!connections.has(environment.id)) {
+      const session = new DirectSession(environment);
+      connections.set(environment.id, {
+        origin: environment.url, token: tokens[environment.id]!,
+        generation: ++nextGeneration, session, open: false,
+      });
+    }
+    const session = connections.get(environment.id)!.session;
+    session.environment.label = environment.label;
+    session.select(activeThread?.environmentId === environment.id ? activeThread.threadId : "");
+  }
+  syncNativeConnections(native);
   return {
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
@@ -249,15 +250,32 @@ async function loadCatalog(
 }
 
 const sources: Sources = {
+  restoreModelSettings: async (_args, _store, storage) => {
+    composerSettings.restore(await loadModelDrafts(storage));
+    return { ok: true, error: "" };
+  },
+  persistModelSettings: async (_args, _store, storage) => {
+    await saveModelDrafts(storage, composerSettings.snapshot());
+    return { ok: true, error: "" };
+  },
   loadSettings: ([id], _store, _storage, native) => {
-    if (!id) return { groups: [], options: [], selectedModelId: "", runtimeMode: "", runtimeLabel: "", runtimeChoices: [], saveLabel: "Done", error: "" };
+    if (!id) return { groups: [], options: [], selectedModelId: "", appliedModelId: "", runtimeMode: "", runtimeLabel: "", runtimeChoices: [], saveLabel: "Done", error: "" };
     native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
     const identity = threadIdentity(id);
     return composerSettings.project(id, identity.threadId, sessionFor(identity.environmentId));
   },
   beginSettings: ([id]) => {
     const identity = threadIdentity(id);
     return composerSettings.begin(id, identity.threadId, sessionFor(identity.environmentId));
+  },
+  setModelFavorite: async ([id, modelId, favorite], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(sessionFor(identity.environmentId).setModelFavorite(identity.threadId, modelId, favorite), native);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The favorite could not be updated." };
+    }
   },
   changeSettings: ([id, kind, option, value]) => {
     const identity = threadIdentity(id);
@@ -285,8 +303,17 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadCatalog: ([selected, activeThreadId, now], store, storage, native) =>
-    loadCatalog(selected, activeThreadId, now, store, storage, native),
+  loadCatalog: async ([selected, activeThreadId, now], store, storage, native) => {
+    const catalog = await loadCatalog(selected, activeThreadId, now, store, storage, native);
+    for (const { id } of composerSettings.snapshot()) {
+      const identity = threadIdentity(id);
+      const session = connections.get(identity.environmentId)?.session
+        ?? (current?.environment.id === identity.environmentId ? current : undefined);
+      const live = session?.liveSettings(identity.threadId);
+      if (composerSettings.reconcile(id, live, live != null)) modelDraftRevision++;
+    }
+    return { ...catalog, modelDraftRevision };
+  },
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(["update-environment", id, JSON.stringify({ label, url })], store, storage, native),
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
@@ -336,7 +363,7 @@ const sources: Sources = {
           value.trim(),
           crypto.randomUUID(),
           crypto.randomUUID(),
-          composerSettings.selection(id),
+          composerSettings.resolve(id, identity.threadId, sessionFor(identity.environmentId)),
         ), native);
       }
       const tokens = operation === "pair" || operation === "remove" ? credentials(store) : {};

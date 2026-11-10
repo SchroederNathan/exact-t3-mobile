@@ -38,6 +38,7 @@ shape Model
   unavailableReason: string
   isDefault: bool
   isLegacy: bool
+  isFavorite: bool
 
 shape ProviderGroup
   id: string
@@ -57,6 +58,7 @@ shape SheetSettings
   groups: ProviderGroup[]
   options: ModelOption[]
   selectedModelId: string
+  appliedModelId: string
   runtimeMode: string
   runtimeLabel: string
   runtimeChoices: Choice[]
@@ -128,6 +130,7 @@ shape Project
   environmentId: string
 
 shape Catalog
+  modelDraftRevision: number
   projects: Project[]
   environments: Environment[]
   threads: Thread[]
@@ -169,7 +172,8 @@ fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/ch
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0) } }
 
-fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
+fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
+fn modelGroupCollapsed(group: ProviderGroup, overrides: string[], selectedId: string, narrowed: bool): bool = not narrowed and ((["codex", "claudeAgent", "antigravity"].includes(group.provider) or group.models.filter(model => model.id == selectedId).length > 0) ? overrides.includes(group.id) : not overrides.includes(group.id))
 fn optionTitle(options: ModelOption[], id: string): string = match first(options.filter(option => option.id == id)) { case some(option) => option.label, case none => "Option" }
 fn optionChoices(options: ModelOption[], id: string): Choice[] = match first(options.filter(option => option.id == id)) { case some(option) => option.choices, case none => [] }
 fn optionValue(options: ModelOption[], id: string): string = match first(options.filter(option => option.id == id)) { case some(option) => option.value, case none => "" }
@@ -177,6 +181,7 @@ fn optionValue(options: ModelOption[], id: string): string = match first(options
 component T3Code
   state modelQuery = ""
   state modelProviderFilter = ""
+  state modelExpansionOverrides: string[] = []
   state showLegacyModels = false
   state settingsThreadId = ""
   state query = ""
@@ -196,15 +201,21 @@ component T3Code
   state composerBottomAdjustment = 0
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
   mutation savedDraft as shape Reply queue
+  resource restoredModelSettings = restoreModelSettings() as shape Reply else empty()
+  mutation persistedModelSettings as shape Reply queue
+  derive modelDraftsReady = not pending(restoredModelSettings) and not failed(restoredModelSettings)
+  derive modelDraftError = failed(restoredModelSettings) ? "Saved model settings could not be loaded." : failed(persistedModelSettings) ? "Model settings could not be saved." : ""
   derive draftsReady = not pending(savedDrafts) and not failed(savedDrafts)
   derive draftError = failed(savedDrafts) ? "Saved drafts could not be loaded." : failed(savedDraft) ? "The draft could not be saved." : match savedDraft { case some(reply) => reply.error, case none => "" }
   resource settings = loadSettings(settingsThreadId) as shape SheetSettings else empty()
+  mutation favoriteChanged as shape Reply refreshes settings
   mutation settingsOpened as shape Reply refreshes settings then afterSettingsOpen
   mutation settingsUpdated as shape Reply refreshes settings then afterSettingsUpdate
   mutation settingsClosed as shape Reply refreshes settings then afterSettingsClose
+  derive favoriteError = failed(favoriteChanged) ? "The favorite could not be updated." : match favoriteChanged { case some(reply) => reply.error, case none => "" }
   derive settingsUpdateError = failed(settingsUpdated) ? "The model setting could not be changed." : match settingsUpdated { case some(reply) => reply.error, case none => "" }
   derive settingsCloseError = failed(settingsClosed) ? "The model settings could not be saved." : match settingsClosed { case some(reply) => reply.error, case none => "" }
-  derive shownModelGroups = settings.groups.filter(group => (modelProviderFilter == "" or group.id == modelProviderFilter) and matchingModels(group, modelQuery, showLegacyModels).length > 0)
+  derive shownModelGroups = settings.groups.filter(group => (modelProviderFilter == "" or modelProviderFilter == "@favorites" or group.id == modelProviderFilter) and matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites").length > 0)
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId) with time.epochAtZero as shape Catalog else empty()
@@ -236,20 +247,30 @@ component T3Code
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
   derive composerError = submission.id == activeThreadId and submission.revision == threadDraft(savedDrafts, draftEdits, activeThreadId).revision and not pending(sent) ? sendError : ""
-  derive canSend = draftsReady and composer.trim() != "" and not pending(sent)
+  derive canSend = draftsReady and modelDraftsReady and composer.trim() != "" and not pending(sent)
 
   task defaultSettings when split and current.name == "settingsDetail" key=current.id
     after(1, openEnvironments)
+
+  task reconciledModels when modelDraftsReady and catalog.modelDraftRevision > 0 key=catalog.modelDraftRevision
+    after(1, persistReconciledModels)
+
+  action persistReconciledModels
+    send persistedModelSettings = persistModelSettings()
 
   task inspector when current.name == "inspector" and selectedThread(catalog, current.params.id).length > 0 key=`${current.id}:${current.params.kind}`
     after(1, loadInspector)
 
   action openModelSettings
     let id = activeThreadId
+    favoriteChanged = none
+    settingsUpdated = none
+    settingsClosed = none
     settingsThreadId = id
     modelQuery = ""
     modelProviderFilter = ""
     showLegacyModels = false
+    modelExpansionOverrides = []
     send settingsOpened = beginSettings(id)
   action afterSettingsOpen
     if match settingsOpened { case some(reply) => reply.ok, case none => false }
@@ -260,6 +281,7 @@ component T3Code
     send settingsClosed = closeSettings(settingsThreadId, true)
   action afterSettingsClose
     if match settingsClosed { case some(reply) => reply.ok, case none => false }
+      send persistedModelSettings = persistModelSettings()
       nav = go(nav, path("thread", settingsThreadId))
       settingsThreadId = ""
   action searchModels(value: string)
@@ -268,6 +290,10 @@ component T3Code
     modelProviderFilter = id
   action toggleLegacyModels
     showLegacyModels = not showLegacyModels
+  action toggleModelGroup(id: string)
+    modelExpansionOverrides = modelExpansionOverrides.includes(id) ? modelExpansionOverrides.filter(value => value != id) : modelExpansionOverrides.concat([id])
+  action toggleModelFavorite(id: string, favorite: bool)
+    send favoriteChanged = setModelFavorite(settingsThreadId, id, favorite)
   action selectSettingsModel(id: string)
     send settingsUpdated = changeSettings(settingsThreadId, "model", id, "")
   action toggleSettingsOption(id: string, value: bool)
@@ -278,8 +304,10 @@ component T3Code
   action chooseSetting(kind: string, id: string, value: string)
     send settingsUpdated = changeSettings(settingsThreadId, kind, id, value)
   action afterSettingsUpdate
-    if top(nav).name == "settingChoice" and match settingsUpdated { case some(reply) => reply.ok, case none => false }
-      nav = back(nav)
+    if match settingsUpdated { case some(reply) => reply.ok, case none => false }
+      send persistedModelSettings = persistModelSettings()
+      if top(nav).name == "settingChoice"
+        nav = back(nav)
 
 
   action loadInspector
@@ -629,8 +657,8 @@ component T3Code
                             text "Provider error" flex=1 color="rose" font-size=14 line-height="19px" font-weight=500
                             text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
                           text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
-                  if draftError != ""
-                    text draftError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=16 bottom=(88 + composerBottomAdjustment) z-index=2 testId="draft-error"
+                  if draftError != "" or modelDraftError != ""
+                    text (draftError != "" ? draftError : modelDraftError) color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=16 bottom=(88 + composerBottomAdjustment) z-index=2 testId="draft-error"
                   if composerError != ""
                     text composerError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=2 testId="send-error"
                   row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=(split ? "env(safe-area-inset-right)" : 0) z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
@@ -641,7 +669,7 @@ component T3Code
                       textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
                         ::placeholder
                           color="muted"
-                      button press=openModelSettings appearance="none" aria-label="Model and reasoning settings" testId="model-settings" height=44 padding="0 7px"
+                      button press=openModelSettings disabled=not modelDraftsReady appearance="none" aria-label="Model and reasoning settings" testId="model-settings" height=44 padding="0 7px"
                         row align-items="center" gap=7
                           ProviderIcon(provider=(match first(selectedThread(catalog, e.params.id)) { case some(thread) => thread.provider, case none => "" }), size=16)
                           image "symbol:sf/chevron.down" font-size=10
@@ -649,7 +677,7 @@ component T3Code
                         row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
                           image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "threadSettings"
-                column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="models-list" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="models-list" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     button id="back" press=cancelModelSettings aria-label="Cancel thread settings" testId="cancel-settings"
                       image "symbol:close"
@@ -657,64 +685,86 @@ component T3Code
                     input type="search" value=modelQuery input=searchModels placeholder="Find a model" aria-label="Find a model" testId="model-search"
                     button popovertarget="model-filters" aria-label="Model filters" testId="model-filters-button"
                       image "symbol:filter"
-                    button press=saveModelSettings buttonStyle="bordered-prominent" aria-label=settings.saveLabel disabled=(settings.error != "" or pending(settingsUpdated) or pending(settingsClosed)) testId="save-settings"
+                    button press=saveModelSettings buttonStyle="bordered-prominent" accent-color="foreground" aria-label=settings.saveLabel disabled=(settings.error != "" or pending(settingsUpdated) or pending(settingsClosed)) testId="save-settings"
                       image "symbol:checkmark"
-                  list id="models-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                  scroll id="models-list" flex=1 min-height=0 padding-top=4 padding-bottom="calc(env(safe-area-inset-bottom) + 64px)" background-color="screen"
                     for group in shownModelGroups key=group.id
-                      section
-                        header
-                          text group.label
-                        for model in matchingModels(group, modelQuery, showLegacyModels) key=model.id
-                          button role="radio" aria-checked=(settings.selectedModelId == model.id) press=selectSettingsModel(model.id) disabled=(not model.available or pending(settingsUpdated)) testId=`model-${model.id}`
-                            text model.label
-                            if settings.selectedModelId == model.id
-                              image "symbol:checkmark"
+                      column
+                        button press=toggleModelGroup(group.id) disabled=(modelProviderFilter != "" or modelQuery.trim() != "") appearance="none" aria-label=`${group.label}, ${matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites").length} models` display="flex" align-items="center" gap=7 margin="3.5px 14px 0" padding="7px 3.5px 0" min-height=38.5 box-sizing="border-box" text-align="left" color="muted"
+                          ProviderIcon(provider=group.provider, size=15)
+                          text group.label font-size=14 line-height="19px" font-weight=500
+                          view flex=1
+                          if modelProviderFilter == "" and modelQuery.trim() == ""
+                            if modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false)
+                              text `${matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, false).length}` font-size=12 font-weight=500
+                            image (modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false) ? "symbol:sf/chevron.down" : "symbol:sf/chevron.up") width=12 height=12
+                        if not modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, modelProviderFilter != "" or modelQuery.trim() != "")
+                          column margin="0 14px" border-radius=14 overflow="hidden" background-color="card"
+                            for model, index in matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites") key=model.id
+                              if index > 0
+                                view height=1 background-color="edge" opacity=0.5
+                              row align-items="center" gap=7 padding="0 14px" min-height=38.5
+                                button role="radio" aria-checked=(settings.selectedModelId == model.id) press=selectSettingsModel(model.id) disabled=(not model.available or pending(settingsUpdated)) testId=`model-${model.id}` appearance="none" display="flex" align-items="center" gap=7 text-align="left" flex=1 min-width=0 min-height=38.5 color="foreground"
+                                  column flex=1 min-width=0
+                                    row align-items="center" gap=7
+                                      text model.label font-size=16 line-height="23px" font-weight=500 min-width=0 flex-shrink=1 line-clamp=1
+                                      if model.isDefault or model.isLegacy
+                                        text (model.isDefault ? "Default" : "Legacy") font-size=10 font-weight=700 color="muted" background-color="screen" padding="1.75px 5.25px" border-radius=5.25
+                                    if model.unavailableReason != ""
+                                      text model.unavailableReason font-size=13 line-height="17px" color="muted"
+                                  if settings.selectedModelId == model.id
+                                    image "symbol:checkmark" width=16 height=16 font-weight=600
+                                button press=toggleModelFavorite(model.id, not model.isFavorite) disabled=pending(favoriteChanged) appearance="none" display="flex" align-items="center" justify-content="center" min-width=38.5 min-height=38.5 color=(model.isFavorite ? "foreground" : "muted") aria-label=`${model.isFavorite ? "Remove from" : "Add to"} favorites: ${group.label}, ${model.label}` testId=`favorite-${model.id}`
+                                  image (model.isFavorite ? "symbol:sf/star.fill" : "symbol:sf/star") width=18 height=18
                     if shownModelGroups.length == 0
-                      section
-                        text "No matching models" testId="empty-models"
-                    section
-                      header
-                        text "Options"
+                      text (modelProviderFilter == "@favorites" ? "No favorite models" : "No matching models") padding="49px 28px" font-size=14 color="muted" text-align="center" testId="empty-models"
+                    text "Options" padding="7px 17.5px" font-size=14 line-height="19px" font-weight=500 color="muted"
+                    column margin="0 14px" border-radius=14 overflow="hidden" background-color="card"
                       for option in settings.options key=option.id
                         if option.kind == "boolean"
-                          row
-                            text option.label
+                          row align-items="center" gap=7 padding="7px 14px" min-height=38.5 box-sizing="border-box"
+                            text option.label font-size=14 line-height="19px" font-weight=500 flex=1
                             input type="checkbox" switch checked=(option.value == "true") change=toggleSettingsOption(option.id) aria-label=option.label testId=`option-${option.id}`
                         else
-                          button press=openSettingChoice("option", option.id) testId=`option-${option.id}`
-                            text option.label
-                            text option.valueLabel
-                            image "symbol:forward-chevron"
-                      button press=openSettingChoice("runtime", "runtime") testId="runtime-options"
-                        text "Runtime"
-                        text settings.runtimeLabel
-                        image "symbol:forward-chevron"
-                      footer
-                        text (settingsCloseError != "" ? settingsCloseError : settingsUpdateError != "" ? settingsUpdateError : settings.error) testId="settings-error"
+                          button press=openSettingChoice("option", option.id) testId=`option-${option.id}` appearance="none" display="flex" align-items="center" gap=7 padding="7px 14px" min-height=38.5 box-sizing="border-box" color="foreground"
+                            text option.label font-size=14 line-height="19px" font-weight=500
+                            view flex=1
+                            text option.valueLabel font-size=14 line-height="19px" color="muted"
+                            image "symbol:forward-chevron" width=12 height=12 color="muted"
+                        view height=1 background-color="edge" opacity=0.5
+                      button press=openSettingChoice("runtime", "runtime") testId="runtime-options" appearance="none" display="flex" align-items="center" gap=7 padding="7px 14px" min-height=38.5 box-sizing="border-box" color="foreground"
+                        text "Runtime" font-size=14 line-height="19px" font-weight=500
+                        view flex=1
+                        text settings.runtimeLabel font-size=14 line-height="19px" color="muted"
+                        image "symbol:forward-chevron" width=12 height=12 color="muted"
+                    text (favoriteError != "" ? favoriteError : settingsCloseError != "" ? settingsCloseError : settingsUpdateError != "" ? settingsUpdateError : settings.error) margin="7px 17.5px" font-size=13 color="danger" testId="settings-error"
                   column id="model-filters" popover="auto" role="menu"
                     button role="menuitemradio" aria-checked=(modelProviderFilter == "") press=filterModelProvider("")
                       text "All providers"
+                    button role="menuitemradio" aria-checked=(modelProviderFilter == "@favorites") press=filterModelProvider("@favorites")
+                      text "Favorites"
                     for group in settings.groups key=group.id
                       button role="menuitemradio" aria-checked=(modelProviderFilter == group.id) press=filterModelProvider(group.id)
                         text group.label
                     button role="menuitemcheckbox" aria-checked=showLegacyModels press=toggleLegacyModels
                       text "Show legacy models"
               if e.name == "settingChoice"
-                column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationScroll="choices-list" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationScroll="choices-list" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text (e.params.kind == "runtime" ? "Runtime" : optionTitle(settings.options, e.params.option)) role="heading" aria-level=2
-                  list id="choices-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    section
-                      for choice in (e.params.kind == "runtime" ? settings.runtimeChoices : optionChoices(settings.options, e.params.option)) key=choice.id
-                        button role="radio" aria-checked=((e.params.kind == "runtime" ? settings.runtimeMode : optionValue(settings.options, e.params.option)) == choice.id) press=chooseSetting(e.params.kind, e.params.option, choice.id) disabled=(not choice.available or pending(settingsUpdated)) testId=`choice-${choice.id}`
-                          column
-                            text choice.label
+                  scroll id="choices-list" flex=1 min-height=0 padding="16px 16px calc(env(safe-area-inset-bottom) + 12px)" background-color="screen"
+                    column border-radius=14 overflow="hidden" background-color="card"
+                      for choice, index in (e.params.kind == "runtime" ? settings.runtimeChoices : optionChoices(settings.options, e.params.option)) key=choice.id
+                        if index > 0
+                          view height=1 background-color="edge" opacity=0.5
+                        button role="radio" aria-checked=((e.params.kind == "runtime" ? settings.runtimeMode : optionValue(settings.options, e.params.option)) == choice.id) press=chooseSetting(e.params.kind, e.params.option, choice.id) disabled=(not choice.available or pending(settingsUpdated)) testId=`choice-${choice.id}` appearance="none" display="flex" align-items="center" gap=10.5 padding="10.5px 14px" min-height=49 box-sizing="border-box" color="foreground" text-align="left"
+                          column flex=1 min-width=0 gap=1.75 opacity=(choice.available ? 1 : 0.5)
+                            text choice.label font-size=16 line-height="23px" font-weight=500
                             if choice.description != "" or choice.unavailableReason != ""
-                              text (choice.available ? choice.description : choice.unavailableReason) font="-exact-footnote" color="-exact-secondary-label"
+                              text (choice.available ? choice.description : choice.unavailableReason) font-size=14 line-height="17.5px" color="muted"
                           if (e.params.kind == "runtime" ? settings.runtimeMode : optionValue(settings.options, e.params.option)) == choice.id
-                            image "symbol:checkmark"
-                      footer
-                        text settingsUpdateError
+                            image "symbol:checkmark" width=16 height=16 font-weight=600
+                    text settingsUpdateError font-size=13 color="danger" margin-top=7
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header

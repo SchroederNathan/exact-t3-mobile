@@ -47,6 +47,7 @@ function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
 
 function environment(id: string, label: string, secondary = false) {
   const sockets = new Set<Socket>();
+  let modelFavorites: Array<{ provider: string; model: string }> = [];
   const held: { socket: Socket; requestId: string }[] = [];
   const projects = secondary
     ? [{ id: "remote", title: "Remote project" }]
@@ -128,6 +129,7 @@ function environment(id: string, label: string, secondary = false) {
           chunk(socket, frame.id, {
             type: "snapshot",
             config: {
+              settings: { favorites: modelFavorites },
               environment: { platform: { machine: secondary ? "laptop" : "mac-mini" } },
               providers: [{
                 instanceId: "fixture-provider",
@@ -147,6 +149,15 @@ function environment(id: string, label: string, secondary = false) {
               }],
             },
           });
+        } else if (frame.tag === "server.updateSettings") {
+          for (const favorite of frame.payload.patch.setModelFavorites ?? []) {
+            modelFavorites = modelFavorites.filter((entry) => entry.provider !== favorite.provider || entry.model !== favorite.model);
+            if (favorite.favorite) modelFavorites.push({ provider: favorite.provider, model: favorite.model });
+          }
+          socket.send(JSON.stringify({
+            _tag: "Exit", requestId: frame.id,
+            exit: { _tag: "Success", value: { favorites: modelFavorites } },
+          }));
         } else if (frame.tag === "orchestration.subscribeThread") {
           chunk(socket, frame.id, {
             kind: "snapshot",

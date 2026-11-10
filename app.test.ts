@@ -101,7 +101,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
       projects: [{ id: "p", title: `Project ${id}`, workspaceRoot: `/${id}` }],
       threads: [{ id: "t", title: `Thread ${id}`, projectId: "p", updatedAt: "2026-11-10T00:00:00Z" }],
     } });
-    chunk(id, "2", { type: "snapshot", config: { providers: [{
+    chunk(id, "2", { type: "snapshot", config: { settings: { favorites: [] }, providers: [{
       instanceId: "provider", enabled: true, installed: true, models: [{ slug: "model" }],
     }] } });
   }
@@ -160,6 +160,16 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const afterLeaving = sent.length;
   await load();
   expect(sent.length).toBe(afterLeaving);
+
+  const favoriting = answer("setModelFavorite", ["a:t", "provider:model", true], store, storage, native);
+  const favorite = sent.at(-1)!;
+  expect(favorite).toMatchObject({ environmentId: "a", frame: { tag: "server.updateSettings" } });
+  reply("a", favorite.frame.id, { favorites: [{ provider: "provider", model: "model" }] });
+  await answer("loadSettings", ["a:t"], store, storage, native);
+  expect(events).toEqual([]);
+  expect(await favoriting).toEqual({ ok: true, error: "" });
+  const sheet = await answer("loadSettings", ["a:t"], store, storage, native);
+  expect(sheet.groups[0]?.models[0]?.isFavorite).toBe(true);
 
   expect(await answer("command", ["open", "b:t", ""], store, storage, native)).toEqual({ ok: true, error: "" });
   expect(sent.at(-1)).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.subscribeThread", payload: { threadId: "t" } } });

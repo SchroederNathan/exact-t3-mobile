@@ -16,14 +16,14 @@ type SettingsRequest = {
   payload: Record<string, unknown>;
 };
 
-function settingsSession() {
+function settingsSession(initializeShell = true) {
   const requests: SettingsRequest[] = [];
   const dispatched = Promise.withResolvers<SettingsRequest>();
   const session = new DirectSession({
     id: "env", label: "Mac", url: "http://localhost:13773",
     enabled: true, status: "Connecting", machineSymbol: "server.rack",
   });
-  session.open({
+  const open = () => session.open({
     readyState: 1, bufferedAmount: 0,
     send(frame) {
       const request = JSON.parse(String(frame)) as SettingsRequest;
@@ -33,6 +33,7 @@ function settingsSession() {
     },
     close() {},
   });
+  open();
   const provider = {
     instanceId: "codex", driver: "codex", enabled: true, installed: true,
     auth: { status: "authenticated" },
@@ -50,7 +51,7 @@ function settingsSession() {
     _tag: "Chunk", requestId: "2",
     values: [{ type: "snapshot", config: { providers } }],
   }));
-  session.receive(JSON.stringify({
+  if (initializeShell) session.receive(JSON.stringify({
     _tag: "Chunk", requestId: "1", values: [{
       kind: "snapshot", snapshot: {
         projects: [], threads: [{
@@ -65,7 +66,7 @@ function settingsSession() {
     _tag: "Exit", requestId: request.id, exit: { _tag: "Success", value: { sequence: 2 } },
   }));
   const commands = () => requests.filter((request) => request.tag === "orchestration.dispatchCommand");
-  return { session, provider, updateProviders, requests, commands, dispatched: dispatched.promise, accept };
+  return { session, provider, updateProviders, requests, commands, dispatched: dispatched.promise, accept, open };
 }
 
 describe("direct T3 connection", () => {
@@ -835,17 +836,36 @@ describe("direct thread settings", () => {
   });
 
   test("updates provider-switch permission from stream events and clears it when subscription state is lost", async () => {
-    const { session, provider, updateProviders, requests, commands } = settingsSession();
-    updateProviders([provider, { ...provider, instanceId: "claude", driver: "claudeAgent" }]);
+    const { session, provider, updateProviders, requests, commands, open } = settingsSession(false);
+    expect(session.liveSettings("thread")).toBeNull();
+    updateProviders([
+      { ...provider, models: provider.models.map((model) => ({ ...model, capabilities: { optionDescriptors: [] } })) },
+      { ...provider, instanceId: "claude", driver: "claudeAgent" },
+    ]);
     const thread = {
       id: "thread", projectId: "project", runtimeMode: "full-access", status: "idle",
       latestRunId: "completed", latestUserMessageAt: null, activeProviderThreadId: "provider-thread",
-      modelSelection: { instanceId: "codex", model: "gpt-6" },
+      modelSelection: {
+        instanceId: "codex", model: "gpt-6",
+        options: [{ id: "effort", value: "ultracode" }, { id: "fastMode", value: false }],
+      },
     };
+    const authoritative = { threadId: thread.id, modelSelection: thread.modelSelection, runtimeMode: thread.runtimeMode };
     const shell = () => session.receive(JSON.stringify({
       _tag: "Chunk", requestId: "1", values: [{ kind: "snapshot", snapshot: { projects: [], threads: [thread] } }],
     }));
+    const partialShell = (id: string) => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: id, values: [
+        { kind: "snapshot", resolvedRepositoryIdentityRoots: [], snapshot: { projects: [] } },
+        { kind: "thread.updated", location: "active", thread },
+      ],
+    }));
+    partialShell("1");
+    expect(session.liveSettings("thread")).toBeNull();
     shell();
+    expect(session.liveSettings("thread")).toEqual(authoritative);
+    expect(session.liveSettings("missing")).toBeNull();
+    expect(session.settings("thread").selection?.modelSelection.options).toBeUndefined();
     session.select("thread");
     let requestId = requests.at(-1)!.id;
     const providerThread = {
@@ -903,22 +923,40 @@ describe("direct thread settings", () => {
     snapshot();
     expect(canSwitch()).toBe(true);
     session.receive(JSON.stringify({ _tag: "Chunk", requestId: "1", values: [{ kind: "thread.removed", location: "active", threadId: "thread" }] }));
+    expect(session.liveSettings("thread")).toBeNull();
     shell();
     expect(canSwitch()).toBe(false);
     snapshot();
     session.receive(JSON.stringify({ _tag: "Chunk", requestId: "1", values: [{ kind: "snapshot", snapshot: { projects: [], threads: [] } }] }));
+    expect(session.liveSettings("thread")).toBeNull();
     shell();
     expect(canSwitch()).toBe(false);
     snapshot();
     session.receive(JSON.stringify({ _tag: "Exit", requestId, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Thread stream ended" } }] } }));
     snapshot();
     expect(canSwitch()).toBe(false);
+    expect(session.liveSettings("thread")).toEqual(authoritative);
     session.select("thread");
     requestId = requests.at(-1)!.id;
     snapshot();
     session.disconnected("Connection lost");
     snapshot();
     expect(canSwitch()).toBe(false);
+    expect(session.liveSettings("thread")).toBeNull();
+    shell();
+    expect(session.liveSettings("thread")).toBeNull();
+    open();
+    const shellRequestId = requests.findLast((request) => request.tag === "orchestration.subscribeShell")!.id;
+    expect(session.liveSettings("thread")).toBeNull();
+    shell();
+    partialShell(shellRequestId);
+    expect(session.liveSettings("thread")).toBeNull();
+    session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: shellRequestId, values: [{ kind: "snapshot", snapshot: { projects: [], threads: [thread] } }],
+    }));
+    expect(session.liveSettings("thread")).toEqual(authoritative);
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: shellRequestId, exit: { _tag: "Success", value: {} } }));
+    expect(session.liveSettings("thread")).toBeNull();
   });
 
   test("dispatches the selected model and typed options without an unchanged runtime command", async () => {

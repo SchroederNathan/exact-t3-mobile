@@ -1,6 +1,7 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { markdownBlocks } from "./markdown";
 import {
+  decodeSelection,
   projectThreadSettings,
   stageThreadSettings,
   validateThreadSettings,
@@ -10,7 +11,7 @@ import {
   type ThreadSettingsSelection,
 } from "./thread-settings";
 
-export type Catalog = Result<"loadCatalog">;
+export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
 type Message = Thread["messages"][number];
@@ -408,6 +409,7 @@ export class DirectSession {
   private faviconRequests = new Map<string, string>();
   private favicons = new Map<string, { revision: string; url: string }>();
   private shells = new Map<string, ObjectValue>();
+  private shellLive = false;
   private transcripts = new Map<string, Message[]>();
   private switching: ReturnType<typeof switchingProjection> | undefined;
   private replies = new Map<string, (reply: Reply) => void>();
@@ -517,6 +519,7 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.shellLive = false;
     this.switching = undefined;
     this.threadRequest = "";
     this.socket = socket;
@@ -546,6 +549,15 @@ export class DirectSession {
     const thread = this.shells.get(threadId);
     const view = projectThreadSettings(this.config, thread ?? { id: threadId }, staged, this.settingsPolicy(thread));
     return thread ? view : { ...view, error: "This thread is no longer available." };
+  }
+
+  liveSettings(threadId: string): ThreadSettingsSelection | null {
+    if (!this.shellLive) return null;
+    const thread = this.shells.get(threadId);
+    const modelSelection = decodeSelection(thread?.modelSelection);
+    return thread && modelSelection
+      ? { threadId, modelSelection, runtimeMode: string(thread.runtimeMode) }
+      : null;
   }
 
   stageSettings(
@@ -708,6 +720,8 @@ export class DirectSession {
   }
 
   disconnected(reason: string) {
+    this.shellLive = false;
+    this.shellRequest = "";
     this.switching = undefined;
     this.threadRequest = "";
     this.socket = undefined;
@@ -737,6 +751,7 @@ export class DirectSession {
         }
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
       } else if (frame._tag === "Exit") {
+        if (id === this.shellRequest) this.shellLive = false;
         const threadEnded = id === this.threadRequest;
         if (threadEnded) {
           this.switching = undefined;
@@ -767,6 +782,7 @@ export class DirectSession {
         this.replies.delete(id);
         if (error && (id === this.shellRequest || threadEnded))
           this.environment.status = error;
+        if (id === this.shellRequest) this.shellRequest = "";
       } else if (frame._tag === "Defect") {
         this.disconnected(
           string(object(frame.defect).message) || "The server closed the connection unexpectedly.",
@@ -782,6 +798,7 @@ export class DirectSession {
       if (Array.isArray(item.resolvedRepositoryIdentityRoots)) {
         for (const project of projects) this.projects.set(string(project.id), project);
       } else {
+        this.shellLive = true;
         this.projects = new Map(projects.map((project) => [string(project.id), project]));
         this.shells = new Map(
           records(snapshot.threads).map((thread) => [string(thread.id), thread]),
