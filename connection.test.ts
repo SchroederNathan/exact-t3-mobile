@@ -342,6 +342,142 @@ describe("direct T3 connection", () => {
     expect(session.threads()).toEqual([]);
   });
 
+  test("preserves visible tool activity and replaces streaming rows in place", () => {
+    const sent: string[] = [];
+    const session = new DirectSession({
+      id: "env",
+      label: "Mac",
+      url: "http://localhost:13773",
+      enabled: true,
+      status: "Connecting",
+      machineSymbol: "server.rack",
+    });
+    session.open({
+      readyState: 1,
+      bufferedAmount: 0,
+      send: (frame) => sent.push(String(frame)),
+      close() {},
+    });
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: "1",
+        values: [
+          {
+            kind: "snapshot",
+            snapshot: {
+              projects: [{ id: "project", title: "T3 Code" }],
+              threads: [{ id: "thread", projectId: "project", title: "Thread", status: "idle" }],
+            },
+          },
+        ],
+      }),
+    );
+    session.select("thread");
+    const request = JSON.parse(sent.at(-1)!);
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: request.id,
+        values: [
+          {
+            kind: "snapshot",
+            projection: {
+              messages: [
+                {
+                  id: "assistant",
+                  role: "assistant",
+                  runId: "run-1",
+                  text: "Working",
+                  streaming: true,
+                  createdAt: "2026-11-10T12:00:00Z",
+                  updatedAt: "2026-11-10T12:00:01Z",
+                },
+              ],
+              visibleTurnItems: [
+                {
+                  position: 0,
+                  visibility: "local",
+                  sourceThreadId: "thread",
+                  sourceItemId: "tool-1",
+                  item: {
+                    id: "tool-1",
+                    threadId: "thread",
+                    runId: "run-1",
+                    type: "command_execution",
+                    status: "completed",
+                    title: "Inspect workspace",
+                    input: "ls -la",
+                    startedAt: "2026-11-10T12:00:02Z",
+                    updatedAt: "2026-11-10T12:00:03Z",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const first = session.threads()[0]?.messages[0];
+    expect(first?.streaming).toBe(true);
+    expect(first?.activities).toHaveLength(1);
+    expect(first?.activities[0]).toMatchObject({
+      id: "tool-1",
+      kind: "command_execution",
+      title: "Inspect workspace",
+      status: "completed",
+    });
+
+    session.receive(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: request.id,
+        values: [
+          {
+            kind: "event",
+            event: {
+              type: "message.updated",
+              payload: {
+                id: "assistant",
+                role: "assistant",
+                runId: "run-1",
+                text: "Finished",
+                streaming: false,
+                createdAt: "2026-11-10T12:00:00Z",
+                updatedAt: "2026-11-10T12:00:04Z",
+              },
+            },
+          },
+          {
+            kind: "event",
+            event: {
+              type: "turn-item.updated",
+              payload: {
+                item: {
+                  id: "tool-1",
+                  threadId: "thread",
+                  runId: "run-1",
+                  type: "command_execution",
+                  status: "failed",
+                  title: "Inspect workspace",
+                  input: "ls -la",
+                  detail: "Permission denied",
+                  updatedAt: "2026-11-10T12:00:05Z",
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const updated = session.threads()[0]?.messages[0];
+    expect(updated?.body).toBe("Finished");
+    expect(updated?.streaming).toBe(false);
+    expect(updated?.activities).toEqual([
+      expect.objectContaining({ status: "failed", detail: "Permission denied" }),
+    ]);
+  });
+
   test("a send waits for server acceptance and rejects failures or disconnects without fabricating messages", async () => {
     const sent: string[] = [];
     const session = new DirectSession({
