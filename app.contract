@@ -40,7 +40,22 @@ shape Message
   body: string
   createdAt: string
   timeLabel: string
+  runId: string
+  streaming: bool
   blocks: MarkdownBlock[]
+  activities: Activity[]
+
+shape Activity
+  id: string
+  kind: string
+  title: string
+  detail: string
+  status: string
+  startedAt: string
+  runId: string
+  position: number
+  sourceThreadId: string
+  sourceItemId: string
 
 shape MarkdownBlock
   id: string
@@ -121,6 +136,8 @@ component T3Code
   state code = ""
   state showSettled = false
   state inspectorPath = ""
+  state expandedActivity = ""
+  state collapsedActivityGroup = ""
   state composerBottomAdjustment = 0
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
@@ -243,6 +260,12 @@ component T3Code
 
   action copyMessage(body: string)
     copyText(body)
+
+  action toggleActivity(id: string)
+    expandedActivity = expandedActivity == id ? "" : id
+
+  action toggleActivityGroup(id: string)
+    collapsedActivityGroup = collapsedActivityGroup == id ? "" : id
 
   action composerMetrics(value: string)
     composerBottomAdjustment = match parseNumber(value) { case some(inset) => inset, case none => 0 }
@@ -395,6 +418,31 @@ component T3Code
                                   text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
                                 else
                                   text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                            if message.activities.length > 0
+                              column width="100%" margin-top=8 border-radius=8 background-color="card" overflow="hidden" transition="background-color 180ms ease-out" testId=`activity-group-${message.id}`
+                                button press=toggleActivityGroup(message.id) appearance="none" width="100%" padding="4px 6px" text-align="left" aria-expanded=(collapsedActivityGroup != message.id)
+                                  row align-items="center" gap=8 min-height=28
+                                    image "symbol:sf/wrench.and.screwdriver" width=24 height=24 color="muted"
+                                    text "Work" flex=1 min-width=0 font-size=14 line-height="18px" color="foreground"
+                                    text `${message.activities.length} ${message.activities.length == 1 ? "step" : "steps"}` font-size=12 line-height="16px" color="muted"
+                                    image (collapsedActivityGroup == message.id ? "symbol:sf/chevron.right" : "symbol:sf/chevron.down") width=12 height=12 color="muted" transition="opacity 120ms ease-out"
+                                if collapsedActivityGroup != message.id
+                                  column gap=1 padding="0 6px 6px"
+                                    for activity in message.activities key=activity.id
+                                      column border-radius=6 overflow="hidden" testId=`activity-${activity.id}`
+                                        button press=toggleActivity(activity.id) appearance="none" width="100%" padding="4px 6px" text-align="left" aria-expanded=(expandedActivity == activity.id)
+                                          row align-items="center" gap=8 min-height=28
+                                            image (activity.kind == "reasoning" ? "symbol:sf/brain" : activity.kind == "command_execution" ? "symbol:sf/terminal" : activity.kind == "file_change" ? "symbol:sf/pencil" : activity.kind == "file_search" ? "symbol:sf/magnifyingglass" : activity.kind == "web_search" ? "symbol:sf/globe" : "symbol:sf/wrench.and.screwdriver") width=24 height=24 color="muted"
+                                            text activity.title flex=1 min-width=0 font-size=14 line-height="18px" color="foreground" line-clamp=1
+                                            text (activity.status == "failed" ? "Failed" : activity.status == "running" ? "Working" : activity.status == "completed" ? "Done" : "") font-size=12 line-height="16px" color=(activity.status == "failed" ? "danger" : "muted")
+                                            image (expandedActivity == activity.id ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=12 height=12 color="muted" transition="opacity 120ms ease-out"
+                                        if expandedActivity == activity.id
+                                          column padding="0 6px 6px 38px" opacity=1 transition="opacity 120ms ease-out"
+                                            text activity.detail user-select="text" white-space="pre-wrap" overflow-wrap="break-word" font-size=13 line-height="18px" color="muted"
+                                            button press=copyMessage(activity.detail) appearance="none" align-self="flex-start" padding="4px 0" aria-label=`Copy ${activity.title} details` color="muted"
+                                              row align-items="center" gap=4
+                                                image "symbol:sf/document.on.document" width=13 height=13
+                                                text "Copy details" font-size=12 line-height="16px"
                   for thread in selectedThread(catalog, e.params.id) key=thread.id
                     if thread.lastError != ""
                       row align-items="flex-start" gap=8 position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=1

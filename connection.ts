@@ -5,6 +5,7 @@ export type Catalog = Result<"loadCatalog">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
 type Message = Thread["messages"][number];
+type Activity = Message["activities"][number];
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
 export interface Inspection {
@@ -176,6 +177,21 @@ export async function socketUrl(environment: Environment, token: string): Promis
   return url.toString();
 }
 
+const markdownBlockCache = new Map<string, Message["blocks"]>();
+
+function cachedMarkdownBlocks(id: string, body: string): Message["blocks"] {
+  const key = `${id}:${body}`;
+  const cached = markdownBlockCache.get(key);
+  if (cached) return cached;
+  const blocks = markdownBlocks(body, id);
+  markdownBlockCache.set(key, blocks);
+  if (markdownBlockCache.size > 2048) {
+    const oldest = markdownBlockCache.keys().next().value;
+    if (oldest) markdownBlockCache.delete(oldest);
+  }
+  return blocks;
+}
+
 function message(value: ObjectValue): Message | null {
   const id = string(value.id);
   const role = string(value.role);
@@ -186,7 +202,69 @@ function message(value: ObjectValue): Message | null {
     ? ""
     : date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const body = string(value.text);
-  return { id, role, body, createdAt, timeLabel, blocks: markdownBlocks(body, id) };
+  return {
+    id,
+    role,
+    body,
+    createdAt,
+    timeLabel,
+    runId: string(value.runId),
+    streaming: value.streaming === true,
+    blocks: cachedMarkdownBlocks(id, body),
+    activities: [],
+  };
+}
+
+function activityRow(
+  value: ObjectValue,
+  metadata: { position?: unknown; sourceThreadId?: unknown; sourceItemId?: unknown } = {},
+): Activity | null {
+  const id = string(value.id);
+  const kind = string(value.type) || "activity";
+  if (!id) return null;
+  const status = string(value.status) || "idle";
+  const title =
+    string(value.title).trim() ||
+    string(value.toolName).trim() ||
+    (kind === "reasoning"
+      ? "Thinking"
+      : kind === "command_execution"
+        ? "Command"
+        : kind === "file_change"
+          ? "Changed files"
+          : kind === "file_search"
+            ? "Searched files"
+            : kind === "web_search"
+              ? "Searched the web"
+              : kind === "dynamic_tool"
+                ? "Tool call"
+                : kind.replaceAll("_", " "));
+  const input = string(value.input);
+  const output =
+    typeof value.output === "string"
+      ? value.output
+      : value.output === undefined
+        ? ""
+        : JSON.stringify(value.output, null, 2);
+  const detail =
+    string(value.text) ||
+    string(value.detail) ||
+    string(value.fileName) ||
+    string(value.pattern) ||
+    (input ? `Input\n${input}${output ? `\n\nOutput\n${output}` : ""}` : output) ||
+    title;
+  return {
+    id,
+    kind,
+    title,
+    detail,
+    status,
+    startedAt: string(value.startedAt) || string(value.updatedAt),
+    runId: string(value.runId),
+    position: Number(metadata.position ?? value.position ?? value.ordinal ?? 0),
+    sourceThreadId: string(metadata.sourceThreadId ?? value.sourceThreadId),
+    sourceItemId: string(metadata.sourceItemId ?? value.sourceItemId) || id,
+  };
 }
 
 function errorDetails(thread: ObjectValue): { message: string; time: string } {
@@ -654,7 +732,28 @@ export class DirectSession {
       const messages = records(projection.messages)
         .map(message)
         .filter((value): value is Message => value !== null);
-      this.transcripts.set(this.selected, messages);
+      const activityRows = records(
+        projection.visibleTurnItems ?? projection.turnItems ?? projection.items,
+      )
+        .map((row) => {
+          const item = object(row.item);
+          const source = string(item.id) ? item : row;
+          return {
+            row: string(item.id) ? row : { item: row, position: row.position ?? row.ordinal },
+            activity: activityRow(source, {
+              position: row.position,
+              sourceThreadId: row.sourceThreadId,
+              sourceItemId: row.sourceItemId,
+            }),
+          };
+        })
+        .filter((value): value is { row: ObjectValue; activity: Activity } => value.activity !== null)
+        .sort(
+          (left, right) =>
+            Number(left.row.position ?? object(left.row.item).ordinal ?? 0) -
+            Number(right.row.position ?? object(right.row.item).ordinal ?? 0),
+        );
+      this.transcripts.set(this.selected, this.attachActivities(messages, activityRows));
     } else if (item.kind === "event") {
       const event = object(item.event);
       if (event.type === "message.updated") {
@@ -666,10 +765,76 @@ export class DirectSession {
           this.selected,
           index < 0
             ? [...messages, updated]
-            : messages.map((value) => (value.id === updated.id ? updated : value)),
+            : messages.map((value) =>
+                value.id === updated.id ? { ...updated, activities: value.activities } : value,
+              ),
         );
+      } else if (event.type === "turn-item.updated") {
+        const payload = object(event.payload);
+        const updated = activityRow(object(payload.item).id ? object(payload.item) : payload);
+        if (!updated) return;
+        const messages = this.transcripts.get(this.selected) ?? [];
+        const found = messages.some((message) =>
+          message.activities.some((candidate) => candidate.id === updated.id),
+        );
+        if (found) {
+          this.transcripts.set(
+            this.selected,
+            messages.map((message) => ({
+              ...message,
+              activities: message.activities.map((candidate) =>
+                candidate.id === updated.id ? updated : candidate,
+              ),
+            })),
+          );
+        } else {
+          this.transcripts.set(
+            this.selected,
+            this.attachActivities(messages, [{ row: object(event.payload), activity: updated }]),
+          );
+        }
       }
     }
+  }
+
+  private attachActivities(
+    source: Message[],
+    rows: { row: ObjectValue; activity: Activity }[],
+  ): Message[] {
+    const messages = source.map((message) => ({ ...message, activities: [...message.activities] }));
+    for (const { row, activity: next } of rows) {
+      const item = object(row.item);
+      const runId = next.runId || string(item.runId) || string(row.runId);
+      let index = messages.findLastIndex(
+        (message) =>
+          message.role === "assistant" && (!runId || !message.runId || message.runId === runId),
+      );
+      if (index < 0) index = messages.findLastIndex((message) => message.role === "assistant");
+      if (index < 0) {
+        messages.push({
+          id: `activity:${next.id}`,
+          role: "assistant",
+          body: "",
+          createdAt: next.startedAt,
+          timeLabel: "",
+          runId,
+          streaming: false,
+          blocks: [],
+          activities: [next],
+        });
+      } else {
+        const current = messages[index]!;
+        const existing = current.activities.findIndex((candidate) => candidate.id === next.id);
+        messages[index] = {
+          ...current,
+          activities:
+            existing < 0
+              ? [...current.activities, next]
+              : current.activities.map((candidate) => (candidate.id === next.id ? next : candidate)),
+        };
+      }
+    }
+    return messages;
   }
 
   projectList(): Catalog["projects"] {

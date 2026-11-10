@@ -1,5 +1,5 @@
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
-# exact-t3-mobile: an Exact app
+# exact-t3-mobile-ios: an Exact app
 
 `app.contract` is the view, `app.ts` its data module, `app.test.contract` its tests, `app.json`
 the manifest: set its `app.name` and `app.id` before the first build. The app uses the exact2
