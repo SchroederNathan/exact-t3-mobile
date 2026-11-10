@@ -3,17 +3,35 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { ActivityFixture } from "./activity-fixture";
+import { MarkdownFixture } from "./markdown-fixture";
 
 const app = resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
 const activityMode = process.argv.includes("--activities");
+const markdownMode = process.argv.includes("--markdown");
+const thirdEnvironment = process.argv.includes("--third-environment");
+const fixturePorts = new Map<string, number>();
+const exactArguments: string[] = [];
+for (let index = 2; index < process.argv.length; index++) {
+  const argument = process.argv[index]!;
+  if (["--activities", "--no-command-stream", "--markdown", "--third-environment"].includes(argument)) continue;
+  const match = /^(--(?:port|secondary-port|third-port))(?:=(.*))?$/.exec(argument);
+  if (!match) { exactArguments.push(argument); continue; }
+  const value = match[2] ?? process.argv[++index] ?? "";
+  if (!/^\d+$/.test(value) || Number(value) > 65535) throw new Error(`${match[1]} requires a port from 0 to 65535.`);
+  fixturePorts.set(match[1]!, Number(value));
+}
+if (thirdEnvironment && !markdownMode) throw new Error("--third-environment requires --markdown.");
+if (fixturePorts.has("--third-port") && !thirdEnvironment) throw new Error("--third-port requires --third-environment.");
+const fixedPorts = [...fixturePorts.values()].filter((port) => port !== 0);
+if (new Set(fixedPorts).size !== fixedPorts.length) throw new Error("Each fixture environment needs a different port.");
 const headers = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "authorization, content-type",
 };
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers });
-type SocketState = { serial: number; shell: boolean; config: boolean };
+type SocketState = { serial: number; shell: boolean; config: boolean; shellRequest?: string };
 type Socket = ServerWebSocket<SocketState>;
 const chunk = (socket: Socket, requestId: string, value: unknown) =>
   socket.send(JSON.stringify({ _tag: "Chunk", requestId, values: [value] }));
@@ -47,14 +65,20 @@ function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
   });
 }
 
-function environment(id: string, label: string, secondary = false) {
+function environment(id: string, label: string, secondary = false, port = 0) {
   const sockets = new Set<Socket>();
   const activities = activityMode && !secondary ? new ActivityFixture(!process.argv.includes("--no-command-stream")) : undefined;
+  const markdown = markdownMode ? new MarkdownFixture(id, secondary ? "remote" : "active", (thread, sequence) => {
+    for (const socket of sockets) if (socket.data.shellRequest) {
+      chunk(socket, socket.data.shellRequest, { kind: "thread.updated", sequence, location: "active", thread });
+    }
+  }) : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const held: { socket: Socket; requestId: string }[] = [];
-  const projects = secondary
+  const projects = (secondary
     ? [{ id: "remote", title: "Remote project" }]
-    : [{ id: "active", title: "Active project" }, { id: "empty", title: "Empty project" }];
+    : [{ id: "active", title: "Active project" }, { id: "empty", title: "Empty project" }])
+    .map((project) => ({ ...project, ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}) }));
   const threads = (secondary ? ["gamma"] : ["alpha", "beta"]).map((id) => ({
     id,
     projectId: secondary ? "remote" : "active",
@@ -67,11 +91,13 @@ function environment(id: string, label: string, secondary = false) {
   })).concat(activities?.threads ?? []);
   const server = Bun.serve<SocketState>({
     hostname: "127.0.0.1",
-    port: 0,
+    port,
     idleTimeout: 0,
     async fetch(request, server) {
       const path = new URL(request.url).pathname;
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      const markdownResponse = await markdown?.http(request);
+      if (markdownResponse) return markdownResponse;
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
@@ -125,14 +151,21 @@ function environment(id: string, label: string, secondary = false) {
       },
       message(socket, data) {
         const frame = JSON.parse(String(data));
-        if (activities?.receive(socket, frame)) {
+        if (frame._tag === "Interrupt" && frame.requestId === socket.data.shellRequest) {
+          socket.data.shellRequest = undefined;
+          socket.data.shell = false;
+          changed();
+          return;
+        }
+        if (markdown?.receive(socket, frame) || activities?.receive(socket, frame)) {
           changed();
           return;
         }
         if (frame._tag !== "Request") return;
         if (frame.tag === "orchestration.subscribeShell") {
           socket.data.shell = true;
-          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads } });
+          socket.data.shellRequest = frame.id;
+          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads: [...threads, ...(markdown?.threads ?? [])] } });
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;
           chunk(socket, frame.id, {
@@ -143,7 +176,7 @@ function environment(id: string, label: string, secondary = false) {
                 platform: { machine: secondary ? "laptop" : "mac-mini" },
                 ...(activities ? { capabilities: activities.config } : {}),
               },
-              ...(activities ? { threadResumeCompletionMarker: true } : {}),
+              ...(activities || markdown ? { threadResumeCompletionMarker: true } : {}),
               providers: [{
                 instanceId: "fixture-provider",
                 driver: "codex",
@@ -183,7 +216,7 @@ function environment(id: string, label: string, secondary = false) {
               }],
             },
           });
-          if (activities) chunk(socket, frame.id, { kind: "synchronized" });
+          if (activities || markdown) chunk(socket, frame.id, { kind: "synchronized" });
         } else if (frame.tag === "orchestration.dispatchCommand" && (
           frame.payload.type === "thread.runtime-mode.set" || frame.payload.text === "Send chosen settings"
         )) {
@@ -214,6 +247,7 @@ function environment(id: string, label: string, secondary = false) {
       },
       close(socket) {
         sockets.delete(socket);
+        markdown?.close(socket);
         activities?.close(socket);
         for (let i = held.length - 1; i >= 0; i--) {
           if (held[i]?.socket === socket) held.splice(i, 1);
@@ -225,8 +259,9 @@ function environment(id: string, label: string, secondary = false) {
   return { server, sockets };
 }
 
-const primary = environment("fixture", "Fixture Mac");
-const secondary = environment("secondary", "Fixture Laptop", true);
+const primary = environment("fixture", "Fixture Mac", false, fixturePorts.get("--port"));
+const secondary = environment("secondary", "Fixture Laptop", true, fixturePorts.get("--secondary-port"));
+const tertiary = thirdEnvironment ? environment("tertiary", "Fixture Third Mac", true, fixturePorts.get("--third-port")) : undefined;
 const readySocket = (sockets: Set<Socket>) => sockets.size === 1
   ? [...sockets].find((socket) => socket.data.shell && socket.data.config) : undefined;
 const topology = () => ({
@@ -266,9 +301,10 @@ function assertions(path: string, signal: AbortSignal): Promise<Response> | Resp
 
 const directory = await mkdtemp(join(tmpdir(), "exact-t3-regression-"));
 try {
-  const [host = "ios", ...flags] = process.argv.slice(2).filter((flag) => !["--activities", "--no-command-stream"].includes(flag));
+  const [host = "ios", ...flags] = exactArguments;
   if (host === "--serve") {
-    console.log(JSON.stringify({ primary: primary.server.url.origin, secondary: secondary.server.url.origin, code: "fixture-code" }));
+    console.log(JSON.stringify({ primary: primary.server.url.origin, secondary: secondary.server.url.origin,
+      ...(tertiary ? { tertiary: tertiary.server.url.origin } : {}), code: "fixture-code" }));
     await new Promise<void>((resolve) => {
       process.once("SIGINT", resolve);
       process.once("SIGTERM", resolve);
@@ -287,6 +323,6 @@ try {
     process.exitCode = await child.exited;
   }
 } finally {
-  await Promise.all([primary.server.stop(true), secondary.server.stop(true)]);
+  await Promise.all([primary.server.stop(true), secondary.server.stop(true), tertiary?.server.stop(true)]);
   await rm(directory, { recursive: true, force: true });
 }
