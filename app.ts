@@ -257,6 +257,8 @@ const sources: Sources = {
   },
   loadCatalog: (args, store, storage, native) =>
     loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage, native),
+  updateEnvironment: ([id, label, url], store, storage, native) =>
+    sources.command(["update-environment", id, JSON.stringify({ label, url })], store, storage, native),
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
     try {
       const identity = threadIdentity(id);

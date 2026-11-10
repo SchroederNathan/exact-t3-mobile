@@ -71,7 +71,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     },
   };
   using _fetch = spyOn(globalThis, "fetch").mockRejectedValue(new Error("Use the native transport"));
-  const load = () => answer("loadCatalog", ["", 0], store, storage, native);
+  const load = (selected = "") => answer("loadCatalog", [selected, 0], store, storage, native);
   const emit = (id: string, type: string, data = "", reason = "") => {
     events.push({ id, generation: connections.find((entry) => entry.id === id)?.generation ?? 1, type, data, reason });
   };
@@ -101,8 +101,10 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     { id: "b:p", title: "Project b", environmentId: "b" },
   ]);
   const initialGenerations = connections.map(({ id, generation }) => ({ id, generation }));
-  await load();
-  expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(initialGenerations);
+  for (const selected of ["a", "b", ""]) {
+    expect((await load(selected)).threads.map(({ id }) => id)).toEqual(["a:t", "b:t"]);
+    expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(initialGenerations);
+  }
 
   expect(await answer("command", ["open", "b:t", ""], store, storage, native)).toEqual({ ok: true, error: "" });
   expect(sent.at(-1)).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.subscribeThread", payload: { threadId: "t" } } });
@@ -183,4 +185,22 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const reconnected = await load();
   expect(connections.find(({ id }) => id === "b")!.generation).not.toBe(reconnecting);
   expect(reconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connecting");
+
+  const beforeEdit = connections.map(({ id, generation }) => ({ id, generation }));
+  expect(await answer("updateEnvironment", ["a", " Renamed Mac ", "http://a.example/"], store, storage, native)).toEqual({ ok: true, error: "" });
+  const renamed = await load();
+  expect(renamed.environments.find(({ id }) => id === "a")).toMatchObject({ label: "Renamed Mac", url: "http://a.example" });
+  expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(beforeEdit);
+
+  const beforeInvalid = saved;
+  expect(await answer("updateEnvironment", ["a", " ", "http://changed.example"], store, storage, native)).toEqual({ ok: false, error: "Enter an environment name." });
+  expect(saved).toBe(beforeInvalid);
+  expect(await answer("updateEnvironment", ["missing", "Mac", "http://changed.example"], store, storage, native)).toEqual({ ok: false, error: "This environment is no longer available." });
+  expect(saved).toBe(beforeInvalid);
+
+  expect(await answer("updateEnvironment", ["a", "Renamed Mac", "https://changed.example/"], store, storage, native)).toEqual({ ok: true, error: "" });
+  const moved = await load();
+  expect(moved.environments.find(({ id }) => id === "a")).toMatchObject({ label: "Renamed Mac", url: "https://changed.example", status: "Connecting" });
+  expect(connections.find(({ id }) => id === "a")!.generation).not.toBe(beforeEdit.find(({ id }) => id === "a")!.generation);
+  expect(connections.find(({ id }) => id === "b")!.generation).toBe(beforeEdit.find(({ id }) => id === "b")!.generation);
 });

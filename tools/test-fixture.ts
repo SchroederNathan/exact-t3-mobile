@@ -5,134 +5,236 @@ import type { ServerWebSocket } from "bun";
 
 const app = resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
-const projects = [
-  { id: "active", title: "Active project" },
-  { id: "empty", title: "Empty project" },
-];
-const threads = ["alpha", "beta"].map((id) => ({
-  id,
-  projectId: "active",
-  title: id === "alpha" ? "Alpha thread" : "Beta thread",
-  status: "idle",
-  updatedAt: timestamp,
-  latestUserMessageAt: timestamp,
-  modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
-}));
 const headers = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "authorization, content-type",
 };
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers });
-const chunk = (socket: ServerWebSocket<undefined>, requestId: string, value: unknown) =>
+type SocketState = { serial: number; shell: boolean; config: boolean };
+type Socket = ServerWebSocket<SocketState>;
+const chunk = (socket: Socket, requestId: string, value: unknown) =>
   socket.send(JSON.stringify({ _tag: "Chunk", requestId, values: [value] }));
-const held: { socket: ServerWebSocket<undefined>; requestId: string }[] = [];
+const changes = new Set<() => void>();
+const changed = () => { for (const notify of changes) notify(); };
+const accepted = (socket: Socket, requestId: string) => socket.send(JSON.stringify({
+  _tag: "Exit", requestId, exit: { _tag: "Success", value: { sequence: 1 } },
+}));
+let nextSocket = 0;
+let secondaryAccepted = 0;
+let checkpoint: { primary: number; secondary: number } | undefined;
 
-const server = Bun.serve<undefined>({
-  hostname: "127.0.0.1",
-  port: 0,
-  async fetch(request, server) {
-    const path = new URL(request.url).pathname;
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (path === "/.well-known/t3/environment") {
-      return json({
-        environmentId: "fixture",
-        label: "Fixture Mac",
-        orchestrationProtocolVersion: 2,
-      });
-    }
-    if (path === "/oauth/token") {
-      const form = new URLSearchParams(await request.text());
-      return form.get("subject_token") === "fixture-code"
-        ? json({ access_token: "fixture-access" })
-        : json({ error: "Invalid fixture code" }, 401);
-    }
-    if (path === "/api/auth/websocket-ticket/rpc") {
-      return request.headers.get("authorization") === "Bearer fixture-access"
-        ? json({ ticket: "fixture-ticket" })
-        : json({ error: "Invalid fixture access" }, 401);
-    }
-    if (path === "/release" && request.method === "POST") {
-      const replies = held.splice(0);
-      for (const { socket, requestId } of replies) {
-        socket.send(JSON.stringify({
-          _tag: "Exit", requestId, exit: { _tag: "Success", value: { sequence: 1 } },
-        }));
+function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
+  const response = inspect();
+  if (response) return Promise.resolve(response);
+  return new Promise<Response>((resolve) => {
+    const finish = (response: Response) => {
+      changes.delete(notify);
+      signal.removeEventListener("abort", abort);
+      resolve(response);
+    };
+    const notify = () => {
+      const response = inspect();
+      if (response) finish(response);
+    };
+    const abort = () => finish(json({ error: "Fixture barrier cancelled" }, 499));
+    changes.add(notify);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
+function environment(id: string, label: string, secondary = false) {
+  const sockets = new Set<Socket>();
+  const held: { socket: Socket; requestId: string }[] = [];
+  const projects = secondary
+    ? [{ id: "remote", title: "Remote project" }]
+    : [{ id: "active", title: "Active project" }, { id: "empty", title: "Empty project" }];
+  const threads = (secondary ? ["gamma"] : ["alpha", "beta"]).map((id) => ({
+    id,
+    projectId: secondary ? "remote" : "active",
+    title: id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : "Beta thread",
+    status: "idle",
+    updatedAt: timestamp,
+    latestUserMessageAt: timestamp,
+    modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
+  }));
+  const server = Bun.serve<SocketState>({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(request, server) {
+      const path = new URL(request.url).pathname;
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method === "POST") {
+        const assertion = assertions(path, request.signal);
+        if (assertion) return assertion;
       }
-      return json({ released: replies.length }, replies.length ? 200 : 409);
-    }
-    if (path === "/ws" && new URL(request.url).searchParams.get("wsTicket") === "fixture-ticket") {
-      return server.upgrade(request) ? undefined : json({ error: "Upgrade failed" }, 400);
-    }
-    return json({ error: "Not found" }, 404);
-  },
-  websocket: {
-    message(socket, data) {
-      const frame = JSON.parse(String(data));
-      if (frame._tag !== "Request") return;
-      if (frame.tag === "orchestration.subscribeShell") {
-        chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads } });
-      } else if (frame.tag === "subscribeServerConfig") {
-        chunk(socket, frame.id, {
-          type: "snapshot",
-          config: {
-            environment: { platform: { machine: "mac-mini" } },
-            providers: [{
-              instanceId: "fixture-provider",
-              driver: "codex",
-              models: [{ slug: "fixture-model", shortName: "Fixture model" }],
-            }],
-          },
+      if (path === "/.well-known/t3/environment") {
+        return json({
+          environmentId: id,
+          label,
+          orchestrationProtocolVersion: 2,
         });
-      } else if (frame.tag === "orchestration.subscribeThread") {
-        chunk(socket, frame.id, {
-          kind: "snapshot",
-          projection: {
-            messages: [{
-              id: `${frame.payload.threadId}-message`,
-              role: "assistant",
-              text: "This is a deterministic test conversation.",
-              createdAt: timestamp,
-            }],
-          },
-        });
-      } else if (
-        frame.tag === "orchestration.dispatchCommand" &&
-        frame.payload.text === "Accept after release"
-      ) {
-        held.push({ socket, requestId: frame.id });
-      } else {
-        socket.send(JSON.stringify({
-          _tag: "Exit",
-          requestId: frame.id,
-          exit: {
-            _tag: "Failure",
-            cause: [{ _tag: "Fail", error: { message: "Fixture rejected the message." } }],
-          },
-        }));
       }
-    },
-    close(socket) {
-      for (let i = held.length - 1; i >= 0; i--) {
-        if (held[i]?.socket === socket) held.splice(i, 1);
+      if (path === "/oauth/token") {
+        const form = new URLSearchParams(await request.text());
+        return form.get("subject_token") === "fixture-code"
+          ? json({ access_token: "fixture-access" })
+          : json({ error: "Invalid fixture code" }, 401);
       }
+      if (path === "/api/auth/websocket-ticket/rpc") {
+        return request.headers.get("authorization") === "Bearer fixture-access"
+          ? json({ ticket: "fixture-ticket" })
+          : json({ error: "Invalid fixture access" }, 401);
+      }
+      if (path === "/release" && request.method === "POST") {
+        const replies = held.splice(0);
+        for (const { socket, requestId } of replies) {
+          accepted(socket, requestId);
+        }
+        return json({ released: replies.length }, replies.length ? 200 : 409);
+      }
+      if (path === "/ws" && new URL(request.url).searchParams.get("wsTicket") === "fixture-ticket") {
+        return server.upgrade(request, { data: { serial: ++nextSocket, shell: false, config: false } })
+          ? undefined : json({ error: "Upgrade failed" }, 400);
+      }
+      return json({ error: "Not found" }, 404);
     },
-  },
+    websocket: {
+      idleTimeout: 0,
+      open(socket) {
+        sockets.add(socket);
+        changed();
+      },
+      message(socket, data) {
+        const frame = JSON.parse(String(data));
+        if (frame._tag !== "Request") return;
+        if (frame.tag === "orchestration.subscribeShell") {
+          socket.data.shell = true;
+          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads } });
+        } else if (frame.tag === "subscribeServerConfig") {
+          socket.data.config = true;
+          chunk(socket, frame.id, {
+            type: "snapshot",
+            config: {
+              environment: { platform: { machine: secondary ? "laptop" : "mac-mini" } },
+              providers: [{
+                instanceId: "fixture-provider",
+                driver: "codex",
+                models: [{ slug: "fixture-model", shortName: "Fixture model" }],
+              }],
+            },
+          });
+        } else if (frame.tag === "orchestration.subscribeThread") {
+          chunk(socket, frame.id, {
+            kind: "snapshot",
+            projection: {
+              messages: [{
+                id: `${frame.payload.threadId}-message`,
+                role: "assistant",
+                text: "This is a deterministic test conversation.",
+                createdAt: timestamp,
+              }],
+            },
+          });
+        } else if (
+          secondary && frame.tag === "orchestration.dispatchCommand" &&
+          frame.payload.threadId === "gamma" && frame.payload.text === "Accept on secondary"
+        ) {
+          secondaryAccepted++;
+          accepted(socket, frame.id);
+        } else if (
+          frame.tag === "orchestration.dispatchCommand" &&
+          frame.payload.text === "Accept after release"
+        ) {
+          held.push({ socket, requestId: frame.id });
+        } else {
+          socket.send(JSON.stringify({
+            _tag: "Exit",
+            requestId: frame.id,
+            exit: {
+              _tag: "Failure",
+              cause: [{ _tag: "Fail", error: { message: "Fixture rejected the message." } }],
+            },
+          }));
+        }
+        changed();
+      },
+      close(socket) {
+        sockets.delete(socket);
+        for (let i = held.length - 1; i >= 0; i--) {
+          if (held[i]?.socket === socket) held.splice(i, 1);
+        }
+        changed();
+      },
+    },
+  });
+  return { server, sockets };
+}
+
+const primary = environment("fixture", "Fixture Mac");
+const secondary = environment("secondary", "Fixture Laptop", true);
+const readySocket = (sockets: Set<Socket>) => sockets.size === 1
+  ? [...sockets].find((socket) => socket.data.shell && socket.data.config) : undefined;
+const topology = () => ({
+  primary: [...primary.sockets].map((socket) => socket.data.serial),
+  secondary: [...secondary.sockets].map((socket) => socket.data.serial),
 });
+const refused = (error: string) => json({ error, ...topology() }, 409);
+
+function assertions(path: string, signal: AbortSignal): Promise<Response> | Response | undefined {
+  if (path === "/checkpoint") return barrier(signal, () => {
+    if (primary.sockets.size > 1 || secondary.sockets.size > 1) return refused("An environment opened duplicate sockets");
+    const a = readySocket(primary.sockets), b = readySocket(secondary.sockets);
+    if (!a || !b) return;
+    checkpoint = { primary: a.data.serial, secondary: b.data.serial };
+    secondaryAccepted = 0;
+    return json(topology());
+  });
+  if (!["/assert/both", "/await/secondary-only", "/await/restored", "/assert/sent-secondary"].includes(path)) return;
+  const baseline = checkpoint;
+  if (!baseline) return refused("Capture both connections with /checkpoint first");
+  return barrier(signal, () => {
+    if (readySocket(secondary.sockets)?.data.serial !== baseline.secondary) {
+      return refused("The secondary connection closed or was replaced");
+    }
+    if (path === "/assert/sent-secondary") {
+      return secondaryAccepted > 0 ? json({ accepted: secondaryAccepted }) : refused("The secondary environment received no message");
+    }
+    if (primary.sockets.size > 1) return refused("The primary environment opened duplicate sockets");
+    const a = readySocket(primary.sockets);
+    if (path === "/assert/both") {
+      return a?.data.serial === baseline.primary ? json(topology()) : refused("Filtering closed or replaced the primary connection");
+    }
+    if (path === "/await/secondary-only") return primary.sockets.size === 0 ? json(topology()) : undefined;
+    return a && a.data.serial !== baseline.primary ? json(topology()) : undefined;
+  });
+}
 
 const directory = await mkdtemp(join(tmpdir(), "exact-t3-regression-"));
 try {
-  const file = join(directory, "home-regression.test.contract");
-  const source = await readFile(join(import.meta.dir, "home-regression.test.contract"), "utf8");
-  await writeFile(file, source.replaceAll("http://127.0.0.1:0", server.url.origin));
   const [host = "ios", ...flags] = process.argv.slice(2);
-  const child = Bun.spawn([process.execPath, "exact.mjs", "test", host, file, ...flags], {
-    cwd: app,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  process.exitCode = await child.exited;
+  if (host === "--serve") {
+    console.log(JSON.stringify({ primary: primary.server.url.origin, secondary: secondary.server.url.origin, code: "fixture-code" }));
+    await new Promise<void>((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+  } else {
+    const file = join(directory, "home-regression.test.contract");
+    const source = await readFile(join(import.meta.dir, "home-regression.test.contract"), "utf8");
+    await writeFile(file, source
+      .replaceAll("http://127.0.0.1:0", primary.server.url.origin)
+      .replaceAll("http://127.0.0.2:0", secondary.server.url.origin));
+    const child = Bun.spawn([process.execPath, "exact.mjs", "test", host, file, ...flags], {
+      cwd: app,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    process.exitCode = await child.exited;
+  }
 } finally {
-  await server.stop(true);
+  await Promise.all([primary.server.stop(true), secondary.server.stop(true)]);
   await rm(directory, { recursive: true, force: true });
 }

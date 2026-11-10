@@ -96,3 +96,121 @@ test "an accepted send does not erase another thread's draft"
   request POST "http://127.0.0.1:0/release"
   clock data
   expect text "composer" == "A newer Alpha draft"
+
+test "two environments stay independent through filtering and connection management"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/settings"
+  tap "environments-button"
+  clock settle
+  tap "environment-add-environments"
+  clock settle
+  type "address" "http://127.0.0.2:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/checkpoint"
+  type "root" "/"
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  type "search" "Gamma remote"
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  request POST "http://127.0.0.1:0/assert/both"
+  type "search" ""
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  request POST "http://127.0.0.1:0/assert/both"
+  type "root" "/environments"
+  clock settle
+  tap "environment-fixture"
+  clock data
+  request POST "http://127.0.0.1:0/await/secondary-only"
+  type "root" "/"
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  tap "thread-secondary:gamma"
+  clock settle
+  type "composer" "Accept on secondary"
+  tap "send"
+  clock data
+  expect text "composer" == ""
+  expect tree missing "send-error"
+  request POST "http://127.0.0.1:0/assert/sent-secondary"
+  back
+  clock settle
+  type "root" "/environments"
+  clock settle
+  tap "environment-fixture"
+  clock data
+  request POST "http://127.0.0.1:0/await/restored"
+  clock data
+  type "root" "/"
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  request POST "http://127.0.0.1:0/checkpoint"
+  type "root" "/environments"
+  clock settle
+  tap "manage-fixture"
+  clock settle
+  tap "manage-fixture"
+  expect text "environment-label" == "Fixture Mac"
+  expect text "environment-url" == "http://127.0.0.1:0/"
+  type "environment-label" ""
+  tap "environment-save"
+  clock data
+  expect text "environment-error" == "Enter an environment name."
+  expect state catalog.environments.0 .label == "Fixture Mac"
+  type "environment-label" "Renamed Mac"
+  type "environment-url" "http://127.0.0.1:0/"
+  tap "environment-save"
+  clock data
+  expect tree missing "environment-label"
+  expect state catalog.environments.0 .label == "Renamed Mac"
+  request POST "http://127.0.0.1:0/assert/both"
+  tap "manage-fixture"
+  expect text "environment-label" == "Renamed Mac"
+  expect text "environment-url" == "http://127.0.0.1:0/"
+  tap "environment-reconnect"
+  clock data
+  request POST "http://127.0.0.1:0/await/restored"
+  clock data
+  request POST "http://127.0.0.1:0/checkpoint"
+  tap "environment-remove"
+  clock settle
+  tap "environment-remove-cancel"
+  clock settle
+  expect tree has "manage-fixture"
+  expect state catalog.environments.0 .label == "Renamed Mac"
+  request POST "http://127.0.0.1:0/assert/both"
+  tap "environment-remove"
+  clock settle
+  tap "environment-remove-confirm"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/await/secondary-only"
+  expect tree missing "manage-fixture"
+  expect tree has "manage-secondary"
+  type "root" "/"
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  expect tree has "thread-secondary:gamma"
+  tap "thread-secondary:gamma"
+  clock settle
+  type "composer" "Accept on secondary"
+  tap "send"
+  clock data
+  expect text "composer" == ""
+  request POST "http://127.0.0.1:0/assert/sent-secondary"

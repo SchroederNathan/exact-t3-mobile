@@ -17,6 +17,7 @@ routes nav
   tab settingsDetail "/settings/detail"
     environments "/environments"
     addEnvironment "/environments/new"
+    environmentDetail "/environments/:id"
 
 shape Time
   epochAtZero: number
@@ -126,6 +127,10 @@ component T3Code
   state submission = ThreadDraft(id="", text="", revision=0)
   state address = ""
   state code = ""
+  state expandedEnvironment = ""
+  state environmentName = ""
+  state environmentUrl = ""
+  state removedEnvironment = ""
   state showSettled = false
   state inspectorPath = ""
   state composerBottomAdjustment = 0
@@ -137,7 +142,12 @@ component T3Code
   mutation opened as shape Reply
   mutation created as shape CreatedThread then afterCreate
   mutation paired as shape Reply refreshes catalog then afterPair
+  mutation savedEnvironment as shape Reply refreshes catalog then afterEnvironmentSave
+  mutation removed as shape Reply refreshes catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
+  derive environmentError = failed(savedEnvironment) ? "The environment could not be updated." : match savedEnvironment { case some(reply) => reply.error, case none => "" }
+  derive changeError = failed(changed) ? "The connection could not be changed." : match changed { case some(reply) => reply.error, case none => "" }
+  derive removeError = failed(removed) ? "The environment could not be removed." : match removed { case some(reply) => reply.error, case none => "" }
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive openError = match opened { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
@@ -197,6 +207,46 @@ component T3Code
 
   action openEnvironments
     nav = split ? select(settingsNav, "settingsDetail") : push(nav, "/environments")
+
+  action manageEnvironment(id: string)
+    expandedEnvironment = ""
+    nav = push(split ? settingsNav : nav, path("environmentDetail", id))
+
+  action expandEnvironment(id: string)
+    expandedEnvironment = expandedEnvironment == id ? "" : id
+    match first(catalog.environments.filter(environment => environment.id == id))
+      case some(environment)
+        environmentName = environment.label
+        environmentUrl = environment.url.endsWith("/") ? environment.url : environment.url + "/"
+      case none
+        expandedEnvironment = ""
+
+  action editEnvironmentName(value: string)
+    environmentName = value
+
+  action editEnvironmentUrl(value: string)
+    environmentUrl = value
+
+  action saveEnvironment(id: string)
+    send savedEnvironment = updateEnvironment(id, environmentName, environmentUrl)
+
+  action afterEnvironmentSave
+    if environmentError == ""
+      expandedEnvironment = ""
+
+  action reconnectEnvironment(id: string)
+    send changed = command("reconnect", id, "")
+
+  action askRemoveEnvironment(id: string)
+    removedEnvironment = id
+    showModal("remove-environment")
+
+  action removeEnvironment
+    send removed = command("remove", removedEnvironment, "")
+
+  action afterEnvironmentRemove
+    if removeError == ""
+      nav = back(nav)
 
   action addEnvironment
     nav = split ? push(select(settingsNav, "settingsDetail"), "/environments/new") : push(nav, "/environments/new")
@@ -322,7 +372,39 @@ component T3Code
                     text "Environments" role="heading" aria-level=2
                     button press=addEnvironment buttonStyle="glass" aria-label="Add environment" testId=`environment-add-${e.name}`
                       image "symbol:add"
-                  EnvironmentList(scrollId=`environments-${e.id}`, catalog=catalog, toggleEnvironment=toggleEnvironment)
+                  EnvironmentList(scrollId=`environments-${e.id}`, catalog=catalog, toggleEnvironment=toggleEnvironment, manageEnvironment=manageEnvironment)
+                  if changeError != ""
+                    text changeError color="danger" padding=16 testId="connection-error"
+              if e.name == "environmentDetail"
+                column navigationKey=`${e.id}` navigationScroll=`connection-${e.id}` data-workspace-header=(split ? "editor" : "page") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text environmentLabel(catalog, e.params.id) role="heading" aria-level=2
+                  scroll id=`connection-${e.id}` flex=1 min-height=0 padding="14px 17.5px 36px"
+                    for environment in catalog.environments.filter(entry => entry.id == e.params.id) key=environment.id
+                      column gap=8.75
+                        text "Connection" font-size=14 line-height="21px" color="muted" padding="0 7px"
+                        column border-radius=24 background-color="card" overflow="hidden"
+                          EnvironmentRow(environment=environment, toggleEnvironment=toggleEnvironment, manageEnvironment=expandEnvironment, detail=true, expanded=(expandedEnvironment == environment.id))
+                          if expandedEnvironment == environment.id
+                            column gap=10.5 padding="0 14px 14px"
+                              column gap=5.25
+                                text "LABEL" font-size=12 font-weight=700 letter-spacing="0.8px" color="muted"
+                                input value=environmentName input=editEnvironmentName aria-label="Label" testId="environment-label" appearance="none" font-family="DM Sans" font-size=16 padding="12.25px 14px" background-color="input-fill" border="1px solid input-edge" border-radius=14
+                              column gap=5.25
+                                text "URL" font-size=12 font-weight=700 letter-spacing="0.8px" color="muted"
+                                input value=environmentUrl input=editEnvironmentUrl aria-label="URL" testId="environment-url" appearance="none" font-family="DM Sans" font-size=16 padding="12.25px 14px" background-color="input-fill" border="1px solid input-edge" border-radius=14
+                              row gap=7
+                                button press=saveEnvironment(environment.id) disabled=pending(savedEnvironment) appearance="none" testId="environment-save" aria-label="Save" flex=1 min-height=42 border-radius=14 background-color="AccentColor" color="white" display="flex" align-items="center" justify-content="center" gap=5.25
+                                  image "symbol:sf/checkmark" width=13 height=13
+                                  text "SAVE" font-size=13 font-weight=700 letter-spacing="0.8px"
+                                button press=reconnectEnvironment(environment.id) disabled=(not environment.enabled or pending(changed)) appearance="none" aria-label="Reconnect environment" testId="environment-reconnect" width=42 height=42 border-radius=14 background-color="input-fill" border="1px solid input-edge" color="muted" display="flex" align-items="center" justify-content="center"
+                                  image "symbol:sf/arrow.clockwise" width=14 height=14
+                                button press=askRemoveEnvironment(environment.id) appearance="none" aria-label="Remove environment" testId="environment-remove" width=42 height=42 border-radius=14 background-color="danger-fill" border="1px solid danger-edge" color="danger" display="flex" align-items="center" justify-content="center"
+                                  image "symbol:sf/trash" width=14 height=14
+                              if environmentError != ""
+                                text environmentError color="danger" font-size=14 testId="environment-error"
+                        if changeError != "" or removeError != ""
+                          text (changeError != "" ? changeError : removeError) color="danger" font-size=14 testId="connection-error"
               if e.name == "addEnvironment"
                 column navigationKey=`${e.id}` navigationScroll="add-environment" data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -508,6 +590,12 @@ component T3Code
           for project in catalog.projects key=project.id
             button press=filterProject(project.id) role="menuitemradio" aria-checked=(selectedProject == project.id) popovertarget="project-filter-menu" popovertargetaction="hide" testId=`project-${project.id}`
               text project.title
+      dialog id="remove-environment" role="alertdialog" aria-label=`Remove ${environmentLabel(catalog, removedEnvironment)}?`
+        text "This environment will be removed from this device. Your projects and threads will stay on the server."
+        button commandfor="remove-environment" command="close" testId="environment-remove-cancel"
+          text "Cancel"
+        button press=removeEnvironment destructive=true commandfor="remove-environment" command="close" testId="environment-remove-confirm"
+          text "Remove"
       column id="terminal-menu" popover="auto" role="menu" aria-label="Terminal"
         button role="menuitem" disabled=true
           text "No project scripts"
@@ -616,6 +704,7 @@ component EnvironmentList
     scrollId: string
     catalog: Catalog
     toggleEnvironment: action
+    manageEnvironment: action
   view
     scroll id=scrollId flex=1 min-height=0 padding="14px 17.5px 36px"
       column border-radius=24 background-color="card" overflow="hidden"
@@ -625,15 +714,26 @@ component EnvironmentList
               image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
             text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
         for environment in catalog.environments key=environment.id
-          row gap=10.5 padding="12.25px 14px" align-items="center"
-            column flex=1 min-width=0 gap=1.75
-              row align-items="center" gap=5.25
-                row width=16 height=16 align-items="center" justify-content="center"
-                  view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "online" : "muted")
-                image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
-                text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
-              text (environment.url.endsWith("/") ? environment.url : environment.url + "/") font-size=13 line-height="17px" color="muted" line-clamp=1
-              text environment.status font-size=13 line-height="17px" color="muted"
-            input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
-            button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
-              image "symbol:forward-chevron" width=12 height=12
+          EnvironmentRow(environment=environment, toggleEnvironment=toggleEnvironment, manageEnvironment=manageEnvironment, detail=false, expanded=false)
+
+component EnvironmentRow
+  props
+    environment: Environment
+    toggleEnvironment: action
+    manageEnvironment: action
+    detail: bool
+    expanded: bool
+  derive label = detail ? `${expanded ? "Collapse" : "Expand"} details for ${environment.label}` : `Manage ${environment.label}`
+  view
+    row gap=10.5 padding="12.25px 14px" align-items="center"
+      button press=manageEnvironment(environment.id) appearance="none" aria-label=label testId=`manage-${environment.id}` flex=1 min-width=0 display="flex" flex-direction="column" align-items="stretch" gap=1.75 color="foreground"
+        row align-items="center" gap=5.25
+          row width=16 height=16 align-items="center" justify-content="center"
+            view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "online" : "muted")
+          image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
+          text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0 line-clamp=1
+        text (environment.url.endsWith("/") ? environment.url : environment.url + "/") font-size=13 line-height="17px" color="muted" line-clamp=1
+        text environment.status font-size=13 line-height="17px" color="muted"
+      input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+      button press=manageEnvironment(environment.id) aria-label=label appearance="none" width=44 height=44 color="muted"
+        image (detail ? (expanded ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") : "symbol:forward-chevron") width=12 height=12

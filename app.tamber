@@ -15,3 +15,7 @@ theme
   danger = light-dark(#c10007, #ff6467)
   rose = light-dark(#ec003f, #ff637e)
   online = light-dark(#059669, #34d399)
+  input-fill = light-dark(#ffffff, #111111)
+  input-edge = light-dark(#e4e4e7, #222222)
+  danger-fill = light-dark(#fef2f2, #2b1215)
+  danger-edge = light-dark(#ffc9c9, #7f1d1d)
