@@ -91,6 +91,11 @@ shape Reply
   ok: bool
   error: string
 
+shape ThreadDraft
+  id: string
+  text: string
+  revision: number
+
 shape InspectionItem
   id: string
   label: string
@@ -110,13 +115,15 @@ fn threadMessages(threads: Thread[]): Message[] = match first(threads) { case so
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn threadDraft(drafts: ThreadDraft[], id: string): ThreadDraft = match first(drafts.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0) }
 
 component T3Code
   state query = ""
   state sidebarHidden = false
   state selectedEnvironment = ""
   state selectedProject = ""
-  state composer = ""
+  state drafts: ThreadDraft[] = []
+  state submission = ThreadDraft(id="", text="", revision=0)
   state address = ""
   state code = ""
   state showSettled = false
@@ -133,7 +140,7 @@ component T3Code
   mutation inspected as shape Inspection
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive openError = match opened { case some(reply) => reply.error, case none => "" }
-  derive sendError = match sent { case some(reply) => reply.error, case none => "" }
+  derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
@@ -146,6 +153,8 @@ component T3Code
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" : nav.tab == "threadDetail" or nav.tab == "settingsDetail"
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
+  derive composer = threadDraft(drafts, activeThreadId).text
+  derive composerError = submission.id == activeThreadId and submission.revision == threadDraft(drafts, activeThreadId).revision and not pending(sent) ? sendError : ""
   derive canSend = composer.trim() != "" and not pending(sent)
 
   task regroup when needsRegroup key=`${split}:${nav.tab}:${current.id}`
@@ -154,7 +163,7 @@ component T3Code
   action regroupNow
     let url = current.url
     if not needsRegroup
-      composer = composer
+      nav = nav
     else if split
       nav = current.name == "thread" ? push(select(select(back(nav), "threadDetail"), "threadDetail"), url) : current.name == "threads" ? select(nav, "threadDetail") : current.name == "settings" ? select(nav, "settingsDetail") : back(nav)
     else if current.name == "thread"
@@ -182,6 +191,10 @@ component T3Code
   action filterProject(id: string)
     selectedProject = id
 
+  action resetFilters
+    selectedEnvironment = ""
+    selectedProject = ""
+
   action openEnvironments
     nav = split ? select(settingsNav, "settingsDetail") : push(nav, "/environments")
 
@@ -207,7 +220,6 @@ component T3Code
     nav = go(split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav, url)
 
   action openThread(url: string)
-    composer = ""
     nav = split ? push(select(threadNav, "threadDetail"), url) : push(nav, url)
     send opened = command("open-url", url, "")
 
@@ -230,7 +242,7 @@ component T3Code
           nav = replace(split ? threadNav : nav, path("thread", reply.threadId))
           send opened = command("open", reply.threadId, "")
       case none
-        composer = composer
+        nav = nav
 
   action toggleSettled
     showSettled = not showSettled
@@ -239,7 +251,8 @@ component T3Code
     send changed = command("toggle", id, enabled ? "true" : "false")
 
   action editComposer(value: string)
-    composer = value
+    let draft = threadDraft(drafts, activeThreadId)
+    drafts = drafts.filter(entry => entry.id != activeThreadId).concat([ThreadDraft(id=activeThreadId, text=value, revision=draft.revision + 1)])
 
   action copyMessage(body: string)
     copyText(body)
@@ -258,11 +271,12 @@ component T3Code
 
   action sendMessage
     if canSend and activeThreadId != ""
+      submission = threadDraft(drafts, activeThreadId)
       send sent = command("send", activeThreadId, composer.trim())
 
   action afterSend
     if sendError == ""
-      composer = ""
+      drafts = drafts.filter(draft => draft.id != submission.id or draft.revision != submission.revision)
 
   view
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
@@ -280,7 +294,7 @@ component T3Code
                         image "symbol:compose"
                   if failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
-                  else if visibleThreads.length == 0 and not pending(catalog)
+                  else if catalog.environments.length == 0 and not pending(catalog)
                     column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
                       text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
                       text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
@@ -288,7 +302,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, openThread=openThread)
+                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), showSettled=showSettled, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -406,6 +420,8 @@ component T3Code
                           text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
                   if openError != ""
                     text openError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(112 + composerBottomAdjustment) z-index=1
+                  if composerError != ""
+                    text composerError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=2 testId="send-error"
                   row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=(split ? "env(safe-area-inset-right)" : 0) z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
                     row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
                       workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
@@ -479,18 +495,19 @@ component T3Code
                       button press=openEnvironments testId="environments-button" aria-label="Environments"
                         text "Environments"
                         image "symbol:forward-chevron"
-      column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
-        button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
-          text "All environments"
-        for environment in catalog.environments key=environment.id
-          button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
-            text environment.label
-      column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
-        button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
-          text "All projects"
-        for project in catalog.projects key=project.id
-          button press=filterProject(project.id) role="menuitemradio" aria-checked=(selectedProject == project.id) popovertarget="project-filter-menu" popovertargetaction="hide" testId=`project-${project.id}`
-            text project.title
+      if device.kind == "web" or device.kind == ""
+        column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
+          button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
+            text "All environments"
+          for environment in catalog.environments key=environment.id
+            button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
+              text environment.label
+        column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
+          button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
+            text "All projects"
+          for project in catalog.projects key=project.id
+            button press=filterProject(project.id) role="menuitemradio" aria-checked=(selectedProject == project.id) popovertarget="project-filter-menu" popovertargetaction="hide" testId=`project-${project.id}`
+              text project.title
       column id="terminal-menu" popover="auto" role="menu" aria-label="Terminal"
         button role="menuitem" disabled=true
           text "No project scripts"
@@ -524,27 +541,46 @@ component ThreadList
     catalog: Catalog
     visibleThreads: Thread[]
     selectedEnvironment: string
+    selectedProject: string
     selectedProjectLabel: string
+    nativeMenus: bool
     showSettled: bool
     sidebar: bool
     selectedId: string
     toggleSettled: action
     openThread: action
+    filterEnvironment: action
+    filterProject: action
+    resetFilters: action
+  derive displayedThreads = visibleThreads.filter(thread => not thread.settled or showSettled)
+  derive availableProjects = catalog.projects.filter(project => selectedEnvironment == "" or project.environmentId == selectedEnvironment)
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
       section
-        row gap=7 padding="2px 19px 10px" flex-wrap="nowrap"
-          button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
-            text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
-            image "symbol:sf/chevron.down" width=11 height=11
-          button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
-            text selectedProjectLabel
-            image "symbol:sf/chevron.down" width=11 height=11
+        scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0
+          row gap=8 padding="2px 20px 10px" flex-wrap="nowrap" align-items="center"
+            if nativeMenus
+              workspace-filter-menu chip-label=(selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment)) options-query=("=All%20environments&" + catalog.environments.map(environment => `${encodeURIComponent(environment.id)}=${encodeURIComponent(environment.label)}`).join("&")) selected-id=selectedEnvironment active=(selectedEnvironment != "" ? "true" : "false") accessibility-label="Filter threads by environment" test-id="all-environments" testId="all-environments" message=filterEnvironment flex-shrink=0
+              workspace-filter-menu chip-label=selectedProjectLabel options-query=("=All%20projects&" + availableProjects.map(project => `${encodeURIComponent(project.id)}=${encodeURIComponent(project.title)}`).join("&")) selected-id=selectedProject active=(selectedProject != "" ? "true" : "false") accessibility-label="Filter threads by project" test-id="all-projects" testId="all-projects" message=filterProject flex-shrink=0
+            else
+              button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedEnvironment == "" ? "muted" : "white") background-color=(selectedEnvironment == "" ? "transparent" : "AccentColor") testId="all-environments"
+                text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment)) max-width=180 line-clamp=1
+                image "symbol:sf/chevron.down" width=11 height=11
+              button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedProject == "" ? "muted" : "white") background-color=(selectedProject == "" ? "transparent" : "AccentColor") testId="all-projects"
+                text selectedProjectLabel max-width=180 line-clamp=1
+                image "symbol:sf/chevron.down" width=11 height=11
+            if selectedEnvironment != "" or selectedProject != ""
+              button press=resetFilters appearance="none" aria-label="Reset thread filters" testId="reset-filters" width=28 height=28 flex-shrink=0 display="flex" align-items="center" justify-content="center"
+                image "symbol:sf/xmark.circle.fill" width=18 height=18 color="muted"
       section
-        for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
+        if visibleThreads.length == 0
+          column align-items="center" padding="28px 21px" gap=7
+            text "No threads yet" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
+            text "Start a new thread to begin coding." font-size=16 line-height="24px" color="muted" text-align="center"
+        for thread, index in displayedThreads key=thread.id
           button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
             column flex=1 min-width=0 gap=3.5 padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
-              row align-items="flex-start" gap=7
+              row align-items="flex-start" gap=7 color=(sidebar ? "sidebar-foreground" : "foreground")
                 if thread.projectIcon != ""
                   image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
                 else
@@ -555,7 +591,7 @@ component ThreadList
                     image "symbol:sf/exclamationmark.circle" width=13 height=13 font-weight=600 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
                     text "Failed" font-size=13 line-height="17px" font-weight=700 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
                 else
-                  text thread.updatedAt font-size=13 line-height="23px" color="muted" font-variant-numeric="tabular-nums"
+                  text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
               row align-items="center" gap=7 min-height=14 padding-left=27
                 if thread.lastError != ""
                   text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
@@ -565,7 +601,8 @@ component ThreadList
                 else
                   view flex=1
                 image "assets/openai.svg" width=14 height=14 opacity=0.6
-          view height=1 background-color="edge" margin-left=16 display=(sidebar ? "none" : "flex")
+          if index < displayedThreads.length - 1
+            view height=1 background-color="edge" opacity=0.7 margin-left=16 display=(sidebar ? "none" : "flex")
       if visibleThreads.filter(thread => thread.settled).length > 0
         section
           button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
@@ -595,7 +632,7 @@ component EnvironmentList
                   view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "online" : "muted")
                 image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
                 text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
-              text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
+              text (environment.url.endsWith("/") ? environment.url : environment.url + "/") font-size=13 line-height="17px" color="muted" line-clamp=1
               text environment.status font-size=13 line-height="17px" color="muted"
             input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
             button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"

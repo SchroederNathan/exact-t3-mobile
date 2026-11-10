@@ -1,0 +1,98 @@
+epoch "2026-11-10T12:05:00Z"
+time-zone "UTC"
+
+test "an empty search keeps the filters available and recovers when cleared"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  type "search" "No matching thread"
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  expect tree has "all-environments"
+  expect tree has "all-projects"
+  type "search" ""
+  clock settle
+  expect tree has "thread-fixture:alpha"
+
+test "thread drafts survive switching between conversations"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  type "composer" "Alpha draft"
+  back
+  clock settle
+  tap "thread-fixture:beta"
+  clock settle
+  expect text "composer" == ""
+  type "composer" "Beta draft"
+  back
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == "Alpha draft"
+  back
+  clock settle
+  tap "thread-fixture:beta"
+  clock settle
+  expect text "composer" == "Beta draft"
+
+test "a rejected send preserves the draft and shows the reason"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  type "composer" "Keep this draft"
+  tap "send"
+  clock data
+  expect text "composer" == "Keep this draft"
+  expect text "send-error" == "Fixture rejected the message."
+
+test "an accepted send does not erase another thread's draft"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  type "composer" "Accept after release"
+  tap "send"
+  back
+  tap "thread-fixture:beta"
+  type "composer" "Beta draft during Alpha send"
+  request POST "http://127.0.0.1:0/release"
+  clock data
+  expect text "composer" == "Beta draft during Alpha send"
+  back
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == ""
+  type "composer" "Accept after release"
+  tap "send"
+  type "composer" "A newer Alpha draft"
+  request POST "http://127.0.0.1:0/release"
+  clock data
+  expect text "composer" == "A newer Alpha draft"
