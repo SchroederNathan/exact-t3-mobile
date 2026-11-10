@@ -400,35 +400,21 @@ component T3Code
                         case none
                           view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" navigationBar=(wide ? "none" : "auto") position="absolute" inset=0 padding-top=(wide ? 24 : 0) display="flex" flex-direction=(wide ? "row" : "column")
-                  header display=(wide ? "none" : "flex")
-                    text "T3 Code Exact iOS" role="heading" aria-level=2
+                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
+                  header
+                    text currentThreadTitle(selectedThread(catalog, e.params.id)) role="heading" aria-level=2
+                    text currentThreadSubtitle(catalog, selectedThread(catalog, e.params.id))
+                    button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
+                      image "symbol:sf/terminal"
+                    button aria-label="Git controls" popovertarget="git-menu" testId="thread-git"
+                      image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
+                    button press=inspect("files") aria-label="Open files" testId="thread-files"
+                      image "symbol:sf/folder"
                   if wide
                     column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
                       ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
                   column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    header appearance="none" display="flex" align-items="center" gap=12 padding="8px 16px" min-height=64 box-sizing="border-box"
-                      button id="thread-back" press=back aria-label="Back" display=(wide ? "none" : "flex") appearance="none" width=44 height=44 border-radius=22 backgroundMaterial="glass" color="foreground" align-items="center" justify-content="center"
-                        image "symbol:sf/chevron.left" width=22 height=22
-                      column flex=1 min-width=0 gap=0
-                        text currentThreadTitle(currentThread) role="heading" aria-level=2 line-clamp=1 font-size=18 line-height="23px" font-weight=700
-                        text currentThreadSubtitle(catalog, currentThread) color="muted" line-clamp=1 font-size=14 line-height="19px"
-                      row role="toolbar" aria-label="Thread controls" display=(wide ? "none" : "flex") backgroundMaterial="glass" border-radius=26 padding="0 4px" gap=0
-                          button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/terminal" width=20 height=20
-                          button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
-                          button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                            image "symbol:sf/folder" width=20 height=20
-                    if wide
-                      row role="toolbar" aria-label="Thread controls" position="absolute" right=16 top=8 z-index=3 backgroundMaterial="glass" border-radius=22 padding="0 4px" gap=0
-                        button aria-label="Terminal" popovertarget="terminal-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/terminal" width=20 height=20
-                        button aria-label="Git controls" popovertarget="git-menu" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up" width=20 height=20
-                        button press=inspect("files") aria-label="Open files" appearance="none" display="flex" align-items="center" justify-content="center" width=44 height=44 color="foreground"
-                          image "symbol:sf/folder" width=20 height=20
-                    for thread in currentThread key=thread.id
+                    for thread in selectedThread(catalog, e.params.id) key=thread.id
                       if openError != ""
                         text openError color="-exact-system-red" padding=16
                       column flex=1 min-height=0 height="100%" position="relative"
