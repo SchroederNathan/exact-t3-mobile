@@ -252,6 +252,13 @@ final class T3NativeModule: ExactModule {
       }
       #endif
       guard style == "brand" || style == "editor" || style == "settings-sheet" else { return }
+      if style == "settings-sheet" {
+        item.rightBarButtonItems?.first { $0.accessibilityIdentifier == "save-settings" }?.tintColor = UIColor {
+          $0.userInterfaceStyle == .dark
+            ? UIColor(white: 245 / 255, alpha: 1)
+            : UIColor(red: 39 / 255, green: 39 / 255, blue: 42 / 255, alpha: 1)
+        }
+      }
       if style != "settings-sheet" {
         item.style = .editor
         if #available(iOS 27.2, *) { item.titleAlignment = .leading }
@@ -277,8 +284,34 @@ final class T3NativeModule: ExactModule {
           item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
           item.searchBarPlacementAllowsToolbarIntegration = integrated
           let placement = item.searchBarPlacementBarButtonItem
-          var toolbar = (route.controller.toolbarItems ?? []).filter { $0 !== placement }
-          if integrated { toolbar.append(placement) }
+          let sheet = style == "settings-sheet"
+          let compactSheet = sheet && route.controller.traitCollection.horizontalSizeClass == .compact
+          let filterId = "model-filters-button"
+          let existing = route.controller.toolbarItems ?? []
+          let filter = item.rightBarButtonItems?.first { $0.accessibilityIdentifier == filterId }
+            ?? existing.first { $0.accessibilityIdentifier == filterId }
+          var toolbar = existing.filter {
+            $0 !== placement && $0.accessibilityIdentifier != filterId && $0.accessibilityIdentifier != "settings-search-space"
+          }
+          if compactSheet {
+            if let filter {
+              item.rightBarButtonItems = item.rightBarButtonItems?.filter { $0 !== filter }
+              toolbar.append(filter)
+            }
+            if !self.device.rail {
+              let space = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+              space.width = 8
+              space.accessibilityIdentifier = "settings-search-space"
+              toolbar.append(space)
+            }
+            toolbar.append(placement)
+          } else if sheet {
+            if let filter, !(item.rightBarButtonItems ?? []).contains(where: { $0 === filter }) {
+              item.rightBarButtonItems = [filter] + (item.rightBarButtonItems ?? [])
+            }
+          } else if integrated {
+            toolbar.append(placement)
+          }
           route.controller.toolbarItems = toolbar.isEmpty ? nil : toolbar
           if let navigation = route.navigation?.controller ?? route.controller.navigationController,
              navigation.topViewController == nil || navigation.topViewController === route.controller {
