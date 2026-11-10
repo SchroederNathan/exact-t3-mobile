@@ -2,12 +2,12 @@
   "$schema": "../exact2-origin-main/scripts/app.schema.json",
   "name": "T3 Code Exact iOS",
   "short_name": "T3 Code",
-  "id": "com.schroedernathan.t3code.exactios",
+  "id": "com.exact.t3code.ios",
   "start_url": "/",
   "display": "standalone",
   "modules": ["workspace-tab-bar", "workspace-composer-glass", "workspace-filter-menu"],
   "app": {
-    "id": "com.schroedernathan.t3code.exactios",
+    "id": "com.exact.t3code.ios",
     "name": "T3 Code Exact iOS"
   },
   "host": {
