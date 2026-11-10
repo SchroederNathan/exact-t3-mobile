@@ -20,7 +20,7 @@ test "an empty search keeps the filters available and recovers when cleared"
   clock settle
   expect tree has "thread-fixture:alpha"
 
-test "thread drafts survive switching between conversations"
+test "thread drafts survive switching conversations and relaunch"
   clock data
   tap "empty-add-environment"
   clock settle
@@ -48,6 +48,19 @@ test "thread drafts survive switching between conversations"
   tap "thread-fixture:beta"
   clock settle
   expect text "composer" == "Beta draft"
+  clock data
+  reload
+  clock data
+  type "root" "/"
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == "Alpha draft"
+  back
+  clock settle
+  tap "thread-fixture:beta"
+  clock settle
+  expect text "composer" == "Beta draft"
 
 test "a rejected send preserves the draft and shows the reason"
   clock data
@@ -66,7 +79,7 @@ test "a rejected send preserves the draft and shows the reason"
   expect text "composer" == "Keep this draft"
   expect text "send-error" == "Fixture rejected the message."
 
-test "an accepted send does not erase another thread's draft"
+test "accepted sends preserve other drafts and newer edits across relaunch"
   clock data
   tap "empty-add-environment"
   clock settle
@@ -90,12 +103,43 @@ test "an accepted send does not erase another thread's draft"
   tap "thread-fixture:alpha"
   clock settle
   expect text "composer" == ""
+  clock data
+  reload
+  clock data
+  type "root" "/"
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == ""
+  back
+  clock settle
+  tap "thread-fixture:beta"
+  clock settle
+  expect text "composer" == "Beta draft during Alpha send"
+  back
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == ""
   type "composer" "Accept after release"
   tap "send"
   type "composer" "A newer Alpha draft"
   request POST "http://127.0.0.1:0/release"
   clock data
   expect text "composer" == "A newer Alpha draft"
+  clock data
+  reload
+  clock data
+  type "root" "/"
+  clock settle
+  tap "thread-fixture:alpha"
+  clock settle
+  expect text "composer" == "A newer Alpha draft"
+  back
+  clock settle
+  tap "thread-fixture:beta"
+  clock settle
+  expect text "composer" == "Beta draft during Alpha send"
 
 test "two environments stay independent through filtering and connection management"
   clock data

@@ -1,5 +1,6 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { regroupNavigation } from "./navigation";
+import { loadDrafts, saveDraft } from "./drafts";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -15,7 +16,7 @@ import {
 } from "./connection";
 
 export const grants =
-  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
@@ -246,6 +247,11 @@ async function loadCatalog(
 }
 
 const sources: Sources = {
+  loadDrafts: (_args, _store, storage) => loadDrafts(storage),
+  saveDraft: async ([id, text, revision], _store, storage) => {
+    await saveDraft(storage, id, text, revision);
+    return { ok: true, error: "" };
+  },
   regroupNavigation: ([nav, split]) => regroupNavigation(nav, split),
   deviceTraits: (_args, _store, _storage, native) => {
     if (!native?.available) return { kind: "web", rail: false, split: false };
