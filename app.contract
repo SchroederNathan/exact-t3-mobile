@@ -348,18 +348,15 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="projects" data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     text "New thread" role="heading" aria-level=2
-                  list id="projects" appearance="none" flex=1
+                  list id="projects" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                     section
-                      text "Select a project" font-size=21 font-weight=700 padding=20
+                      header
+                        text "Select a project"
                       for project in catalog.projects key=project.id
-                        button press=createProjectThread(project.id) disabled=pending(created) appearance="none" padding=16 width="100%"
-                          text project.title font-size=16
-                    match created
-                      case some(reply)
-                        if not reply.ok
-                          text reply.error color="-exact-system-red" padding=16
-                      case none
-                        view
+                        button press=createProjectThread(project.id) disabled=pending(created) testId=`project-pick-${project.id}`
+                          text project.title
+                      footer
+                        text (match created { case some(reply) => reply.error, case none => "" }) color="danger"
               if e.name == "thread"
                 column navigationKey=`${e.id}` navigationScroll="thread" data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -412,10 +409,10 @@ component T3Code
                                         text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
                         if thread.lastError != ""
                           row align-items="flex-start" gap=8 position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=64 z-index=1
-                            image "symbol:alert-fill" width=16 height=16 color="-exact-system-red"
+                            image "symbol:sf/exclamationmark.circle" width=16 height=16 margin-top=1.5 color="danger"
                             column gap=2 flex=1 min-width=0
                               row align-items="center" gap=8
-                                text "Provider error" flex=1 color="-exact-system-red" font-size=14 line-height="19px"
+                                text "Provider error" flex=1 color="rose" font-size=14 line-height="19px" font-weight=500
                                 text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
                               text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
                     row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=(split ? "env(safe-area-inset-right)" : 0) z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
@@ -545,7 +542,7 @@ component ThreadList
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
       section
-        row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
+        row gap=7 padding="2px 17.5px 10px" flex-wrap="nowrap"
           button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
             text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
             image "symbol:sf/chevron.down" width=11 height=11
@@ -560,11 +557,18 @@ component ThreadList
                 if thread.projectIcon != ""
                   image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
                 else
-                  text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
+                  text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
                 text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                text thread.updatedAt font-size=13 line-height="18px" color="muted"
-              row align-items="center" gap=6 min-height=14
-                if catalog.environments.length > 1
+                if thread.lastError != ""
+                  row align-items="center" gap=3.5 min-height=23
+                    image "symbol:sf/exclamationmark.circle" width=13 height=13 font-weight=600 color="danger"
+                    text "Failed" font-size=13 line-height="17px" font-weight=700 color="danger"
+                else
+                  text thread.updatedAt font-size=13 line-height="23px" color="muted" font-variant-numeric="tabular-nums"
+              row align-items="center" gap=7 min-height=14 padding-left=27
+                if thread.lastError != ""
+                  text thread.lastError font-size=13 line-height="17px" color="danger" flex=1 min-width=0 line-clamp=1
+                else if catalog.environments.length > 1
                   image "symbol:sf/laptopcomputer" font-size=12 color="muted"
                   text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
                 else
@@ -596,7 +600,8 @@ component EnvironmentList
           row gap=10.5 padding="12.25px 14px" align-items="center"
             column flex=1 min-width=0 gap=1.75
               row align-items="center" gap=5.25
-                view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
+                row width=16 height=16 align-items="center" justify-content="center"
+                  view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "online" : "muted")
                 image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
                 text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
               text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1

@@ -10,3 +10,6 @@ theme
   muted = light-dark(#6f6f79, #838383)
   bubble = light-dark(#efeff1, #161616)
   edge = light-dark(#e4e4e7, #272727)
+  danger = light-dark(#c10007, #ff6467)
+  rose = light-dark(#ec003f, #ff637e)
+  online = light-dark(#059669, #34d399)

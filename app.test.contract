@@ -15,3 +15,24 @@ test "a refused pairing keeps the address available to correct"
   expect state catalog.environments == []
   expect text "address" == "file:///untrusted"
   expect state paired.ok == false
+
+test "Back from Add environment pops to the screen beneath"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  expect state current.name == "addEnvironment"
+  back
+  clock settle
+  expect state current.name == "threads"
+  tap "empty-add-environment"
+  clock settle
+  back
+  clock settle
+  expect state current.name == "threads"
+
+test "a phone keeps the list tab selected and never the detail tab"
+  clock data
+  clock +5
+  expect state split == false
+  expect state visibleTab == "threads"
+  expect state current.name == "threads"

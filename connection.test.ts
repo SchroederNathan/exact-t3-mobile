@@ -216,6 +216,8 @@ describe("direct T3 connection", () => {
         settled: true,
         status: "Done",
         updatedAt: "1m",
+        lastError: "",
+        lastErrorTime: expect.any(String),
         messages: [],
       },
     ]);
