@@ -6,6 +6,7 @@
     "start": "bun exact.mjs serve dist"
   },
   "dependencies": {
+    "entities": "9.0.0",
     "marked": "18.1.3"
   }
 }

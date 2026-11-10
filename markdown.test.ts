@@ -27,6 +27,25 @@ describe("native markdown blocks", () => {
       { kind: "list-item", body: "nested", marker: "•", depth: 2, spacingAfter: 8 },
       { kind: "list-item", body: "last", marker: "4.", depth: 1, spacingAfter: 8 },
     ]);
+    expect(blocks.map((block) => block.gutter)).toEqual([24, 24, 14, 24]);
+    expect(markdownBlocks("- first\n\n  continuation\n\n  > quote", "gutter").map((block) => ({ marker: block.marker, gutter: block.gutter }))).toEqual([
+      { marker: "•", gutter: 14 }, { marker: "", gutter: 14 }, { marker: "", gutter: 14 },
+    ]);
+    const inline = "**bold *nested* ~~gone~~** &copy; &amp;lt; \\* \nnext  \nline [file](src/app.ts:2) [reference][r] `&amp;`\n\n[r]: https://example.com";
+    expect(markdownBlocks(inline, "m")[0]?.runs.map(({ text, strong, emphasis, strike, code, href }) =>
+      ({ text, strong, emphasis, strike, code, href }))).toEqual([
+      { text: "bold ", strong: true, emphasis: false, strike: false, code: false, href: "" },
+      { text: "nested", strong: true, emphasis: true, strike: false, code: false, href: "" },
+      { text: " ", strong: true, emphasis: false, strike: false, code: false, href: "" },
+      { text: "gone", strong: true, emphasis: false, strike: true, code: false, href: "" },
+      { text: " © &lt; *  next\nline ", strong: false, emphasis: false, strike: false, code: false, href: "" },
+      { text: "file", strong: false, emphasis: false, strike: false, code: false, href: "src/app.ts:2" },
+      { text: " ", strong: false, emphasis: false, strike: false, code: false, href: "" },
+      { text: "reference", strong: false, emphasis: false, strike: false, code: false, href: "https://example.com" },
+      { text: " ", strong: false, emphasis: false, strike: false, code: false, href: "" },
+      { text: "&amp;", strong: false, emphasis: false, strike: false, code: true, href: "" },
+    ]);
+    expect(markdownBlocks("first\nsecond", "m", true)[0]?.runs[0]?.text).toBe("first\nsecond");
     expect(markdownBlocks("- first\n- second", "m").map((block) => block.spacingAfter)).toEqual([
       0, 8,
     ]);
@@ -82,7 +101,20 @@ describe("native markdown blocks", () => {
       },
     ]);
     const table = "| Name | Value |\n| --- | --- |\n| alpha | **one** |";
-    expect(markdownBlocks(table, "m")[0]).toMatchObject({ kind: "markdown", body: table });
+    expect(markdownBlocks(table, "m")[0]).toMatchObject({
+      kind: "table", columns: 2,
+      cells: [
+        { column: 0, header: true, align: "left", runs: [{ text: "Name" }] },
+        { column: 1, header: true, align: "left", runs: [{ text: "Value" }] },
+        { column: 0, header: false, align: "left", runs: [{ text: "alpha" }] },
+        { column: 1, header: false, align: "left", runs: [{ text: "one", strong: true }] },
+      ],
+    });
+    expect(markdownBlocks("```ts\nconst x = `literal`;\n", "m", false, true)[0]?.pending).toBe(true);
+    expect(markdownBlocks("```ts\nconst x = `literal`;\n```", "m", false, true)[0]?.pending).toBe(false);
+    expect(markdownBlocks("```ts\nunfinished", "m", false, false)[0]?.pending).toBe(false);
+    expect(markdownBlocks("```txt\r\n\tkeep  spaces  \r\n\r\n```", "copy")[0]?.body).toBe("\tkeep  spaces  ");
+    expect(markdownBlocks("~~~txt\nline one\n\nline three\n\n~~~", "copy")[0]?.body).toBe("line one\n\nline three");
     expect(new Set(blocks.map((block) => block.id)).size).toBe(blocks.length);
   });
 });
