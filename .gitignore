@@ -8,3 +8,7 @@
 /.env.local
 /release/credentials.json
 /release/credentials/
+/native/highlight/vendor/
+/native/highlight/build/
+/native/highlight/__pycache__/
+/modules/apple/T3Highlight.xcframework/

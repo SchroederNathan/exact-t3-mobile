@@ -1,0 +1,4 @@
+module T3Highlight {
+  header "T3Highlight.h"
+  export *
+}

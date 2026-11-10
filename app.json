@@ -15,6 +15,7 @@
     "ios": {
       "minimumOS": "17.0",
       "deviceFamily": ["iphone", "ipad"],
+      "link": ["-lc++"],
       "localNetworking": "Connect to your T3 Code environments on your local network."
     }
   },
@@ -23,5 +24,8 @@
       "ios": "0"
     }
   },
-  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar"]
+  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar"],
+  "commands": {
+    "prepare-ios": ["python3", "native/highlight/build.py", "--install"]
+  }
 }
