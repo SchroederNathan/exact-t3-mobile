@@ -1,9 +1,13 @@
+use Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage from "./markdown.contract"
 use EmptyState from "exact:content"
 
 font "DM Sans"
   400 = "assets/fonts/DMSans_400Regular.ttf"
   500 = "assets/fonts/DMSans_500Medium.ttf"
   700 = "assets/fonts/DMSans_700Bold.ttf"
+  400 italic = "assets/fonts/DMSans_400Regular_Italic.ttf"
+  500 italic = "assets/fonts/DMSans_500Medium_Italic.ttf"
+  700 italic = "assets/fonts/DMSans_700Bold_Italic.ttf"
 
 routes nav
   tab threads "/"
@@ -11,6 +15,7 @@ routes nav
     newThread "/threads/new"
     thread "/threads/:id"
       inspector "/threads/:id/inspect/:kind"
+      linkedFile "/threads/:id/file/:file/:line/:column"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
   tab pullRequests "/pulls"
@@ -86,14 +91,6 @@ shape Environment
   enabled: bool
   machineSymbol: string
 
-shape Message
-  id: string
-  role: string
-  body: string
-  createdAt: string
-  timeLabel: string
-  blocks: MarkdownBlock[]
-
 shape ToolSummary
   category: string
   status: string
@@ -131,17 +128,6 @@ shape ToolBatch
   viewKey: string
   panels: ToolPanel[]
 
-shape MarkdownBlock
-  id: string
-  kind: string
-  body: string
-  marker: string
-  depth: number
-  quoteDepth: number
-  language: string
-  headingLevel: number
-  spacingAfter: number
-
 shape VisitMetadata
   ready: bool
   supported: bool
@@ -170,6 +156,7 @@ shape ThreadHistory
 
 shape Thread
   id: string
+  listed: bool
   visit: VisitMetadata
   history: ThreadHistory
   environmentId: string
@@ -189,6 +176,7 @@ shape Thread
   updatedAt: string
   rows: FeedRow[]
   toolViewKey: string
+  markdownRevision: number
 
 shape Project
   id: string
@@ -241,7 +229,7 @@ fn toolStatusSymbol(status: string): string = status == "error" ? "symbol:sf/exc
 fn toolCopyText(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number, title: string): string = attempt < 0 or matchingToolPanels(batch, viewKey, rowId, revision, attempt).length == 0 ? title : matchingToolPanels(batch, viewKey, rowId, revision, attempt).map(panel => [panel.input, panel.output].filter(part => part != "").join("\n\n")).join("\n\n")
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
-fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0) } }
@@ -278,6 +266,11 @@ component T3Code
   state loadingHistoryId = ""
   state expandedTools: ToolExpansion[] = []
   state toolAttemptSerial = 0
+  state observedBlocks: BlockRef[] = []
+  state wrappedCodes: BlockRef[] = []
+  mutation markdownLink as shape MarkdownLink then afterMarkdownLink
+  resource linkedFile = loadLinkedFile(threadRoute.name == "linkedFile" ? activeThreadId : "", threadRoute.name == "linkedFile" ? threadRoute.params.file : "", threadRoute.name == "linkedFile" ? threadRoute.params.line : "0", threadRoute.name == "linkedFile" ? threadRoute.params.column : "0") as shape FilePreview else empty()
+  derive markdownLinkError = failed(markdownLink) ? "This link could not be opened." : match markdownLink { case some(link) => link.originRoute == `${threadRoute.id}` ? link.error : "", case none => "" }
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
   mutation savedDraft as shape Reply queue
   resource restoredModelSettings = restoreModelSettings() as shape Reply else empty()
@@ -323,10 +316,14 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
+  derive codeRevision = match first(selectedThread(catalog, activeToolThreadId)) { case some(thread) => thread.markdownRevision, case none => 0 }
+  derive blockCandidates = observedBlocks.filter(ref => ref.threadId == activeToolThreadId and ref.viewKey == toolViewKey)
+  resource tableLayouts = loadTableLayouts(activeToolThreadId, toolViewKey, codeRevision, blockCandidates) as shape TableBatch else empty()
+  resource codeHighlights = loadCodeHighlights(activeToolThreadId, toolViewKey, codeRevision, blockCandidates) as shape CodeBatch else empty()
   resource toolPanels = loadToolPanels(activeToolThreadId, toolViewKey, toolRequests) as shape ToolBatch else empty()
   derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
@@ -391,6 +388,40 @@ component T3Code
 
   task reconciledModels when modelDraftsReady and catalog.modelDraftRevision > 0 key=catalog.modelDraftRevision
     after(1, persistReconciledModels)
+
+  action observeBlock(threadId: string, viewKey: string, messageId: string, blockId: string, kind: string, event: IntersectionObserverEntry)
+    if threadId == activeToolThreadId and viewKey == toolViewKey
+      let retained = observedBlocks.filter(ref => ref.threadId == threadId and ref.viewKey == viewKey and not (ref.messageId == messageId and ref.blockId == blockId))
+      if event.isIntersecting
+        observedBlocks = retained.concat([BlockRef(threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=blockId)]).slice(-64)
+      else if kind != "table"
+        observedBlocks = retained
+
+  action toggleCodeWrap(threadId: string, viewKey: string, messageId: string, blockId: string)
+    let retained = wrappedCodes.filter(ref => ref.threadId != threadId or ref.viewKey == viewKey)
+    let exists = retained.filter(ref => ref.threadId == threadId and ref.messageId == messageId and ref.blockId == blockId).length > 0
+    wrappedCodes = exists ? retained.filter(ref => ref.threadId != threadId or ref.messageId != messageId or ref.blockId != blockId) : retained.concat([BlockRef(threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=blockId)]).slice(-256)
+
+  action followMarkdownLink(threadId: string, href: string)
+    send markdownLink = resolveMarkdownLink(threadId, href, `${threadRoute.id}`)
+
+  action afterMarkdownLink
+    match markdownLink
+      case some(link)
+        if link.originThreadId == activeThreadId and link.originRoute == `${threadRoute.id}` and link.error == ""
+          if link.kind == "thread"
+            nav = push(split ? threadNav : nav, path("thread", link.threadId))
+          else if link.kind == "file"
+            nav = push(split ? threadNav : nav, path("linkedFile", link.threadId, link.path, `${link.line}`, `${link.column}`))
+      case none
+        nav = nav
+
+  task linkedFilePosition when threadRoute.name == "linkedFile" and not pending(linkedFile) and linkedFile.path == threadRoute.params.file and linkedFile.error == "" key=`${threadRoute.id}:${linkedFile.path}:${linkedFile.lines.length}`
+    after(1, revealFileLine)
+
+  action revealFileLine
+    if threadRoute.name == "linkedFile" and threadRoute.params.line != "0"
+      scrollIntoView("linked-file-lines", linkedFile.targetLine, block="center")
 
   action persistReconciledModels
     send persistedModelSettings = persistModelSettings()
@@ -780,29 +811,7 @@ component T3Code
                           case some(row)
                             match row.message
                               case some(message)
-                                column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                                  if message.role == "user"
-                                    text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                                    row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                                      text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                                      button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                                        image "symbol:sf/document.on.document" width=13 height=13
-                                  else
-                                    column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                                      for block in message.blocks key=block.id
-                                        row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                          if block.depth > 0
-                                            if block.marker == "•"
-                                              column width=14 height=23 justify-content="center"
-                                                view width=6 height=6 border-radius=3 background-color="foreground"
-                                            else
-                                              text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                          if block.kind == "thematic-break"
-                                            view height=1 flex=1 margin="8px 0" background-color="edge"
-                                          else if block.kind == "code"
-                                            text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
-                                          else
-                                            text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                                MarkdownMessage(message=message, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage)
                               case none
                                 match row.activity
                                   case some(tool)
@@ -854,6 +863,8 @@ component T3Code
                           text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
                   if draftError != "" or modelDraftError != ""
                     text (draftError != "" ? draftError : modelDraftError) color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=16 bottom=(88 + composerBottomAdjustment) z-index=2 testId="draft-error"
+                  if markdownLinkError != ""
+                    text markdownLinkError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=16 bottom=(110 + composerBottomAdjustment) z-index=2 testId="markdown-link-error"
                   if composerError != ""
                     text composerError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=2 testId="send-error"
                   row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=(split ? "env(safe-area-inset-right)" : 0) z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
@@ -960,6 +971,23 @@ component T3Code
                           if (e.params.kind == "runtime" ? settings.runtimeMode : optionValue(settings.options, e.params.option)) == choice.id
                             image "symbol:checkmark" width=16 height=16 font-weight=600
                     text settingsUpdateError font-size=13 color="danger" margin-top=7
+              if e.name == "linkedFile"
+                column navigationKey=`${e.id}` navigationScroll="linked-file-lines" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text e.params.file role="heading" aria-level=2
+                  if pending(linkedFile)
+                    text "Loading…" color="muted" padding=16
+                  else if failed(linkedFile) or linkedFile.error != ""
+                    text (failed(linkedFile) ? "This file could not be opened." : linkedFile.error) color="danger" padding=16 testId="linked-file-error"
+                  else
+                    list id="linked-file-lines" appearance="none" virtualized=true flex=1 min-height=0 estimated-item-height=23 padding="12px 0"
+                      for line in linkedFile.lines key=line.id
+                        row align-items="flex-start" gap=12 padding="0 12px" background-color=(line.id == linkedFile.targetLine ? "thread-selected" : "transparent") testId=`file-line-${line.id}`
+                          text line.id color="muted" font-family="Menlo" font-size=12 width=42 text-align="right" line-height="23px"
+                          text user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
+                            text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header

@@ -36,10 +36,20 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const delayedRegistrations: (() => void)[] = [];
   let delayRegistration = false;
   const sent: { environmentId: string; generation: number; frame: { _tag: string; id: string; requestId?: string; tag: string; payload: Record<string, unknown> } }[] = [];
+  const measurements: { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }[] = [];
+  const highlights: { code: string; resolve: (value: Record<string, unknown>) => void }[] = [];
   const native: NativeModule = {
     available: true,
     watch() {},
     later(request) {
+      if (request.op === "markdown.measureTable") {
+        if (!readingStore) throw new Error("Table measurement must be issued before the first await.");
+        return new Promise((resolve, reject) => measurements.push({ resolve, reject }));
+      }
+      if (request.op === "markdown.highlight") {
+        if (!readingStore) throw new Error("Highlight work must be issued before the first await.");
+        return new Promise((resolve) => highlights.push({ code: String(request.code), resolve }));
+      }
       if (request.op !== "connections.wait") throw new Error("Unexpected native.later");
       return new Promise((resolve) => {
         const register = () => {
@@ -88,6 +98,9 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     watch() { throw new Error("No native answer is active."); },
   };
   expect(await answer("loadToolPanels", ["", "", []], store, storage, idleNative)).toEqual({ viewKey: "", panels: [] });
+  expect(await answer("loadCodeHighlights", ["", "", 0, []], store, storage, idleNative)).toEqual({ threadId: "", viewKey: "", highlights: [] });
+  expect(await answer("loadTableLayouts", ["", "", 0, []], store, storage, idleNative)).toEqual({ threadId: "", viewKey: "", layouts: [] });
+  expect(await answer("loadLinkedFile", ["", "", "0", "0"], store, storage, idleNative)).toEqual({ path: "", targetLine: "0", error: "", lines: [] });
   using _fetch = spyOn(globalThis, "fetch").mockRejectedValue(new Error("Use the native transport"));
   const catalogNative: NativeModule = {
     ...native,
@@ -138,6 +151,50 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     { id: "a:p", title: "Project a", environmentId: "a" },
     { id: "b:p", title: "Project b", environmentId: "b" },
   ]);
+  const codeSnapshot = async (body: string, streaming = false) => {
+    chunk("b", bSubscription, { kind: "snapshot", projection: { messages: [{ id: "code-message", role: "assistant", text: body, streaming }] } });
+    return (await load()).threads.find(({ id }) => id === "b:t")!;
+  };
+  const highlightArgs = (thread: typeof catalog.threads[number]) => [thread.id, thread.toolViewKey, thread.markdownRevision, [{
+    threadId: thread.id, viewKey: thread.toolViewKey, messageId: "code-message", blockId: "code-message:block:0",
+  }]] as [string, string, number, { threadId: string; viewKey: string; messageId: string; blockId: string }[]];
+  const pendingCode = await codeSnapshot("```ts\nconst value = 1;", true);
+  expect((await answer("loadCodeHighlights", highlightArgs(pendingCode), store, storage, native)).highlights).toEqual([]);
+  expect(highlights).toHaveLength(0);
+  const closedCode = await codeSnapshot("```ts\nconst value = 1;\n```", true);
+  const firstHighlight = answer("loadCodeHighlights", highlightArgs(closedCode), store, storage, native);
+  const duplicateHighlight = answer("loadCodeHighlights", highlightArgs(closedCode), store, storage, native);
+  expect(highlights.map(({ code }) => code)).toEqual(["const value = 1;", "const value = 1;"]);
+  const changedCode = await codeSnapshot("```ts\nconst value = 2;\n```");
+  expect((await answer("loadCodeHighlights", highlightArgs(closedCode), store, storage, native)).highlights).toEqual([]);
+  const changedHighlight = answer("loadCodeHighlights", highlightArgs(changedCode), store, storage, native);
+  expect(highlights.map(({ code }) => code)).toEqual(["const value = 1;", "const value = 1;", "const value = 2;"]);
+  highlights[2]!.resolve({ tokens: [{ start: 0, end: 5, kind: 0 }] });
+  expect((await changedHighlight).highlights[0]).toMatchObject({ body: "const value = 2;", runs: [{ text: "const", kind: 0 }, { text: " value = 2;", kind: -1 }] });
+  highlights[0]!.resolve({ tokens: [] });
+  highlights[1]!.resolve({ tokens: [] });
+  expect((await firstHighlight).viewKey).toBe(closedCode.toolViewKey);
+  expect((await duplicateHighlight).highlights[0]?.body).toBe("const value = 1;");
+  await answer("loadCodeHighlights", highlightArgs(changedCode), store, storage, native);
+  expect(highlights).toHaveLength(3);
+  const tableThread = await codeSnapshot("| One | Two |\n| --- | --- |\n| wide | cell |");
+  const firstTable = answer("loadTableLayouts", highlightArgs(tableThread), store, storage, native);
+  const secondTable = answer("loadTableLayouts", highlightArgs(tableThread), store, storage, native);
+  expect(measurements).toHaveLength(2);
+  measurements[0]!.reject(new Error("Superseded"));
+  measurements[1]!.resolve({ widths: [120, 240] });
+  expect((await firstTable).layouts).toEqual([]);
+  expect((await secondTable).layouts).toMatchObject([{ widths: [120, 240] }]);
+  await answer("loadTableLayouts", highlightArgs(tableThread), store, storage, native);
+  expect(measurements).toHaveLength(2);
+  const changedTable = await codeSnapshot("| One | Two |\n| --- | --- |\n| much wider | cell |");
+  expect((await answer("loadTableLayouts", highlightArgs(tableThread), store, storage, native)).layouts).toEqual([]);
+  const changedMeasurement = answer("loadTableLayouts", highlightArgs(changedTable), store, storage, native);
+  expect(measurements).toHaveLength(3);
+  measurements[2]!.resolve({ widths: [160, 240] });
+  expect((await changedMeasurement).layouts).toMatchObject([{ widths: [160, 240] }]);
+  chunk("b", bSubscription, { kind: "snapshot", projection: { messages: [{ id: "b-message", role: "user", text: "Opened by a cold link", createdAt: "2026-11-10T00:00:00Z" }] } });
+  await load();
   const initialGenerations = connections.map(({ id, generation }) => ({ id, generation }));
   for (const selected of ["a", "b", ""]) {
     expect((await load(selected)).threads.map(({ id }) => id)).toEqual(["a:t", "b:t"]);
@@ -276,6 +333,20 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   reply("b", String(inspect.frame.id), { entries: [{ path: "file.ts", kind: "file" }], truncated: false });
   await load();
   expect((await inspection).items).toEqual([{ id: "file.ts", label: "file.ts", detail: "file.ts", kind: "file" }]);
+
+  expect(await answer("resolveMarkdownLink", ["b:t", "t3-thread://v2/a/t", "source-route"], store, storage, native)).toMatchObject({ kind: "thread", threadId: "a:t", originRoute: "source-route", error: "" });
+  const fileLink = await answer("resolveMarkdownLink", ["b:t", "file:///b/My%20File.ts#L2C2", "source-route"], store, storage, native);
+  expect(fileLink).toMatchObject({ kind: "file", threadId: "b:t", path: "/b/My File.ts", line: 2, column: 2 });
+  const preview = answer("loadLinkedFile", ["b:t", fileLink.path, "2", "2"], store, storage, native);
+  const previewRequest = sent.at(-1)!;
+  expect(previewRequest.frame).toMatchObject({ tag: "projects.readFile", payload: { cwd: "/b", relativePath: "/b/My File.ts" } });
+  reply("b", previewRequest.frame.id, { contents: "first\nA😀B\nthird", relativePath: fileLink.path });
+  await load();
+  expect(await preview).toMatchObject({ targetLine: "2", lines: [
+    { text: "first", prefix: "first", focus: "", suffix: "" },
+    { text: "A😀B", prefix: "A", focus: "😀", suffix: "B" },
+    { text: "third", prefix: "third", focus: "", suffix: "" },
+  ] });
 
   const creating = answer("createThread", ["b:p", "Created in b"], store, storage, native);
   const create = sent.at(-1)!;

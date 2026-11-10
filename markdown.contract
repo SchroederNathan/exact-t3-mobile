@@ -1,0 +1,254 @@
+shape InlineRun
+  id: string
+  text: string
+  strong: bool
+  emphasis: bool
+  strike: bool
+  code: bool
+  href: string
+  linkKind: string
+
+shape TableCell
+  id: string
+  column: number
+  header: bool
+  align: string
+  runs: InlineRun[]
+
+shape MarkdownBlock
+  id: string
+  kind: string
+  body: string
+  marker: string
+  gutter: number
+  depth: number
+  quoteDepth: number
+  language: string
+  languageLabel: string
+  headingLevel: number
+  spacingAfter: number
+  runs: InlineRun[]
+  cells: TableCell[]
+  columns: number
+  tableSignature: string
+  pending: bool
+
+shape Message
+  id: string
+  role: string
+  body: string
+  createdAt: string
+  timeLabel: string
+  pending: bool
+  blocks: MarkdownBlock[]
+
+shape BlockRef
+  threadId: string
+  viewKey: string
+  messageId: string
+  blockId: string
+
+shape CodeRun
+  id: string
+  text: string
+  kind: number
+
+shape CodeHighlight
+  blockId: string
+  body: string
+  language: string
+  runs: CodeRun[]
+
+shape CodeBatch
+  threadId: string
+  viewKey: string
+  highlights: CodeHighlight[]
+
+shape TableLayout
+  blockId: string
+  signature: string
+  widths: number[]
+
+shape TableBatch
+  threadId: string
+  viewKey: string
+  layouts: TableLayout[]
+
+shape MarkdownLink
+  originThreadId: string
+  originRoute: string
+  kind: string
+  threadId: string
+  path: string
+  line: number
+  column: number
+  error: string
+
+shape FileLine
+  id: string
+  number: number
+  text: string
+  prefix: string
+  focus: string
+  suffix: string
+
+shape FilePreview
+  targetLine: string
+  path: string
+  error: string
+  lines: FileLine[]
+
+shape MarkdownPalette
+  body: string
+  link: string
+  inlineCode: string
+  codeBackground: string
+  edge: string
+
+fn markdownPalette(user: bool): MarkdownPalette = MarkdownPalette(body="foreground", link=user ? "foreground" : "AccentColor", inlineCode=user ? "user-inline-code" : "muted", codeBackground=user ? "user-code-surface" : "code-surface", edge=user ? "foreground" : "edge")
+
+fn matchingCode(refs: BlockRef[], threadId: string, viewKey: string, messageId: string, blockId: string): BlockRef[] = refs.filter(ref => ref.threadId == threadId and ref.viewKey == viewKey and ref.messageId == messageId and ref.blockId == blockId)
+fn codeRunsFor(batch: CodeBatch, block: MarkdownBlock, viewKey: string): CodeRun[] = match first(batch.highlights.filter(highlight => batch.viewKey == viewKey and highlight.blockId == block.id and highlight.body == block.body and highlight.language == block.language and not block.pending)) { case some(highlight) => highlight.runs, case none => [CodeRun(id="plain", text=block.body, kind=-1)] }
+fn syntaxColor(kind: number, ink: string): string = kind == 0 ? "code-keyword" : kind == 3 ? "code-string" : kind == 4 or kind == 5 or kind == 10 or kind == 12 ? "code-number" : kind == 6 ? "code-comment" : kind == 7 ? "code-function" : kind == 8 ? "code-type" : kind == 11 ? "code-tag" : ink
+fn tableWidths(batch: TableBatch, block: MarkdownBlock, viewKey: string): number[] = match first(batch.layouts.filter(layout => batch.viewKey == viewKey and layout.blockId == block.id and layout.signature == block.tableSignature)) { case some(layout) => layout.widths, case none => [] }
+fn headingSize(level: number): number = level == 1 ? 21 : level == 2 ? 19 : level == 3 ? 17 : 15
+
+component MarkdownMessage
+  props
+    message: Message
+    threadId: string
+    viewKey: string
+    highlights: CodeBatch
+    layouts: TableBatch
+    wrapped: BlockRef[]
+    seenBlock: action
+    toggleWrap: action
+    followLink: action
+    copy: action
+  derive palette = markdownPalette(message.role == "user")
+  view
+    column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+      column max-width=(message.role == "user" ? "85%" : "100%") width=(message.role == "user" ? "auto" : "100%") min-width=0 box-sizing="border-box" padding=(message.role == "user" ? "8.75px 12.25px" : "0 4px") border-radius=(message.role == "user" ? 20 : 0) background-color=(message.role == "user" ? "bubble" : "transparent") testId=`message-${message.id}`
+        for block in message.blocks key=block.id
+          MarkdownBlockView(block=block, palette=palette, threadId=threadId, messageId=message.id, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy)
+      if message.role == "user"
+        row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+          text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+          button press=copy(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+            image "symbol:sf/document.on.document" width=13 height=13
+
+component MarkdownBlockView
+  props
+    block: MarkdownBlock
+    palette: MarkdownPalette
+    threadId: string
+    messageId: string
+    viewKey: string
+    highlights: CodeBatch
+    layouts: TableBatch
+    wrapped: BlockRef[]
+    seenBlock: action
+    toggleWrap: action
+    followLink: action
+    copy: action
+  derive size = block.kind == "heading" ? headingSize(block.headingLevel) : 16
+  derive line = block.kind == "heading" ? size * 1.35 : 23
+  derive weight = block.kind == "heading" ? 700 : 400
+  derive ink = palette.body
+  view
+    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color=palette.edge padding-left=(block.quoteDepth > 0 ? 12 : 0)
+      if block.gutter > 0
+        if block.marker == "•"
+          column width=block.gutter flex-shrink=0 height=23 justify-content="center"
+            view width=6 height=6 border-radius=3 background-color=palette.body
+        else
+          text block.marker width=block.gutter flex-shrink=0 font-family="DM Sans" font-size=16 line-height="23px" color=palette.body
+      if block.kind == "thematic-break"
+        view height=1 flex=1 margin="8px 0" background-color=palette.edge
+      else if block.kind == "code"
+        MarkdownCode(block=block, palette=palette, threadId=threadId, messageId=messageId, viewKey=viewKey, highlights=highlights, wrapped=(matchingCode(wrapped, threadId, viewKey, messageId, block.id).length > 0), seenBlock=seenBlock, toggleWrap=toggleWrap, copy=copy)
+      else if block.kind == "table"
+        MarkdownTable(block=block, palette=palette, threadId=threadId, messageId=messageId, viewKey=viewKey, layouts=layouts, seenBlock=seenBlock, followLink=followLink)
+      else if block.kind == "heading"
+        text role="heading" aria-level=block.headingLevel user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=weight color=ink margin-top=8
+          MarkdownRuns(runs=block.runs, size=size, line=line, weight=weight, ink=ink, palette=palette, threadId=threadId, followLink=followLink)
+      else
+        text user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=weight color=ink
+          MarkdownRuns(runs=block.runs, size=size, line=line, weight=weight, ink=ink, palette=palette, threadId=threadId, followLink=followLink)
+
+component MarkdownRuns
+  props
+    palette: MarkdownPalette
+    runs: InlineRun[]
+    size: number
+    line: number
+    weight: number
+    ink: string
+    threadId: string
+    followLink: action
+  view
+    for run in runs key=run.id
+      if run.code
+        if run.linkKind == "file" or run.linkKind == "thread"
+          text run.text press=followLink(threadId, run.href) href=run.href color=palette.link font-family="Menlo" font-size=(size * 0.9) line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap" testId=`link-${run.id}`
+        else if run.linkKind == "external"
+          text run.text href=run.href color=palette.link font-family="Menlo" font-size=(size * 0.9) line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap"
+        else
+          text run.text color=palette.inlineCode font-family="Menlo" font-size=(size * 0.9) line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap"
+      else
+        if run.linkKind == "file" or run.linkKind == "thread"
+          text run.text press=followLink(threadId, run.href) href=run.href color=palette.link font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap" testId=`link-${run.id}`
+        else if run.linkKind == "external"
+          text run.text href=run.href color=palette.link font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap"
+        else
+          text run.text color=ink font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=(run.strong ? 700 : weight) font-style=(run.emphasis ? "italic" : "normal") text-decoration-line=(run.strike ? "line-through" : "none") white-space="pre-wrap"
+
+component MarkdownCode
+  props
+    palette: MarkdownPalette
+    block: MarkdownBlock
+    threadId: string
+    messageId: string
+    viewKey: string
+    highlights: CodeBatch
+    wrapped: bool
+    seenBlock: action
+    toggleWrap: action
+    copy: action
+  view
+    column intersect=seenBlock(threadId, viewKey, messageId, block.id, "code") intersect-margin="200px" flex=1 min-width=0 margin-top=4 border-radius=8 border-width=0.333 border-style="solid" border-color=palette.edge background-color=palette.codeBackground overflow="hidden" position="relative" testId=`code-${block.id}`
+      row align-items="center" height=27 flex-shrink=0 padding="0 3.52px 0 12px" transform="translate(0, 2.917px)"
+        text block.languageLabel flex=1 min-width=0 margin-right=8.48 line-clamp=1 text-overflow="ellipsis" font-family="system-ui" font-size=12.24 line-height="15px" font-weight=500 color=palette.body opacity=0.6
+        button press=toggleWrap(threadId, viewKey, messageId, block.id) appearance="none" aria-label=(wrapped ? "Disable code wrapping" : "Wrap code") aria-pressed=wrapped color=palette.body opacity=(wrapped ? 1 : 0.6) width=27.333 height=27.333 padding=0 display="flex" align-items="center" justify-content="center" testId=`wrap-${block.id}`
+          image "symbol:sf/text.alignleft" width=10.368 height=10.368
+        button press=copy(block.body) disabled=block.pending appearance="none" aria-label="Copy code" color=palette.body opacity=0.6 width=27.333 height=27.333 padding=0 display="flex" align-items="center" justify-content="center" testId=`copy-code-${block.id}`
+          image "symbol:sf/doc.on.doc" width=10.368 height=10.368
+      view position="absolute" left=0 right=0 top=33.167 height=1 z-index=1 background-color=palette.body opacity=0.2 pointer-events="none"
+      scroll width="100%" min-width=0 overflow-x=(wrapped ? "hidden" : "auto") overflow-y="hidden" testId=`code-scroll-${block.id}`
+        text user-select="text" white-space=(wrapped ? "pre-wrap" : "pre") overflow-wrap=(wrapped ? "break-word" : "normal") width=(wrapped ? "100%" : "auto") box-sizing="border-box" padding="12.333px 12px 12px" font-family="Menlo" font-size=14.4 line-height="23px"
+          for run in codeRunsFor(highlights, block, viewKey) key=run.id
+            text run.text color=syntaxColor(run.kind, palette.body) white-space=(wrapped ? "pre-wrap" : "pre") font-family="Menlo" font-size=14.4 line-height="23px"
+
+component MarkdownTable
+  props
+    block: MarkdownBlock
+    palette: MarkdownPalette
+    threadId: string
+    messageId: string
+    viewKey: string
+    layouts: TableBatch
+    seenBlock: action
+    followLink: action
+  derive widths = tableWidths(layouts, block, viewKey)
+  view
+    column intersect=seenBlock(threadId, viewKey, messageId, block.id, "table") intersect-margin="200px" flex=1 min-width=0 margin-top=4
+      scroll min-width=0 width="100%" overflow-x="auto" overflow-y="hidden" border-width=0.333 border-style="solid" border-color=palette.edge border-radius=8 testId=`table-${block.id}`
+        view display="grid" flex-shrink=0 width=(widths.length > 0 ? `${sum(widths)}px` : "auto") grid-template-columns=(widths.length > 0 ? widths.map(width => `${width}px`).join(" ") : `repeat(${block.columns}, minmax(60px, max-content))`)
+          for cell in block.cells key=cell.id
+            column position="relative" padding="7px 10px" box-sizing="border-box" min-width=60 max-width=320 background-color=(cell.header ? palette.codeBackground : "transparent")
+              if cell.column > 0
+                view position="absolute" left=0 top=0 bottom=0 width=0.333 background-color=palette.edge
+              if not cell.header
+                view position="absolute" left=0 right=0 top=0 height=0.333 background-color=palette.edge
+              text user-select="text" font-family="DM Sans" font-size=16 line-height="23px" white-space="pre-wrap" text-align=cell.align overflow-wrap="break-word" max-width=300
+                MarkdownRuns(runs=cell.runs, size=16, line=23, weight=(cell.header ? 700 : 400), ink=palette.body, palette=palette, threadId=threadId, followLink=followLink)

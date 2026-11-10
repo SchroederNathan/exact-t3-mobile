@@ -1,4 +1,7 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
+import { TableLayouts } from "./table-layout";
+import { CodeHighlights } from "./code-highlight";
+import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft } from "./drafts";
 import { ComposerSettings } from "./composer-settings";
@@ -23,6 +26,8 @@ export const grants =
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
 const composerSettings = new ComposerSettings();
+const codeHighlights = new CodeHighlights();
+const tableLayouts = new TableLayouts();
 let modelDraftRevision = 0;
 let current: DirectSession | undefined;
 let savedEnvironments: Promise<Environment[]> | undefined;
@@ -361,6 +366,66 @@ const sources: Sources = {
           error: error instanceof Error ? error.message : "Could not load this activity.",
         })),
       };
+    }
+  },
+  loadCodeHighlights: ([id, viewKey, _revision, refs], _store, _storage, native) => {
+    const empty = { threadId: id, viewKey, highlights: [] };
+    if (!id || refs.length === 0) return empty;
+    try {
+      const identity = threadIdentity(id);
+      const inputs = sessionFor(identity.environmentId).markdownBlocks(identity.threadId, viewKey, refs.filter((ref) => ref.threadId === id && ref.viewKey === viewKey), "code").filter((block) => !block.pending);
+      if (!inputs.length || !native?.available) return empty;
+      return codeHighlights.load(inputs, (code, language) => native.later({ op: "markdown.highlight", code, language }))
+        .then((highlights) => ({ threadId: id, viewKey, highlights }));
+    } catch { return empty; }
+  },
+  loadTableLayouts: ([id, viewKey, _revision, refs], _store, _storage, native) => {
+    const empty = { threadId: id, viewKey, layouts: [] };
+    if (!id || refs.length === 0) return empty;
+    try {
+      const identity = threadIdentity(id);
+      const inputs = sessionFor(identity.environmentId).markdownBlocks(identity.threadId, viewKey, refs.filter((ref) => ref.threadId === id && ref.viewKey === viewKey), "table");
+      if (!inputs.length || !native?.available) return empty;
+      return tableLayouts.load(inputs, (block) => native.later({ op: "markdown.measureTable", columns: block.columns, cells: block.cells }))
+        .then((layouts) => ({ threadId: id, viewKey, layouts }));
+    } catch { return empty; }
+  },
+  resolveMarkdownLink: async ([originThreadId, href, originRoute], _store, _storage, native) => {
+    const result = { originThreadId, originRoute, kind: "", threadId: "", path: "", line: 0, column: 0, error: "" };
+    try {
+      const origin = threadIdentity(originThreadId);
+      const link = parseThreadLink(href);
+      if (link) {
+        const sessions = new Map([...connections].map(([id, entry]) => [id, entry.session]));
+        if (current) sessions.set(current.environment.id, current);
+        const target = resolveThreadLink(link, origin.environmentId, [...sessions.values()].flatMap((session) => session.threadRefs()));
+        if (sessions.get(target.environmentId)?.environment.status !== "Connected") throw new Error("This environment is disconnected.");
+        return { ...result, kind: "thread", threadId: scopedThreadId(target.environmentId, target.threadId) };
+      }
+      const file = parseFileLink(href);
+      if (!file) throw new Error("This link cannot be opened.");
+      const path = await awaitReply(sessionFor(origin.environmentId).fileLinkPath(origin.threadId, file.path), native);
+      return { ...result, kind: "file", threadId: originThreadId, ...file, path };
+    } catch (error) {
+      return { ...result, error: error instanceof Error ? error.message : "This link could not be opened." };
+    }
+  },
+  loadLinkedFile: async ([id, path, line, column], _store, _storage, native) => {
+    if (!id || !path) return { path, targetLine: "0", error: "", lines: [] };
+    try {
+      const identity = threadIdentity(id);
+      const inspection = await awaitReply(sessionFor(identity.environmentId).inspect(identity.threadId, "file", path), native);
+      const rows = inspection.body.split("\n");
+      const target = Math.max(0, Math.min(rows.length, Number(line) || 0));
+      return { path, targetLine: String(target), error: "", lines: rows.map((body, index) => {
+        const text = body || " ";
+        let offset = index + 1 === target ? Math.min(text.length - 1, Math.max(0, Number(column) - 1 || 0)) : text.length;
+        if (offset > 0 && /[\uDC00-\uDFFF]/.test(text[offset]!) && /[\uD800-\uDBFF]/.test(text[offset - 1]!)) offset--;
+        const focus = index + 1 === target && Number(column) > 0 ? String.fromCodePoint(text.codePointAt(offset)!) : "";
+        return { id: String(index + 1), number: index + 1, text, prefix: text.slice(0, offset), focus, suffix: text.slice(offset + focus.length) };
+      }) };
+    } catch (error) {
+      return { path, targetLine: "0", lines: [], error: error instanceof Error ? error.message : "This file could not be opened." };
     }
   },
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
