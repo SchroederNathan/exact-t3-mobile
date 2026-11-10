@@ -1,5 +1,14 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { markdownBlocks } from "./markdown";
+import {
+  projectThreadSettings,
+  stageThreadSettings,
+  validateThreadSettings,
+  type ModelSelection,
+  type SettingsChange,
+  type SettingsResult,
+  type ThreadSettingsSelection,
+} from "./thread-settings";
 
 export type Catalog = Result<"loadCatalog">;
 export type Environment = Catalog["environments"][number];
@@ -329,6 +338,63 @@ function relativeTime(at: number, now: number): string {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
+function switchingThread(value: ObjectValue) {
+  return {
+    id: string(value.id),
+    activeProviderThreadId: string(value.activeProviderThreadId),
+    instanceId: string(object(value.modelSelection).instanceId),
+    historyOrigin: string(value.historyOrigin),
+  };
+}
+
+function switchingRun(value: ObjectValue) {
+  return { id: string(value.id), status: string(value.status), providerThreadId: string(value.providerThreadId) };
+}
+
+function switchingProviderThread(value: ObjectValue) {
+  return {
+    id: string(value.id), appThreadId: string(value.appThreadId),
+    instanceId: string(value.providerInstanceId), sessionId: string(value.providerSessionId),
+    hasNativeThread: value.nativeThreadRef != null,
+  };
+}
+
+function switchingSession(value: ObjectValue) {
+  return {
+    id: string(value.id), status: string(value.status),
+    canHandoff: object(object(value.capabilities).sessions).supportsProviderSwitchingViaHandoff === true,
+  };
+}
+
+function switchingProjection(value: ObjectValue) {
+  return {
+    thread: switchingThread(object(value.thread)),
+    runs: records(value.runs).map(switchingRun),
+    providerThreads: records(value.providerThreads).map(switchingProviderThread),
+    providerSessions: records(value.providerSessions).map(switchingSession),
+  };
+}
+
+function supportsProviderHandoff(projection: ReturnType<typeof switchingProjection>): boolean {
+  const activeRun = projection.runs.findLast((run) => ["preparing", "starting", "running", "waiting"].includes(run.status));
+  const providerThreadId = activeRun?.providerThreadId || projection.thread.activeProviderThreadId;
+  const attached = projection.providerThreads.find((thread) => thread.id === providerThreadId)
+    ?? projection.providerThreads.find((thread) => thread.appThreadId === projection.thread.id && thread.sessionId);
+  const session = attached?.sessionId
+    ? projection.providerSessions.find((session) => session.id === attached.sessionId)
+    : projection.providerSessions.findLast((session) => session.status !== "stopped" && session.status !== "error");
+  if (session) return session.canHandoff;
+  if (activeRun) return false;
+  if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
+  return projection.providerThreads.some((thread) => thread.id === projection.thread.activeProviderThreadId
+    && thread.appThreadId === projection.thread.id && thread.instanceId === projection.thread.instanceId && thread.hasNativeThread);
+}
+
+function upsertSwitchingRecord<T extends { id: string }>(rows: T[], value: T): T[] {
+  const index = rows.findIndex((row) => row.id === value.id);
+  return index < 0 ? [...rows, value] : rows.map((row, at) => at === index ? value : row);
+}
+
 export class DirectSession {
   readonly environment: Environment;
   private socket: StreamSocket | undefined;
@@ -343,6 +409,7 @@ export class DirectSession {
   private favicons = new Map<string, { revision: string; url: string }>();
   private shells = new Map<string, ObjectValue>();
   private transcripts = new Map<string, Message[]>();
+  private switching: ReturnType<typeof switchingProjection> | undefined;
   private replies = new Map<string, (reply: Reply) => void>();
   private queries = new Map<
     string,
@@ -450,6 +517,8 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.switching = undefined;
+    this.threadRequest = "";
     this.socket = socket;
     this.environment.status = "Connected";
     this.shellRequest = this.request("orchestration.subscribeShell", {});
@@ -465,6 +534,7 @@ export class DirectSession {
 
   select(threadId: string) {
     if (threadId === this.selected && this.threadRequest) return;
+    this.switching = undefined;
     this.selected = threadId;
     if (!this.socket || this.socket.readyState !== 1) return;
     if (this.threadRequest)
@@ -472,20 +542,84 @@ export class DirectSession {
     this.threadRequest = threadId ? this.request("orchestration.subscribeThread", { threadId }) : "";
   }
 
-  send(threadId: string, text: string, commandId: string, messageId: string): Promise<Reply> {
-    const shell = this.shells.get(threadId);
+  settings(threadId: string, staged?: ThreadSettingsSelection | null) {
+    const thread = this.shells.get(threadId);
+    const view = projectThreadSettings(this.config, thread ?? { id: threadId }, staged, this.settingsPolicy(thread));
+    return thread ? view : { ...view, error: "This thread is no longer available." };
+  }
+
+  stageSettings(
+    threadId: string,
+    staged: ThreadSettingsSelection | null | undefined,
+    change: SettingsChange,
+  ): SettingsResult {
+    const thread = this.shells.get(threadId);
+    return thread
+      ? stageThreadSettings(this.config, thread, staged, change, this.settingsPolicy(thread))
+      : { ok: false, error: "This thread is no longer available.", selection: null };
+  }
+
+  validateSettings(threadId: string, staged?: ThreadSettingsSelection | null): SettingsResult {
+    const thread = this.shells.get(threadId);
+    return thread
+      ? validateThreadSettings(this.config, thread, staged, this.settingsPolicy(thread))
+      : { ok: false, error: "This thread is no longer available.", selection: null };
+  }
+
+  private settingsPolicy(thread: ObjectValue | undefined) {
+    const projection = this.switching;
+    if (thread && projection && projection.thread.id === thread.id)
+      return { canSwitchProvider: supportsProviderHandoff(projection) };
+    const backgroundHolds = thread?.status !== "failed" && records(thread?.pendingBackgroundTasks)
+      .some((task) => task.awaited === true || task.kind === "subagent" || task.kind === "background_task");
+    return {
+      canSwitchProvider: !thread || (thread.latestRunId == null && thread.latestUserMessageAt == null
+        && thread.activeProviderThreadId == null && !backgroundHolds),
+    };
+  }
+
+  send(
+    threadId: string,
+    text: string,
+    commandId: string,
+    messageId: string,
+    staged?: ThreadSettingsSelection | null,
+  ): Promise<Reply> {
+    const dispatch = (modelSelection?: ModelSelection): Promise<Reply> => {
+      const shell = this.shells.get(threadId);
+      const id = this.request("orchestration.dispatchCommand", {
+        type: "message.dispatch",
+        commandId,
+        threadId,
+        messageId,
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "mobile",
+        dispatchMode: { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
+        ...(modelSelection ? { modelSelection } : {}),
+      });
+      return new Promise((resolve) => this.replies.set(id, resolve));
+    };
+    if (!staged) return dispatch();
+    const validated = this.validateSettings(threadId, staged);
+    if (!validated.ok || !validated.selection)
+      return Promise.resolve({ ok: false, error: validated.error });
+    const selection = validated.selection;
+    if (selection.runtimeMode === this.shells.get(threadId)?.runtimeMode)
+      return dispatch(selection.modelSelection);
     const id = this.request("orchestration.dispatchCommand", {
-      type: "message.dispatch",
-      commandId,
+      type: "thread.runtime-mode.set",
+      commandId: `${commandId}:runtime-mode`,
       threadId,
-      messageId,
-      text,
-      attachments: [],
-      createdBy: "user",
-      creationSource: "mobile",
-      dispatchMode: { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
+      runtimeMode: selection.runtimeMode,
     });
-    return new Promise((resolve) => this.replies.set(id, resolve));
+    return new Promise<Reply>((resolve) => this.replies.set(id, resolve)).then((reply) => {
+      if (!reply.ok) return reply;
+      const latest = this.validateSettings(threadId, selection);
+      if (!latest.ok || !latest.selection) return { ok: false, error: latest.error };
+      return dispatch(latest.selection.modelSelection);
+    });
   }
 
   create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
@@ -548,6 +682,8 @@ export class DirectSession {
   }
 
   disconnected(reason: string) {
+    this.switching = undefined;
+    this.threadRequest = "";
     this.socket = undefined;
     this.environment.status = reason;
     for (const resolve of this.replies.values()) resolve({ ok: false, error: reason });
@@ -563,7 +699,7 @@ export class DirectSession {
       if (frame._tag === "Chunk") {
         for (const item of records(frame.values)) {
           if (id === this.shellRequest) this.shell(item);
-          if (id === this.threadRequest) this.transcript(item);
+          if (this.threadRequest && id === this.threadRequest) this.transcript(item);
           if (id === this.configRequest) {
             if (item.type === "snapshot") this.config = object(item.config);
             if (item.type === "providerStatuses")
@@ -575,6 +711,11 @@ export class DirectSession {
         }
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
       } else if (frame._tag === "Exit") {
+        const threadEnded = id === this.threadRequest;
+        if (threadEnded) {
+          this.switching = undefined;
+          this.threadRequest = "";
+        }
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
         const query = this.queries.get(id);
@@ -598,7 +739,7 @@ export class DirectSession {
         }
         this.replies.get(id)?.({ ok: !error, error });
         this.replies.delete(id);
-        if (error && (id === this.shellRequest || id === this.threadRequest))
+        if (error && (id === this.shellRequest || threadEnded))
           this.environment.status = error;
       } else if (frame._tag === "Defect") {
         this.disconnected(
@@ -619,6 +760,7 @@ export class DirectSession {
         this.shells = new Map(
           records(snapshot.threads).map((thread) => [string(thread.id), thread]),
         );
+        if (this.switching && !this.shells.has(this.switching.thread.id)) this.switching = undefined;
       }
       for (const project of this.projects.values()) this.requestFavicon(project);
     } else if (item.kind === "project.updated") {
@@ -631,6 +773,7 @@ export class DirectSession {
       const thread = object(item.thread);
       this.shells.set(string(thread.id), thread);
     } else if (item.kind === "thread.removed" && item.location === "active") {
+      if (item.threadId === this.switching?.thread.id) this.switching = undefined;
       this.shells.delete(string(item.threadId));
       this.transcripts.delete(string(item.threadId));
     }
@@ -656,12 +799,15 @@ export class DirectSession {
   private transcript(item: ObjectValue) {
     if (item.kind === "snapshot") {
       const projection = object(item.projection);
+      const switching = switchingProjection(projection);
+      this.switching = switching.thread.id === this.selected ? switching : undefined;
       const messages = records(projection.messages)
         .map(message)
         .filter((value): value is Message => value !== null);
       this.transcripts.set(this.selected, messages);
     } else if (item.kind === "event") {
       const event = object(item.event);
+      this.updateSwitching(event);
       if (event.type === "message.updated") {
         const updated = message(object(event.payload));
         if (!updated) return;
@@ -674,6 +820,26 @@ export class DirectSession {
             : messages.map((value) => (value.id === updated.id ? updated : value)),
         );
       }
+    }
+  }
+
+  private updateSwitching(event: ObjectValue) {
+    const projection = this.switching;
+    if (!projection || event.threadId !== projection.thread.id) return;
+    const payload = object(event.payload);
+    const type = string(event.type);
+    if (type === "thread.archived" || type === "thread.deleted") {
+      this.switching = undefined;
+    } else if (type.startsWith("thread.") && payload.id === projection.thread.id && payload.modelSelection) {
+      projection.thread = switchingThread(payload);
+    } else if (type === "run.created" || type === "run.updated") {
+      projection.runs = upsertSwitchingRecord(projection.runs, switchingRun(payload));
+    } else if (type === "provider-thread.updated") {
+      projection.providerThreads = upsertSwitchingRecord(projection.providerThreads, switchingProviderThread(payload));
+    } else if (type === "provider-session.attached" || type === "provider-session.updated") {
+      projection.providerSessions = upsertSwitchingRecord(projection.providerSessions, switchingSession(payload));
+    } else if (type === "provider-session.detached") {
+      projection.providerSessions = projection.providerSessions.filter((session) => session.id !== payload.providerSessionId);
     }
   }
 

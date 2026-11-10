@@ -9,6 +9,65 @@ import {
   threadIdentity,
 } from "./connection";
 
+type SettingsRequest = {
+  _tag: string;
+  id: string;
+  tag: string;
+  payload: Record<string, unknown>;
+};
+
+function settingsSession() {
+  const requests: SettingsRequest[] = [];
+  const dispatched = Promise.withResolvers<SettingsRequest>();
+  const session = new DirectSession({
+    id: "env", label: "Mac", url: "http://localhost:13773",
+    enabled: true, status: "Connecting", machineSymbol: "server.rack",
+  });
+  session.open({
+    readyState: 1, bufferedAmount: 0,
+    send(frame) {
+      const request = JSON.parse(String(frame)) as SettingsRequest;
+      if (request._tag !== "Request") return;
+      requests.push(request);
+      if (request.payload.type === "message.dispatch") dispatched.resolve(request);
+    },
+    close() {},
+  });
+  const provider = {
+    instanceId: "codex", driver: "codex", enabled: true, installed: true,
+    auth: { status: "authenticated" },
+    models: [
+      { slug: "gpt-6", name: "GPT-6", capabilities: null },
+      {
+        slug: "gpt-6-mini", name: "GPT-6 Mini",
+        capabilities: { optionDescriptors: [
+          { id: "fastMode", label: "Fast", type: "boolean", currentValue: true },
+        ] },
+      },
+    ],
+  };
+  const updateProviders = (providers: unknown[]) => session.receive(JSON.stringify({
+    _tag: "Chunk", requestId: "2",
+    values: [{ type: "snapshot", config: { providers } }],
+  }));
+  session.receive(JSON.stringify({
+    _tag: "Chunk", requestId: "1", values: [{
+      kind: "snapshot", snapshot: {
+        projects: [], threads: [{
+          id: "thread", projectId: "project", runtimeMode: "full-access",
+          modelSelection: { instanceId: "codex", model: "gpt-6" },
+        }],
+      },
+    }],
+  }));
+  updateProviders([provider]);
+  const accept = (request: SettingsRequest) => session.receive(JSON.stringify({
+    _tag: "Exit", requestId: request.id, exit: { _tag: "Success", value: { sequence: 2 } },
+  }));
+  const commands = () => requests.filter((request) => request.tag === "orchestration.dispatchCommand");
+  return { session, provider, updateProviders, requests, commands, dispatched: dispatched.promise, accept };
+}
+
 describe("direct T3 connection", () => {
   test("normalizes pairing links without retaining a credential in the origin", () => {
     expect(parsePairingAddress("127.0.0.1:13773", "test-code")).toEqual({
@@ -622,5 +681,226 @@ describe("direct T3 connection", () => {
     await expect(interruptedFiles).rejects.toThrow("Connection lost");
     expect((await remainingQueries).every((result) => result.status === "rejected")).toBe(true);
     expect(session.threads()[0]?.messages).toEqual([]);
+  });
+});
+
+describe("direct thread settings", () => {
+  test("uses shell start markers until the selected thread supplies provider handoff capabilities", () => {
+    const { session, provider, updateProviders, requests } = settingsSession();
+    updateProviders([provider, { ...provider, instanceId: "claude", driver: "claudeAgent" }]);
+    const thread = {
+      id: "thread", projectId: "project", runtimeMode: "full-access", status: "idle",
+      modelSelection: { instanceId: "codex", model: "gpt-6" },
+      latestRunId: null, latestUserMessageAt: null, activeProviderThreadId: null,
+    };
+    const updateThread = (fields: Record<string, unknown>) => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: "1", values: [{ kind: "thread.updated", location: "active", thread: { ...thread, ...fields } }],
+    }));
+    const canSwitch = () => session.settings("thread").groups.some((group) => group.id === "claude");
+    updateThread({});
+    expect(canSwitch()).toBe(true);
+    for (const fields of [
+      { latestRunId: "run" },
+      { latestUserMessageAt: "2026-11-10T13:00:00Z" },
+      { activeProviderThreadId: "provider-thread" },
+      { pendingBackgroundTasks: [{ kind: "subagent" }] },
+      { pendingBackgroundTasks: [{ kind: "command", awaited: true }] },
+    ]) {
+      updateThread(fields);
+      expect(canSwitch()).toBe(false);
+      expect(session.stageSettings("thread", undefined, { type: "model", id: "claude:gpt-6" }).ok).toBe(false);
+    }
+    updateThread({ pendingBackgroundTasks: [{ kind: "command", awaited: false }] });
+    expect(canSwitch()).toBe(true);
+    updateThread({ latestRunId: "completed-run", activeProviderThreadId: "provider-thread" });
+    session.select("thread");
+    const requestId = requests.at(-1)!.id;
+    const providerThread = {
+      id: "provider-thread", appThreadId: "thread", providerInstanceId: "codex",
+      providerSessionId: "session", nativeThreadRef: "native-thread",
+    };
+    const providerSession = (id: string, allowed: boolean) => ({
+      id, status: "ready", capabilities: { sessions: { supportsProviderSwitchingViaHandoff: allowed } },
+    });
+    const base = {
+      thread: { ...thread, activeProviderThreadId: "provider-thread" },
+      runs: [{ id: "completed-run", status: "completed", providerThreadId: "provider-thread" }],
+      providerThreads: [providerThread], providerSessions: [], messages: [],
+    };
+    const cases = [
+      { expected: true, fields: { providerSessions: [providerSession("session", true)] } },
+      { expected: false, fields: { providerSessions: [providerSession("session", false), providerSession("other-session", true)] } },
+      { expected: true, fields: { providerThreads: [], providerSessions: [providerSession("fallback", true)] } },
+      { expected: false, fields: { runs: [{ id: "active", status: "running", providerThreadId: "provider-thread" }] } },
+      { expected: true, fields: { runs: [], providerThreads: [] } },
+      { expected: true, fields: { thread: { ...base.thread, historyOrigin: "v1_import" }, providerThreads: [] } },
+      { expected: true, fields: {} },
+      { expected: false, fields: { providerThreads: [{ ...providerThread, nativeThreadRef: null }] } },
+      { expected: false, fields: { providerThreads: [{ ...providerThread, providerInstanceId: "different" }] } },
+    ];
+    for (const { expected, fields } of cases) {
+      session.receive(JSON.stringify({ _tag: "Chunk", requestId, values: [{ kind: "snapshot", projection: { ...base, ...fields } }] }));
+      expect(canSwitch()).toBe(expected);
+    }
+  });
+
+  test("updates provider-switch permission from stream events and clears it when subscription state is lost", async () => {
+    const { session, provider, updateProviders, requests, commands } = settingsSession();
+    updateProviders([provider, { ...provider, instanceId: "claude", driver: "claudeAgent" }]);
+    const thread = {
+      id: "thread", projectId: "project", runtimeMode: "full-access", status: "idle",
+      latestRunId: "completed", latestUserMessageAt: null, activeProviderThreadId: "provider-thread",
+      modelSelection: { instanceId: "codex", model: "gpt-6" },
+    };
+    const shell = () => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: "1", values: [{ kind: "snapshot", snapshot: { projects: [], threads: [thread] } }],
+    }));
+    shell();
+    session.select("thread");
+    let requestId = requests.at(-1)!.id;
+    const providerThread = {
+      id: "provider-thread", appThreadId: "thread", providerInstanceId: "codex",
+      providerSessionId: "session", nativeThreadRef: "native-thread",
+    };
+    const providerSession = (allowed: boolean) => ({
+      id: "session", status: "ready", capabilities: { sessions: { supportsProviderSwitchingViaHandoff: allowed } },
+    });
+    const snapshot = () => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId, values: [{ kind: "snapshot", projection: {
+        thread, messages: [], runs: [{ id: "completed", status: "completed" }],
+        providerThreads: [providerThread], providerSessions: [providerSession(true)],
+      } }],
+    }));
+    const event = (type: string, payload: unknown) => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId, values: [{ kind: "event", event: { type, threadId: "thread", payload } }],
+    }));
+    const canSwitch = () => session.settings("thread").groups.some((group) => group.id === "claude");
+    snapshot();
+    const staged = session.stageSettings("thread", undefined, { type: "model", id: "claude:gpt-6" });
+    expect(staged.ok).toBe(true);
+    event("provider-session.updated", providerSession(false));
+    expect(canSwitch()).toBe(false);
+    expect(session.validateSettings("thread", staged.selection).ok).toBe(false);
+    await expect(session.send("thread", "Hi", "command", "message", staged.selection)).resolves.toMatchObject({ ok: false });
+    expect(commands()).toEqual([]);
+    event("provider-session.updated", providerSession(true));
+    event("provider-thread.updated", { ...providerThread, id: "active-provider-thread", providerSessionId: "active-session" });
+    event("provider-session.attached", { ...providerSession(false), id: "active-session" });
+    event("run.created", { id: "active", status: "running", providerThreadId: "active-provider-thread" });
+    expect(canSwitch()).toBe(false);
+    event("run.updated", { id: "active", status: "completed", providerThreadId: "active-provider-thread" });
+    expect(canSwitch()).toBe(true);
+    event("provider-session.detached", { providerSessionId: "session" });
+    expect(canSwitch()).toBe(true);
+    event("provider-thread.updated", { ...providerThread, nativeThreadRef: null });
+    expect(canSwitch()).toBe(false);
+    snapshot();
+    event("provider-session.detached", { providerSessionId: "session" });
+    event("thread.model-selection-updated", { ...thread, modelSelection: { instanceId: "claude", model: "gpt-6" } });
+    expect(canSwitch()).toBe(false);
+    event("thread.model-selection-updated", thread);
+    expect(canSwitch()).toBe(true);
+    session.receive(JSON.stringify({
+      _tag: "Chunk", requestId, values: [{ kind: "event", event: { type: "run.created", threadId: "different-thread", payload: { id: "foreign", status: "running" } } }],
+    }));
+    expect(canSwitch()).toBe(true);
+    session.select("");
+    expect(canSwitch()).toBe(false);
+    snapshot();
+    expect(canSwitch()).toBe(false);
+    session.select("thread");
+    requestId = requests.at(-1)!.id;
+    snapshot();
+    expect(canSwitch()).toBe(true);
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "1", values: [{ kind: "thread.removed", location: "active", threadId: "thread" }] }));
+    shell();
+    expect(canSwitch()).toBe(false);
+    snapshot();
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "1", values: [{ kind: "snapshot", snapshot: { projects: [], threads: [] } }] }));
+    shell();
+    expect(canSwitch()).toBe(false);
+    snapshot();
+    session.receive(JSON.stringify({ _tag: "Exit", requestId, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Thread stream ended" } }] } }));
+    snapshot();
+    expect(canSwitch()).toBe(false);
+    session.select("thread");
+    requestId = requests.at(-1)!.id;
+    snapshot();
+    session.disconnected("Connection lost");
+    snapshot();
+    expect(canSwitch()).toBe(false);
+  });
+
+  test("dispatches the selected model and typed options without an unchanged runtime command", async () => {
+    const { session, commands, accept } = settingsSession();
+    const model = session.stageSettings("thread", undefined, { type: "model", id: "codex:gpt-6-mini" });
+    const options = session.stageSettings("thread", model.selection, { type: "option", id: "fastMode", value: "false" });
+    expect(options.ok).toBe(true);
+    expect(session.settings("thread", options.selection).selectedModelId).toBe("codex:gpt-6-mini");
+    expect(session.settings("thread").selectedModelId).toBe("codex:gpt-6");
+    const reply = session.send("thread", "Hi", "command", "message", options.selection);
+    expect(commands().map((request) => request.payload.type)).toEqual(["message.dispatch"]);
+    expect(commands()[0]?.payload).toMatchObject({
+      commandId: "command", messageId: "message",
+      modelSelection: { instanceId: "codex", model: "gpt-6-mini", options: [{ id: "fastMode", value: false }] },
+    });
+    expect(commands()[0]?.payload).not.toHaveProperty("runtimeMode");
+    accept(commands()[0]!);
+    await expect(reply).resolves.toEqual({ ok: true, error: "" });
+  });
+
+  test("refuses missing threads and stale model settings before dispatch", async () => {
+    const { session, provider, updateProviders, commands } = settingsSession();
+    expect(session.settings("missing").error).toBe("This thread is no longer available.");
+    expect(session.stageSettings("missing", undefined, { type: "runtime", id: "auto" }).ok).toBe(false);
+    expect(session.validateSettings("missing").ok).toBe(false);
+    const model = session.stageSettings("thread", undefined, { type: "model", id: "codex:gpt-6-mini" });
+    updateProviders([{ ...provider, models: [provider.models[0]] }]);
+    await expect(session.send("thread", "Hi", "command", "message", model.selection)).resolves.toEqual({
+      ok: false, error: "This model is no longer available.",
+    });
+    expect(commands()).toEqual([]);
+  });
+
+  test("stops before message dispatch when the runtime command is rejected", async () => {
+    const { session, commands } = settingsSession();
+    const settings = session.stageSettings("thread", undefined, { type: "runtime", id: "approval-required" });
+    const reply = session.send("thread", "Hi", "command", "message", settings.selection);
+    expect(commands()[0]?.payload).toEqual({
+      type: "thread.runtime-mode.set", commandId: "command:runtime-mode", threadId: "thread", runtimeMode: "approval-required",
+    });
+    session.receive(JSON.stringify({
+      _tag: "Exit", requestId: commands()[0]!.id,
+      exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Runtime change denied" } }] },
+    }));
+    await expect(reply).resolves.toEqual({ ok: false, error: "Runtime change denied" });
+    expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set"]);
+  });
+
+  test("waits for runtime acceptance then dispatches with a separate command id", async () => {
+    const { session, commands, dispatched, accept } = settingsSession();
+    const settings = session.stageSettings("thread", undefined, { type: "runtime", id: "auto" });
+    const reply = session.send("thread", "Hi", "command", "message", settings.selection);
+    expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set"]);
+    accept(commands()[0]!);
+    const message = await dispatched;
+    expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set", "message.dispatch"]);
+    expect(message.payload).toMatchObject({
+      commandId: "command", messageId: "message", modelSelection: { instanceId: "codex", model: "gpt-6" },
+    });
+    expect(message.payload).not.toHaveProperty("runtimeMode");
+    accept(message);
+    await expect(reply).resolves.toEqual({ ok: true, error: "" });
+  });
+
+  test("rechecks settings changed while waiting for runtime acceptance", async () => {
+    const { session, provider, updateProviders, commands, accept } = settingsSession();
+    const model = session.stageSettings("thread", undefined, { type: "model", id: "codex:gpt-6-mini" });
+    const settings = session.stageSettings("thread", model.selection, { type: "runtime", id: "auto" });
+    const reply = session.send("thread", "Hi", "command", "message", settings.selection);
+    updateProviders([{ ...provider, enabled: false }]);
+    accept(commands()[0]!);
+    await expect(reply).resolves.toEqual({ ok: false, error: "Model turned off for this project." });
+    expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set"]);
   });
 });
