@@ -82,9 +82,25 @@ test("native environments aggregate colliding IDs and keep commands and connecti
       throw new Error("Unexpected native operation");
     },
   };
+  const idleNative: NativeModule = {
+    ...native,
+    get available() { throw new Error("No native answer is active."); },
+    watch() { throw new Error("No native answer is active."); },
+  };
+  expect(await answer("loadToolPanels", ["", "", []], store, storage, idleNative)).toEqual({ viewKey: "", panels: [] });
   using _fetch = spyOn(globalThis, "fetch").mockRejectedValue(new Error("Use the native transport"));
+  const catalogNative: NativeModule = {
+    ...native,
+    call(request) {
+      if (!readingStore) throw new Error("native storage is unavailable during bake or in an unconfigured host");
+      return native.call(request);
+    },
+  };
   let activeThread = "b:t";
-  const load = (selected = "") => answer("loadCatalog", [selected, activeThread, 0], store, storage, native);
+  const load = async (selected = "") => {
+    const environments = await answer("loadEnvironmentRecords", [], store, storage, native);
+    return answer("loadCatalog", [selected, activeThread, environments, 0], store, storage, catalogNative);
+  };
   const emit = (id: string, type: string, data = "", reason = "") => {
     events.push({ id, generation: connections.find((entry) => entry.id === id)?.generation ?? 1, type, data, reason });
   };
@@ -380,6 +396,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(JSON.parse(secrets.get("t3-environment-tokens")!)).toEqual({ b: "token-b" });
   expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(beforeEdit.filter(({ id }) => id === "b"));
 
-  const fallback = await answer("loadCatalog", ["b", "b:t", 0], store, storage, null);
+  const environments = await answer("loadEnvironmentRecords", [], store, storage, native);
+  const fallback = await answer("loadCatalog", ["b", "b:t", environments, 0], store, storage, null);
   expect(fallback.environments.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "b", status: "Use the native transport" }]);
 });

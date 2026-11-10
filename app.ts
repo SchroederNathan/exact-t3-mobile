@@ -182,20 +182,19 @@ function nativeCatalog(
 async function loadCatalog(
   selected: string,
   activeThreadId: string,
+  environments: Environment[],
   now: number,
   store: Store,
-  storage: Storage,
   native?: NativeModule | null,
 ): Promise<Catalog> {
   const tokens = credentials(store);
   const activeThread = activeThreadId ? threadIdentity(activeThreadId) : undefined;
   if (native?.available) {
     native.watch("connections");
-    return nativeCatalog(await loadEnvironments(storage), tokens, activeThread, now, native);
+    return nativeCatalog(environments, tokens, activeThread, now, native);
   }
   current?.disconnected("Disconnected");
   current = undefined;
-  const environments = await loadEnvironments(storage);
   const environmentId = activeThread?.environmentId || selected;
   const environment = environmentId
     ? environments.find((entry) => entry.id === environmentId && entry.enabled)
@@ -303,8 +302,9 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadCatalog: async ([selected, activeThreadId, now], store, storage, native) => {
-    const catalog = await loadCatalog(selected, activeThreadId, now, store, storage, native);
+  loadEnvironmentRecords: (_args, _store, storage) => loadEnvironments(storage),
+  loadCatalog: async ([selected, activeThreadId, environments, now], store, _storage, native) => {
+    const catalog = await loadCatalog(selected, activeThreadId, environments, now, store, native);
     for (const { id } of composerSettings.snapshot()) {
       const identity = threadIdentity(id);
       const session = connections.get(identity.environmentId)?.session
@@ -343,13 +343,13 @@ const sources: Sources = {
     }
   },
   loadToolPanels: async ([id, viewKey, wanted], _store, _storage, native) => {
-    native?.watch("connections");
-    if (native?.available) syncNativeConnections(native);
     if (!id) {
       for (const connection of connections.values()) connection.session.clearToolPanels();
       current?.clearToolPanels();
       return { viewKey, panels: [] };
     }
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
     try {
       const identity = threadIdentity(id);
       return await awaitReply(sessionFor(identity.environmentId).toolPanels(identity.threadId, viewKey, wanted), native);
