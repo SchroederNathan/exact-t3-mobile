@@ -182,6 +182,12 @@ final class T3NativeModule: ExactModule {
     return ["kind": device.kind, "rail": device.rail, "split": device.split]
   }
 
+  private let toolbarFollower = ToolbarFollower()
+
+  override func navigation(_ navigation: ExactNavigation) {
+    MainActor.assumeIsolated { navigation.delegate = toolbarFollower }
+  }
+
   override func tabContainer(_ contents: ExactTabContents) -> UIViewController? {
     MainActor.assumeIsolated {
       let container = WorkspaceContainer.make(contents)
@@ -370,5 +376,15 @@ private final class DeviceProbe: UIView {
       kind: hasHinge ? (unfolded ? "duo-unfolded" : "duo-folded") : "phone",
       rail: rail,
       split: hasHinge && unfolded && width >= 600))
+  }
+}
+
+/// A stack's bottom toolbar follows the route it shows: the list's search field, nothing elsewhere.
+private final class ToolbarFollower: NSObject, UINavigationControllerDelegate {
+  func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+    let hidden = viewController.toolbarItems?.isEmpty ?? true
+    if navigationController.isToolbarHidden != hidden {
+      navigationController.setToolbarHidden(hidden, animated: animated)
+    }
   }
 }

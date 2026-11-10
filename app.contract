@@ -112,7 +112,6 @@ fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thr
 
 component T3Code
   state query = ""
-  state searchOpen = false
   state sidebarHidden = false
   state selectedEnvironment = ""
   state selectedProject = ""
@@ -172,11 +171,6 @@ component T3Code
   action search(value: string)
     query = value
 
-  action toggleSearch
-    if searchOpen
-      query = ""
-    searchOpen = not searchOpen
-
   action toggleSidebar
     sidebarHidden = not sidebarHidden
 
@@ -203,7 +197,7 @@ component T3Code
     send paired = command("pair", address.trim(), code.trim())
 
   action afterPair
-    if pairError == ""
+    if pairError == "" and current.name == "addEnvironment"
       nav = back(nav)
       address = ""
       code = ""
@@ -212,6 +206,7 @@ component T3Code
     nav = go(split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav, url)
 
   action openThread(url: string)
+    composer = ""
     nav = split ? push(select(threadNav, "threadDetail"), url) : push(nav, url)
     send opened = command("open-url", url, "")
 
@@ -275,16 +270,13 @@ component T3Code
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
             for e in t.stack key=e.id
               if e.name == "threads"
-                column navigationKey=`${e.id}` navigationScroll="home" data-workspace-header="brand" data-search-placement=(duoDevice ? "integrated" : "button") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column" background-color=(split ? "drawer" : "screen")
+                column navigationKey=`${e.id}` navigationScroll="home" data-workspace-header="brand" data-search-placement=(split ? "integrated" : "button") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column" background-color=(split ? "drawer" : "screen")
                   header
                     text "Chats" role="heading" aria-level=2
-                    if not duoFolded or searchOpen
-                      input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search"
+                    input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search"
                     if duoFolded
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="workspace-compose"
                         image "symbol:compose"
-                      button press=toggleSearch buttonStyle="glass" aria-label=(searchOpen ? "Close search" : "Search threads") testId="workspace-search"
-                        image (searchOpen ? "symbol:close" : "symbol:search")
                   if failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
                   else if visibleThreads.length == 0 and not pending(catalog)
@@ -542,7 +534,7 @@ component ThreadList
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
       section
-        row gap=7 padding="2px 17.5px 10px" flex-wrap="nowrap"
+        row gap=7 padding="2px 19px 10px" flex-wrap="nowrap"
           button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
             text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
             image "symbol:sf/chevron.down" width=11 height=11
@@ -561,13 +553,13 @@ component ThreadList
                 text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
                 if thread.lastError != ""
                   row align-items="center" gap=3.5 min-height=23
-                    image "symbol:sf/exclamationmark.circle" width=13 height=13 font-weight=600 color="danger"
-                    text "Failed" font-size=13 line-height="17px" font-weight=700 color="danger"
+                    image "symbol:sf/exclamationmark.circle" width=13 height=13 font-weight=600 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
+                    text "Failed" font-size=13 line-height="17px" font-weight=700 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
                 else
                   text thread.updatedAt font-size=13 line-height="23px" color="muted" font-variant-numeric="tabular-nums"
               row align-items="center" gap=7 min-height=14 padding-left=27
                 if thread.lastError != ""
-                  text thread.lastError font-size=13 line-height="17px" color="danger" flex=1 min-width=0 line-clamp=1
+                  text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
                 else if catalog.environments.length > 1
                   image "symbol:sf/laptopcomputer" font-size=12 color="muted"
                   text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1

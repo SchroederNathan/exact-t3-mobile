@@ -63,8 +63,9 @@ final class WorkspaceContainer: UITabBarController, UITabBarControllerDelegate {
     updateTabBar()
   }
 
+  /// Only the thread pair has a sidebar toggle; the settings list always shows.
   func setSidebarHidden(_ hidden: Bool) {
-    pairs.forEach { $0.sidebarHidden = hidden }
+    pairs.first?.sidebarHidden = hidden
   }
 
   private func updateTabBar() {
@@ -102,7 +103,7 @@ final class WorkspaceContainer: UITabBarController, UITabBarControllerDelegate {
   func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
     guard let group = viewControllers?.firstIndex(where: { $0 === viewController }), let primary = groups[group].first else { return false }
     // The router owns selection: press the authored tab and follow its answer.
-    if group != selectedIndex { contents.select(primary) }
+    contents.select(primary)
     return false
   }
 }
@@ -188,6 +189,8 @@ private final class WorkspacePair: UIViewController {
       split.setViewController(primary, for: .primary)
       split.setViewController(secondary, for: .secondary)
     }
+    // The list's search toolbar follows its top route; a route moved between stacks left it hidden.
+    primary.setToolbarHidden(primary.topViewController?.toolbarItems?.isEmpty ?? true, animated: false)
     mounted = next
     addChild(next)
     next.view.frame = view.bounds
