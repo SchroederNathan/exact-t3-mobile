@@ -1,15 +1,27 @@
 import { expect, spyOn, test } from "bun:test";
-import { answer } from "./app";
-import type { NativeModule, Storage, Store } from "./app.contract.d.ts";
+import { answer as sourceAnswer } from "./app";
+import type { Answer, NativeModule, Storage, Store } from "./app.contract.d.ts";
 
 test("native environments aggregate colliding IDs and keep commands and connection lifetimes scoped", async () => {
   let saved = JSON.stringify(["a", "b"].map((id) => ({
     id, label: `Mac ${id}`, url: `http://${id}.example`, enabled: true,
   })));
   const secrets = new Map([["t3-environment-tokens", JSON.stringify({ a: "token-a", b: "token-b" })]]);
+  let readingStore = false;
+  const answer: Answer = (...args) => {
+    readingStore = true;
+    try { return sourceAnswer(...args); }
+    finally { readingStore = false; }
+  };
   const store = {
-    get: (key: string) => secrets.get(key) ?? null,
-    set: (key: string, value: string) => { secrets.set(key, value); },
+    get: (key: string) => {
+      if (!readingStore) throw new Error("Read the store before the answer's first await.");
+      return secrets.get(key) ?? null;
+    },
+    set: (key: string, value: string) => {
+      if (!readingStore) throw new Error("This continuation has no store.");
+      secrets.set(key, value);
+    },
   } as Store;
   const storage = { fs: {
     readFile: async () => new TextEncoder().encode(saved).buffer,
@@ -203,4 +215,12 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(moved.environments.find(({ id }) => id === "a")).toMatchObject({ label: "Renamed Mac", url: "https://changed.example", status: "Connecting" });
   expect(connections.find(({ id }) => id === "a")!.generation).not.toBe(beforeEdit.find(({ id }) => id === "a")!.generation);
   expect(connections.find(({ id }) => id === "b")!.generation).toBe(beforeEdit.find(({ id }) => id === "b")!.generation);
+
+  expect(await answer("command", ["remove", "a", ""], store, storage, native)).toEqual({ ok: true, error: "" });
+  expect((await load()).environments.map(({ id }) => id)).toEqual(["b"]);
+  expect(JSON.parse(secrets.get("t3-environment-tokens")!)).toEqual({ b: "token-b" });
+  expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(beforeEdit.filter(({ id }) => id === "b"));
+
+  const fallback = await answer("loadCatalog", ["b", 0], store, storage, null);
+  expect(fallback.environments.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "b", status: "Use the native transport" }]);
 });

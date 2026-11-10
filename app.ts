@@ -183,9 +183,10 @@ async function loadCatalog(
   storage: Storage,
   native?: NativeModule | null,
 ): Promise<Catalog> {
+  const tokens = credentials(store);
   if (native?.available) {
     native.watch("connections");
-    return nativeCatalog(await loadEnvironments(storage), credentials(store), now, native);
+    return nativeCatalog(await loadEnvironments(storage), tokens, now, native);
   }
   current?.disconnected("Disconnected");
   current = undefined;
@@ -194,7 +195,7 @@ async function loadCatalog(
     ? environments.find((entry) => entry.id === selected && entry.enabled)
     : environments.find((entry) => entry.enabled);
   if (!environment) return { environments, threads: [], projects: [] };
-  const token = credentials(store)[environment.id];
+  const token = tokens[environment.id];
   if (!token)
     return {
       environments: environments.map((entry) =>
@@ -309,10 +310,14 @@ const sources: Sources = {
           crypto.randomUUID(),
         ), native);
       }
+      const tokens = operation === "pair" || operation === "remove" ? credentials(store) : {};
+      if (operation === "remove") {
+        delete tokens[id];
+        store.set(SECRET, JSON.stringify(tokens));
+      }
       const environments = await loadEnvironments(storage);
       if (operation === "pair") {
         const paired = await pair(id, value);
-        const tokens = credentials(store);
         store.set(SECRET, JSON.stringify({ ...tokens, [paired.environment.id]: paired.token }));
         await saveEnvironments(
           storage,
@@ -357,9 +362,6 @@ const sources: Sources = {
           ),
         );
       } else if (operation === "remove") {
-        const tokens = credentials(store);
-        delete tokens[id];
-        store.set(SECRET, JSON.stringify(tokens));
         await saveEnvironments(
           storage,
           environments.filter((entry) => entry.id !== id),
