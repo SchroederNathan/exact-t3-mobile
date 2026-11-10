@@ -1,4 +1,4 @@
-import type { Answer, Result, Sources, Storage, Store } from "./app.contract.d.ts";
+import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -20,6 +20,15 @@ const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
 let current: DirectSession | undefined;
 let selectedThread = "";
+let savedEnvironments: Promise<Environment[]> | undefined;
+let nextGeneration = 0;
+const connections = new Map<string, {
+  origin: string;
+  token: string;
+  generation: number;
+  session: DirectSession;
+  open: boolean;
+}>();
 
 function credentials(store: Store): Record<string, string> {
   const saved: unknown = JSON.parse(store.get(SECRET) || "{}");
@@ -30,7 +39,14 @@ function credentials(store: Store): Record<string, string> {
   );
 }
 
-async function loadEnvironments(storage: Storage): Promise<Environment[]> {
+function loadEnvironments(storage: Storage): Promise<Environment[]> {
+  return savedEnvironments ??= readEnvironments(storage).catch((error) => {
+    savedEnvironments = undefined;
+    throw error;
+  });
+}
+
+async function readEnvironments(storage: Storage): Promise<Environment[]> {
   let bytes: ArrayBuffer;
   try {
     bytes = await storage.fs.readFile(FILE);
@@ -57,6 +73,107 @@ async function loadEnvironments(storage: Storage): Promise<Environment[]> {
 
 async function saveEnvironments(storage: Storage, environments: Environment[]): Promise<void> {
   await storage.fs.atomicWriteFile(FILE, new TextEncoder().encode(JSON.stringify(environments)));
+  savedEnvironments = undefined;
+}
+
+function sessionFor(environmentId: string): DirectSession {
+  const session = connections.get(environmentId)?.session ??
+    (current?.environment.id === environmentId ? current : undefined);
+  if (!session) throw new Error("This environment is disconnected.");
+  return session;
+}
+
+function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
+  if (!native?.available) return operation;
+  const receipt = crypto.randomUUID();
+  // Exact must own pending native work until the watched catalog delivers the protocol reply.
+  const waiting = native.later({ op: "connections.wait", receipt });
+  const settled = operation.then(
+    (value) => {
+      native.call({ op: "connections.finish", receipt });
+      return value;
+    },
+    (error) => {
+      native.call({ op: "connections.finish", receipt });
+      throw error;
+    },
+  );
+  return Promise.all([settled, waiting]).then(([value]) => value);
+}
+
+function nativeCatalog(
+  environments: Environment[],
+  tokens: Record<string, string>,
+  now: number,
+  native: NativeModule,
+): Catalog {
+  const enabled = environments.filter((environment) => environment.enabled && tokens[environment.id]);
+  for (const [id, connection] of connections) {
+    const environment = enabled.find((entry) => entry.id === id);
+    if (!environment || connection.origin !== environment.url || connection.token !== tokens[id]) {
+      connection.open = false;
+      connection.session.disconnected("Disconnected");
+      connections.delete(id);
+    }
+  }
+  for (const environment of enabled) {
+    if (!connections.has(environment.id)) {
+      const session = new DirectSession(environment);
+      if (selectedThread) {
+        const identity = threadIdentity(selectedThread);
+        if (identity.environmentId === environment.id) session.select(identity.threadId);
+      }
+      connections.set(environment.id, {
+        origin: environment.url, token: tokens[environment.id]!,
+        generation: ++nextGeneration, session, open: false,
+      });
+    }
+    connections.get(environment.id)!.session.environment.label = environment.label;
+  }
+  const result = native.call({ op: "connections.sync", connections: [...connections].map(([id, connection]) => ({
+    id, generation: connection.generation, origin: connection.origin, token: connection.token,
+  })) });
+  const events = Array.isArray(result.events) ? result.events : [];
+  for (const value of events) {
+    const event = object(value);
+    const id = string(event.id);
+    const connection = connections.get(id);
+    if (!connection || event.generation !== connection.generation) continue;
+    const { session, generation } = connection;
+    try {
+      if (event.type === "open") {
+        connection.open = true;
+        session.open({
+          get readyState() { return connection.open ? 1 : 3; },
+          bufferedAmount: 0,
+          send(data) {
+            if (typeof data !== "string") throw new Error("T3 sends JSON text frames.");
+            native.call({ op: "connections.send", id, generation, data });
+          },
+          close() { native.call({ op: "connections.close", id, generation }); },
+        });
+      } else if (event.type === "message") {
+        session.receive(string(event.data));
+      } else if (event.type === "close" || event.type === "error") {
+        connection.open = false;
+        session.disconnected(string(event.reason) || "Disconnected");
+      }
+    } catch (error) {
+      connection.open = false;
+      session.disconnected(error instanceof Error ? error.message : "The server sent an invalid response.");
+      native.call({ op: "connections.close", id, generation });
+    }
+  }
+  return {
+    environments: environments.map((environment) => {
+      if (!environment.enabled) return { ...environment, status: "Off" };
+      if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
+      return { ...connections.get(environment.id)!.session.environment };
+    }),
+    projects: [...connections.values()].flatMap(({ session }) => session.projectList()),
+    threads: [...connections.values()].flatMap(({ session }) => session.threads(now)).sort((left, right) =>
+      Number(left.settled) - Number(right.settled) || right.activityAt - left.activityAt || left.id.localeCompare(right.id)),
+  };
 }
 
 async function loadCatalog(
@@ -64,7 +181,12 @@ async function loadCatalog(
   now: number,
   store: Store,
   storage: Storage,
+  native?: NativeModule | null,
 ): Promise<Catalog> {
+  if (native?.available) {
+    native.watch("connections");
+    return nativeCatalog(await loadEnvironments(storage), credentials(store), now, native);
+  }
   current?.disconnected("Disconnected");
   current = undefined;
   const environments = await loadEnvironments(storage);
@@ -125,7 +247,7 @@ async function loadCatalog(
 
 const sources: Sources = {
   deviceTraits: (_args, _store, _storage, native) => {
-    if (!native?.available) return { kind: "phone", rail: false, split: false };
+    if (!native?.available) return { kind: "web", rail: false, split: false };
     native.watch("device");
     try {
       return native.call({ op: "device" }) as Result<"deviceTraits">;
@@ -133,14 +255,12 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadCatalog: (args, store, storage) =>
-    loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage),
-  inspectThread: async ([id, kind, path]) => {
+  loadCatalog: (args, store, storage, native) =>
+    loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage, native),
+  inspectThread: async ([id, kind, path], _store, _storage, native) => {
     try {
       const identity = threadIdentity(id);
-      if (current?.environment.id !== identity.environmentId)
-        throw new Error("Select this thread’s environment to connect.");
-      return await current.inspect(identity.threadId, kind, path);
+      return await awaitReply(sessionFor(identity.environmentId).inspect(identity.threadId, kind, path), native);
     } catch (error) {
       return {
         ok: false,
@@ -151,13 +271,11 @@ const sources: Sources = {
       };
     }
   },
-  createThread: async ([projectId, title]) => {
+  createThread: async ([projectId, title], _store, _storage, native) => {
     try {
       const identity = threadIdentity(projectId);
-      if (current?.environment.id !== identity.environmentId)
-        throw new Error("Select this project’s environment to connect.");
       const threadId = crypto.randomUUID();
-      const reply = await current.create(identity.threadId, title, crypto.randomUUID(), threadId);
+      const reply = await awaitReply(sessionFor(identity.environmentId).create(identity.threadId, title, crypto.randomUUID(), threadId), native);
       return {
         ...reply,
         threadId: reply.ok ? scopedThreadId(identity.environmentId, threadId) : "",
@@ -170,28 +288,24 @@ const sources: Sources = {
       };
     }
   },
-  command: async ([operation, id, value], store, storage): Promise<Result<"command">> => {
+  command: async ([operation, id, value], store, storage, native): Promise<Result<"command">> => {
     try {
       if (operation === "open" || operation === "open-url") {
         const threadId = operation === "open-url" ? threadIdFromUrl(id) : id;
         const identity = threadIdentity(threadId);
         selectedThread = threadId;
-        if (current?.environment.id !== identity.environmentId)
-          throw new Error("Select this thread’s environment to connect.");
-        current.select(identity.threadId);
+        sessionFor(identity.environmentId).select(identity.threadId);
         return { ok: true, error: "" };
       }
       if (operation === "send") {
         const identity = threadIdentity(id);
         if (!value.trim()) return { ok: false, error: "Write a message first." };
-        if (current?.environment.id !== identity.environmentId)
-          throw new Error("This environment is disconnected.");
-        return current.send(
+        return await awaitReply(sessionFor(identity.environmentId).send(
           identity.threadId,
           value.trim(),
           crypto.randomUUID(),
           crypto.randomUUID(),
-        );
+        ), native);
       }
       const environments = await loadEnvironments(storage);
       if (operation === "pair") {
@@ -208,6 +322,8 @@ const sources: Sources = {
         const environment = environments.find((entry) => entry.id === id);
         if (!environment) throw new Error("This environment is no longer available.");
         if (!environment.enabled) throw new Error("Turn on this environment before reconnecting.");
+        connections.get(id)?.session.disconnected("Reconnecting");
+        connections.delete(id);
       } else if (operation === "update-environment") {
         const environment = environments.find((entry) => entry.id === id);
         if (!environment) throw new Error("This environment is no longer available.");
@@ -225,9 +341,8 @@ const sources: Sources = {
                   label,
                   url,
                   machineSymbol:
-                    current?.environment.id === id
-                      ? current.environment.machineSymbol
-                      : entry.machineSymbol,
+                    connections.get(id)?.session.environment.machineSymbol ??
+                    (current?.environment.id === id ? current.environment.machineSymbol : entry.machineSymbol),
                 }
               : entry,
           ),

@@ -1,0 +1,289 @@
+import Foundation
+
+// Exact calls and URLSession delegate work share the main queue; completions hop back before state access.
+final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+  private final class Connection: @unchecked Sendable {
+    let id: String
+    let generation: Int
+    let origin: URL
+    var ticket: URLSessionDataTask?
+    var socket: URLSessionWebSocketTask?
+    var opened = false
+    var ended = false
+    var receiving = false
+    var sending = false
+    var outgoing: [String] = []
+    var outgoingBytes = 0
+
+    init(id: String, generation: Int, origin: URL) {
+      self.id = id
+      self.generation = generation
+      self.origin = origin
+    }
+
+    func stop() {
+      ended = true
+      opened = false
+      ticket?.cancel()
+      socket?.cancel(with: .goingAway, reason: nil)
+      outgoing.removeAll()
+      outgoingBytes = 0
+    }
+  }
+
+  private let changed: () -> Void
+  private final class Receipt {
+    var reply: ExactReply?
+    var finished = false
+  }
+  private var receipts: [String: Receipt] = [:]
+  private var connections: [String: Connection] = [:]
+  private var events: [[String: Any]] = []
+  private var bufferedBytes = 0
+  private var session: URLSession?
+  private let maximumBytes = 8 * 1024 * 1024
+
+  init(changed: @escaping () -> Void) {
+    self.changed = changed
+    super.init()
+  }
+
+  func call(_ request: [String: Any]) throws -> [String: Any] {
+    switch request["op"] as? String {
+    case "connections.sync":
+      guard let desired = request["connections"] as? [[String: Any]] else {
+        throw ExactNativeRefusal("Connections are required.")
+      }
+      let inputs = try desired.map { entry -> (String, Int, URL, String) in
+        guard let id = entry["id"] as? String, !id.isEmpty,
+              let generation = entry["generation"] as? Int, generation > 0,
+              let text = entry["origin"] as? String,
+              let parts = URLComponents(string: text),
+              ["http", "https"].contains(parts.scheme ?? ""),
+              parts.host?.isEmpty == false, parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/", let origin = parts.url,
+              let token = entry["token"] as? String, !token.isEmpty else {
+          throw ExactNativeRefusal("A connection requires an HTTP origin and a pairing credential.")
+        }
+        return (id, generation, origin, token)
+      }
+      guard Set(inputs.map { $0.0 }).count == inputs.count else {
+        throw ExactNativeRefusal("Each environment must have one connection.")
+      }
+      let ids = Set(inputs.map { $0.0 })
+      for id in Array(connections.keys) where !ids.contains(id) {
+        connections.removeValue(forKey: id)?.stop()
+      }
+      for (id, generation, origin, token) in inputs {
+        if let existing = connections[id], existing.generation == generation, existing.origin == origin { continue }
+        connections[id]?.stop()
+        let connection = Connection(id: id, generation: generation, origin: origin)
+        connections[id] = connection
+        connect(connection, token: token)
+      }
+      let drained = events.filter { event in
+        guard let id = event["id"] as? String, let generation = event["generation"] as? Int else { return false }
+        return connections[id]?.generation == generation
+      }
+      events.removeAll(keepingCapacity: true)
+      bufferedBytes = 0
+      for connection in connections.values { receive(connection) }
+      return ["events": drained]
+    case "connections.send":
+      let connection = try connection(request)
+      guard connection.opened, !connection.ended, let data = request["data"] as? String else {
+        throw ExactNativeRefusal("This environment is disconnected.")
+      }
+      let bytes = data.utf8.count
+      guard bytes <= maximumBytes - connection.outgoingBytes, connection.outgoing.count < 256 else {
+        throw ExactNativeRefusal("The connection is busy. Try sending again.")
+      }
+      connection.outgoing.append(data)
+      connection.outgoingBytes += bytes
+      send(connection)
+      return [:]
+    case "connections.close":
+      if let connection = try? connection(request) { finish(connection, reason: "Disconnected") }
+      return [:]
+    case "connections.finish":
+      let (id, receipt) = try receipt(request)
+      if let reply = receipt.reply {
+        receipts.removeValue(forKey: id)
+        reply.send([:])
+      } else {
+        receipt.finished = true
+      }
+      return [:]
+    default:
+      throw ExactNativeRefusal("Unknown connection operation.")
+    }
+  }
+
+  func later(_ request: [String: Any], reply: ExactReply) {
+    guard request["op"] as? String == "connections.wait" else {
+      reply.fail("Unknown connection operation.")
+      return
+    }
+    do {
+      let (id, receipt) = try receipt(request)
+      if receipt.finished {
+        receipts.removeValue(forKey: id)
+        reply.send([:])
+      } else if receipt.reply == nil {
+        receipt.reply = reply
+      } else {
+        reply.fail("This connection reply is already awaited.")
+      }
+    } catch {
+      reply.fail("Too many connection replies are pending.")
+    }
+  }
+
+  private func receipt(_ request: [String: Any]) throws -> (String, Receipt) {
+    guard let id = request["receipt"] as? String, UUID(uuidString: id) != nil else {
+      throw ExactNativeRefusal("A connection reply identity is required.")
+    }
+    if let receipt = receipts[id] { return (id, receipt) }
+    guard receipts.count < 64 else { throw ExactNativeRefusal("Too many connection replies are pending.") }
+    let receipt = Receipt()
+    receipts[id] = receipt
+    return (id, receipt)
+  }
+
+  func destroy() {
+    for receipt in receipts.values { receipt.reply?.fail("The connection session ended.") }
+    receipts.removeAll()
+    for connection in connections.values { connection.stop() }
+    connections.removeAll()
+    events.removeAll()
+    bufferedBytes = 0
+    session?.invalidateAndCancel()
+    session = nil
+  }
+
+  private func connection(_ request: [String: Any]) throws -> Connection {
+    guard let id = request["id"] as? String, let generation = request["generation"] as? Int,
+          let connection = connections[id], connection.generation == generation else {
+      throw ExactNativeRefusal("This environment is disconnected.")
+    }
+    return connection
+  }
+
+  private func connect(_ connection: Connection, token: String) {
+    if session == nil { session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main) }
+    var request = URLRequest(url: connection.origin.appendingPathComponent("api/auth/websocket-ticket/rpc"))
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.timeoutInterval = 30
+    let task = session!.dataTask(with: request) { [weak self, weak connection] data, response, error in
+      DispatchQueue.main.async {
+        guard let self, let connection, self.current(connection) else { return }
+        connection.ticket = nil
+        guard error == nil, let response = response as? HTTPURLResponse,
+              response.statusCode == 200, let data, data.count <= 64 * 1024,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ticket = json["ticket"] as? String, !ticket.isEmpty else {
+          let reason = (response as? HTTPURLResponse)?.statusCode == 401
+            ? "Pairing required" : "Could not connect to the environment."
+          self.finish(connection, reason: reason)
+          return
+        }
+        var url = URLComponents(url: connection.origin, resolvingAgainstBaseURL: false)!
+        url.scheme = url.scheme == "https" ? "wss" : "ws"
+        url.path = "/ws"
+        url.queryItems = [URLQueryItem(name: "wsTicket", value: ticket), URLQueryItem(name: "orchestrationProtocol", value: "2")]
+        let socket = self.session!.webSocketTask(with: url.url!)
+        socket.maximumMessageSize = self.maximumBytes
+        connection.socket = socket
+        socket.resume()
+      }
+    }
+    connection.ticket = task
+    task.resume()
+  }
+
+  private func current(_ connection: Connection) -> Bool {
+    connections[connection.id] === connection && !connection.ended
+  }
+
+  private func enqueue(_ connection: Connection, type: String, data: String = "", reason: String = "") {
+    let wasEmpty = events.isEmpty
+    events.append(["id": connection.id, "generation": connection.generation, "type": type, "data": data, "reason": reason])
+    bufferedBytes += data.utf8.count
+    if wasEmpty { changed() }
+  }
+
+  private func finish(_ connection: Connection, reason: String) {
+    guard current(connection) else { return }
+    connection.stop()
+    enqueue(connection, type: "close", reason: reason)
+  }
+
+  private func receive(_ connection: Connection) {
+    guard current(connection), connection.opened, !connection.receiving,
+          let socket = connection.socket else { return }
+    connection.receiving = true
+    socket.receive { [weak self, weak connection] result in
+      DispatchQueue.main.async {
+        guard let self, let connection, self.current(connection) else { return }
+        connection.receiving = false
+        guard case let .success(message) = result else {
+          self.finish(connection, reason: "Disconnected. Reconnect to continue.")
+          return
+        }
+        let text: String?
+        switch message {
+        case .string(let value): text = value
+        case .data(let value): text = String(data: value, encoding: .utf8)
+        @unknown default: text = nil
+        }
+        guard let text, text.utf8.count <= self.maximumBytes - self.bufferedBytes else {
+          self.finish(connection, reason: "The environment response exceeded this client's buffer.")
+          return
+        }
+        self.enqueue(connection, type: "message", data: text)
+        // The next receive begins when sync drains this message, so no protocol frames are dropped.
+      }
+    }
+  }
+
+  private func send(_ connection: Connection) {
+    guard current(connection), !connection.sending, let data = connection.outgoing.first,
+          let socket = connection.socket else { return }
+    connection.sending = true
+    socket.send(.string(data)) { [weak self, weak connection] error in
+      DispatchQueue.main.async {
+        guard let self, let connection, self.current(connection) else { return }
+        connection.sending = false
+        if error != nil {
+          self.finish(connection, reason: "The connection closed before the message could be sent.")
+          return
+        }
+        connection.outgoing.removeFirst()
+        connection.outgoingBytes -= data.utf8.count
+        self.send(connection)
+      }
+    }
+  }
+
+  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+    guard let connection = connections.values.first(where: { $0.socket === webSocketTask }), current(connection) else { return }
+    connection.opened = true
+    enqueue(connection, type: "open")
+  }
+
+  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+    guard let connection = connections.values.first(where: { $0.socket === webSocketTask }) else { return }
+    finish(connection, reason: "Disconnected. Reconnect to continue.")
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    guard error != nil, let connection = connections.values.first(where: { $0.socket === task }) else { return }
+    finish(connection, reason: "Could not connect to the environment.")
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    completionHandler(nil)
+  }
+}

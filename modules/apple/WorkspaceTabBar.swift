@@ -176,10 +176,24 @@ final class T3NativeModule: ExactModule {
   private var probe: DeviceProbe?
   private var device = DeviceTraits(kind: "phone", rail: false, split: false)
   private weak var container: WorkspaceContainer?
+  private lazy var connections = WorkspaceConnections { [weak self] in
+    self?.context.changed("connections")
+  }
 
   override func call(_ request: [String: Any]) throws -> [String: Any] {
+    if (request["op"] as? String)?.hasPrefix("connections.") == true {
+      return try connections.call(request)
+    }
     guard request["op"] as? String == "device" else { throw ExactNativeRefusal("t3 answers device") }
     return ["kind": device.kind, "rail": device.rail, "split": device.split]
+  }
+
+  override func destroy() {
+    connections.destroy()
+  }
+
+  override func later(_ request: [String: Any], reply: ExactReply) {
+    connections.later(request, reply: reply)
   }
 
   private let toolbarFollower = ToolbarFollower()
@@ -280,6 +294,9 @@ final class T3NativeModule: ExactModule {
       },
       "workspace-composer-glass": ExactNativeFactory { props, events in
         ComposerGlassInstance(props: props, events: events)
+      },
+      "workspace-filter-menu": ExactNativeFactory { props, events in
+        try WorkspaceFilterMenuInstance(props: props, events: events)
       },
     ]
   }
