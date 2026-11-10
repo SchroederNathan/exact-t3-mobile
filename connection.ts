@@ -1,5 +1,6 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
-import { markdownBlocks } from "./markdown";
+import { visitMetadata } from "./visit-metadata";
+import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
 import {
   decodeSelection,
   projectThreadSettings,
@@ -14,7 +15,6 @@ import {
 export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
-type Message = Thread["messages"][number];
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
 export interface Inspection {
@@ -184,19 +184,6 @@ export async function socketUrl(environment: Environment, token: string): Promis
   url.searchParams.set("wsTicket", value);
   url.searchParams.set("orchestrationProtocol", "2");
   return url.toString();
-}
-
-function message(value: ObjectValue): Message | null {
-  const id = string(value.id);
-  const role = string(value.role);
-  if (!id || (role !== "user" && role !== "assistant" && role !== "system")) return null;
-  const createdAt = string(value.createdAt);
-  const date = new Date(createdAt);
-  const timeLabel = Number.isNaN(date.getTime())
-    ? ""
-    : date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const body = string(value.text);
-  return { id, role, body, createdAt, timeLabel, blocks: markdownBlocks(body, id) };
 }
 
 function errorDetails(thread: ObjectValue): { message: string; time: string } {
@@ -406,11 +393,13 @@ export class DirectSession {
   private selected = "";
   private projects = new Map<string, ObjectValue>();
   private config: ObjectValue = {};
+  private configReady = false;
   private faviconRequests = new Map<string, string>();
   private favicons = new Map<string, { revision: string; url: string }>();
   private shells = new Map<string, ObjectValue>();
   private shellLive = false;
-  private transcripts = new Map<string, Message[]>();
+  private transcripts = new Map<string, ThreadHistory>();
+  private switchingSnapshots = new Map<string, ReturnType<typeof switchingProjection>>();
   private switching: ReturnType<typeof switchingProjection> | undefined;
   private replies = new Map<string, (reply: Reply) => void>();
   private queries = new Map<
@@ -519,9 +508,11 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    for (const history of this.transcripts.values()) history.disconnect();
     this.shellLive = false;
     this.switching = undefined;
     this.threadRequest = "";
+    this.configReady = false;
     this.socket = socket;
     this.environment.status = "Connected";
     this.shellRequest = this.request("orchestration.subscribeShell", {});
@@ -529,10 +520,6 @@ export class DirectSession {
       workspaceSnapshotsOnDemand: true,
       providerCatalogsOnDemand: true,
     });
-    if (this.selected)
-      this.threadRequest = this.request("orchestration.subscribeThread", {
-        threadId: this.selected,
-      });
   }
 
   select(threadId: string) {
@@ -542,7 +529,66 @@ export class DirectSession {
     if (!this.socket || this.socket.readyState !== 1) return;
     if (this.threadRequest)
       this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: this.threadRequest }));
-    this.threadRequest = threadId ? this.request("orchestration.subscribeThread", { threadId }) : "";
+    this.threadRequest = "";
+    this.subscribeSelected();
+  }
+
+  private subscribeSelected() {
+    if (!this.selected || this.threadRequest || !this.configReady || this.socket?.readyState !== 1) return;
+    let history = this.transcripts.get(this.selected);
+    if (!history) {
+      history = new ThreadHistory(this.selected);
+      this.transcripts.set(this.selected, history);
+    }
+    if (history.deleted) return;
+    const completion = this.config.threadResumeCompletionMarker === true;
+    history.subscribing(completion);
+    this.threadRequest = this.request("orchestration.subscribeThread", {
+      threadId: this.selected,
+      ...(completion && history.ready && history.sequence !== null ? { afterSequence: history.sequence } : {}),
+      ...(completion ? { requestCompletionMarker: true } : {}),
+      ...(this.config.threadSnapshotPagination === true ? { acceptBoundedSnapshot: true } : {}),
+    });
+  }
+
+  history(threadId: string): HistorySummary {
+    return this.transcripts.get(threadId)?.summary() ?? {
+      ready: false, synchronized: false, hasMore: false, loading: false, error: "",
+    };
+  }
+
+  timeline(threadId: string): readonly TimelineRow[] {
+    return this.transcripts.get(threadId)?.visibleRows() ?? [];
+  }
+
+  async loadEarlier(threadId: string, read: (relativePath: string) => Promise<unknown>): Promise<Reply> {
+    const history = this.transcripts.get(threadId);
+    if (!history?.ready || history.deleted || !history.hasMore || !history.cursor || history.loading)
+      return { ok: true, error: "" };
+    const generation = history.generation;
+    const cursor = history.cursor;
+    const current = () => this.transcripts.get(threadId) === history && history.generation === generation && history.cursor === cursor;
+    history.loading = true;
+    history.error = "";
+    try {
+      const query = new URLSearchParams({ cursor });
+      const page = object(await read(`/api/orchestration/threads/${encodeURIComponent(threadId)}/history?${query}`));
+      if (!current()) return { ok: true, error: "" };
+      if (!Array.isArray(page.items) || typeof page.hasMoreHistory !== "boolean" ||
+        (page.nextCursor !== null && typeof page.nextCursor !== "string"))
+        throw new Error("The server returned invalid thread history.");
+      if (page.hasMoreHistory && (!page.nextCursor || page.nextCursor === cursor))
+        throw new Error("History did not advance. Retry loading it.");
+      history.mergePage(page);
+      history.loading = false;
+      return { ok: true, error: "" };
+    } catch (error) {
+      if (!current()) return { ok: true, error: "" };
+      history.error = error instanceof Error ? error.message : "Could not load earlier history.";
+      return { ok: false, error: history.error };
+    } finally {
+      if (current()) history.loading = false;
+    }
   }
 
   settings(threadId: string, staged?: ThreadSettingsSelection | null) {
@@ -614,6 +660,17 @@ export class DirectSession {
       canSwitchProvider: !thread || (thread.latestRunId == null && thread.latestUserMessageAt == null
         && thread.activeProviderThreadId == null && !backgroundHolds),
     };
+  }
+
+  visit(threadId: string, visitedAt: string, opened: boolean, commandId: string): Promise<Reply> {
+    const id = this.request("orchestration.dispatchCommand", {
+      type: "thread.visit",
+      commandId,
+      threadId,
+      visitedAt,
+      ...(opened ? { opened: true } : {}),
+    });
+    return new Promise((resolve) => this.replies.set(id, resolve));
   }
 
   send(
@@ -725,6 +782,7 @@ export class DirectSession {
     this.switching = undefined;
     this.threadRequest = "";
     this.socket = undefined;
+    for (const history of this.transcripts.values()) history.disconnect();
     this.environment.status = reason;
     for (const resolve of this.replies.values()) resolve({ ok: false, error: reason });
     this.replies.clear();
@@ -741,7 +799,11 @@ export class DirectSession {
           if (id === this.shellRequest) this.shell(item);
           if (this.threadRequest && id === this.threadRequest) this.transcript(item);
           if (id === this.configRequest) {
-            if (item.type === "snapshot") this.config = object(item.config);
+            if (item.type === "snapshot") {
+              this.config = object(item.config);
+              this.configReady = true;
+              this.subscribeSelected();
+            }
             if (item.type === "providerStatuses")
               this.config.providers = object(item.payload).providers;
             if (item.type === "settingsUpdated")
@@ -759,6 +821,11 @@ export class DirectSession {
         }
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
+        if (threadEnded) {
+          const history = this.transcripts.get(this.selected);
+          history?.disconnect();
+          if (history) history.error = error;
+        }
         const query = this.queries.get(id);
         this.queries.delete(id);
         if (error) query?.reject(new Error(error));
@@ -780,7 +847,7 @@ export class DirectSession {
         }
         this.replies.get(id)?.({ ok: !error, error });
         this.replies.delete(id);
-        if (error && (id === this.shellRequest || threadEnded))
+        if (error && id === this.shellRequest)
           this.environment.status = error;
         if (id === this.shellRequest) this.shellRequest = "";
       } else if (frame._tag === "Defect") {
@@ -818,7 +885,9 @@ export class DirectSession {
     } else if (item.kind === "thread.removed" && item.location === "active") {
       if (item.threadId === this.switching?.thread.id) this.switching = undefined;
       this.shells.delete(string(item.threadId));
+      this.transcripts.get(string(item.threadId))?.remove();
       this.transcripts.delete(string(item.threadId));
+      this.switchingSnapshots.delete(string(item.threadId));
     }
   }
 
@@ -840,39 +909,34 @@ export class DirectSession {
   }
 
   private transcript(item: ObjectValue) {
+    const history = this.transcripts.get(this.selected);
+    if (!history) return;
     if (item.kind === "snapshot") {
       const projection = object(item.projection);
       const switching = switchingProjection(projection);
       this.switching = switching.thread.id === this.selected ? switching : undefined;
-      const messages = records(projection.messages)
-        .map(message)
-        .filter((value): value is Message => value !== null);
-      this.transcripts.set(this.selected, messages);
-    } else if (item.kind === "event") {
+      if (this.switching) this.switchingSnapshots.set(this.selected, this.switching);
+      history.install(item);
+    } else if (history.apply(item)) {
       const event = object(item.event);
-      this.updateSwitching(event);
-      if (event.type === "message.updated") {
-        const updated = message(object(event.payload));
-        if (!updated) return;
-        const messages = this.transcripts.get(this.selected) ?? [];
-        const index = messages.findIndex((value) => value.id === updated.id);
-        this.transcripts.set(
-          this.selected,
-          index < 0
-            ? [...messages, updated]
-            : messages.map((value) => (value.id === updated.id ? updated : value)),
-        );
+      if (item.kind === "event") this.updateSwitching(event);
+      if (history.deleted) {
+        this.switchingSnapshots.delete(this.selected);
+        this.switching = undefined;
+      } else if (history.synchronized) {
+        this.switching = this.switchingSnapshots.get(this.selected);
       }
     }
   }
 
   private updateSwitching(event: ObjectValue) {
-    const projection = this.switching;
+    const projection = this.switchingSnapshots.get(this.selected);
     if (!projection || event.threadId !== projection.thread.id) return;
     const payload = object(event.payload);
     const type = string(event.type);
     if (type === "thread.archived" || type === "thread.deleted") {
       this.switching = undefined;
+      this.switchingSnapshots.delete(this.selected);
     } else if (type.startsWith("thread.") && payload.id === projection.thread.id && payload.modelSelection) {
       projection.thread = switchingThread(payload);
     } else if (type === "run.created" || type === "run.updated") {
@@ -916,7 +980,7 @@ export class DirectSession {
           records(provider.models).find((entry) => entry.slug === selection.model) ?? {};
         const settled = thread.settledOverride === "settled" && thread.status !== "queued";
         const activityAt = activity(thread, settled);
-        const transcript = this.transcripts.get(id) ?? [];
+        const transcript = this.transcripts.get(id)?.messages() ?? [];
         const error = errorDetails(thread);
         return {
           id: scopedThreadId(this.environment.id, id),
@@ -943,8 +1007,10 @@ export class DirectSession {
           activityAt,
           title: string(thread.title),
           status: status(thread),
+          visit: visitMetadata(thread),
           updatedAt: relativeTime(activityAt, now),
           messages: transcript,
+          history: this.history(id),
         };
       })
       .sort(

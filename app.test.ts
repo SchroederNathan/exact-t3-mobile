@@ -254,6 +254,9 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const beforeReopen = sent.length;
   emit("b", "open");
   await load();
+  const reopenedConfig = sent.slice(beforeReopen).find(({ frame }) => frame.tag === "subscribeServerConfig")!;
+  chunk("b", reopenedConfig.frame.id, { type: "snapshot", config: {} });
+  await load();
   expect(sent.slice(beforeReopen).filter(({ frame }) => frame.tag === "orchestration.subscribeThread").map(({ environmentId, frame }) => ({ environmentId, threadId: frame.payload.threadId }))).toEqual([
     { environmentId: "b", threadId: "t" },
   ]);

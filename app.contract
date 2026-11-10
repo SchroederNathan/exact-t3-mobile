@@ -105,8 +105,25 @@ shape MarkdownBlock
   headingLevel: number
   spacingAfter: number
 
+shape VisitMetadata
+  ready: bool
+  supported: bool
+  at: string
+  watermark: number
+  seen: number
+  urgent: bool
+
+shape ThreadHistory
+  ready: bool
+  synchronized: bool
+  hasMore: bool
+  loading: bool
+  error: string
+
 shape Thread
   id: string
+  visit: VisitMetadata
+  history: ThreadHistory
   environmentId: string
   project: string
   projectId: string

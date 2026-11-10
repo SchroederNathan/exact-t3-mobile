@@ -51,13 +51,18 @@ function settingsSession(initializeShell = true) {
     _tag: "Chunk", requestId: "2",
     values: [{ type: "snapshot", config: { providers } }],
   }));
+  const thread = {
+    id: "thread", projectId: "project", runtimeMode: "full-access",
+    modelSelection: { instanceId: "codex", model: "gpt-6" },
+  };
+  const updateThread = (fields: Record<string, unknown>) => session.receive(JSON.stringify({
+    _tag: "Chunk", requestId: "1",
+    values: [{ kind: "thread.updated", location: "active", thread: { ...thread, ...fields } }],
+  }));
   if (initializeShell) session.receive(JSON.stringify({
     _tag: "Chunk", requestId: "1", values: [{
       kind: "snapshot", snapshot: {
-        projects: [], threads: [{
-          id: "thread", projectId: "project", runtimeMode: "full-access",
-          modelSelection: { instanceId: "codex", model: "gpt-6" },
-        }],
+        projects: [], threads: [thread],
       },
     }],
   }));
@@ -66,10 +71,248 @@ function settingsSession(initializeShell = true) {
     _tag: "Exit", requestId: request.id, exit: { _tag: "Success", value: { sequence: 2 } },
   }));
   const commands = () => requests.filter((request) => request.tag === "orchestration.dispatchCommand");
-  return { session, provider, updateProviders, requests, commands, dispatched: dispatched.promise, accept, open };
+  return { session, provider, updateProviders, updateThread, requests, commands, dispatched: dispatched.promise, accept, open };
 }
 
+function historySession() {
+  const fixture = settingsSession();
+  const configure = () => fixture.session.receive(JSON.stringify({
+    _tag: "Chunk", requestId: fixture.requests.findLast((request) => request.tag === "subscribeServerConfig")!.id,
+    values: [{ type: "snapshot", config: { threadSnapshotPagination: true, threadResumeCompletionMarker: true } }],
+  }));
+  configure();
+  fixture.session.select("thread");
+  const request = () => fixture.requests.findLast((value) => value.tag === "orchestration.subscribeThread")!;
+  const receive = (...values: unknown[]) => fixture.session.receive(JSON.stringify({
+    _tag: "Chunk", requestId: request().id, values,
+  }));
+  const snapshot = (fields: Record<string, unknown> = {}) => receive({
+    kind: "snapshot", snapshotSequence: 20, historyCursor: "older/opaque+cursor", hasMoreHistory: true,
+    latestLocalTurnOrdinal: 10, projection: {
+      thread: { id: "thread" }, messages: [], runs: [], attempts: [],
+      turnItems: [historyRow("recent", 10).item], visibleTurnItems: [historyRow("recent", 10)],
+    }, ...fields,
+  });
+  const event = (sequence: number, type: string, payload: unknown) => receive({
+    kind: "event", sequence, event: { threadId: "thread", type, payload },
+  });
+  return { ...fixture, configure, request, receive, snapshot, event,
+    bodies: () => fixture.session.threads()[0]!.messages.map((message) => message.body) };
+}
+
+function historyRow(id: string, ordinal: number, fields: Record<string, unknown> = {}) {
+  return { position: ordinal, visibility: "local", sourceThreadId: "thread", sourceItemId: id, item: {
+    id, threadId: "thread", type: "assistant_message", messageId: `message-${id}`,
+    ordinal, runId: null, nodeId: null, status: "completed", text: id,
+    updatedAt: "2026-11-10T12:00:00Z", ...fields,
+  } };
+}
+
+describe("long thread history", () => {
+  test.each([undefined, false])("refreshes idle threads when completion markers are %s", (completion) => {
+    const f = historySession();
+    const thread = {
+      id: "thread", projectId: "project", runtimeMode: "full-access", status: "idle",
+      latestRunId: "completed", activeProviderThreadId: "provider-thread",
+      modelSelection: { instanceId: "codex", model: "gpt-6" },
+    };
+    f.updateThread(thread);
+    const configure = () => f.session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: f.requests.findLast((request) => request.tag === "subscribeServerConfig")!.id,
+      values: [{ type: "snapshot", config: {
+        threadSnapshotPagination: true,
+        ...(completion === undefined ? {} : { threadResumeCompletionMarker: completion }),
+        providers: [f.provider, { ...f.provider, instanceId: "claude", driver: "claudeAgent" }],
+      } }],
+    }));
+    const snapshot = () => f.snapshot({ projection: {
+      thread, messages: [], visibleTurnItems: [historyRow("recent", 10)],
+      runs: [{ id: "completed", status: "completed" }],
+      providerThreads: [{ id: "provider-thread", appThreadId: "thread", providerInstanceId: "codex", providerSessionId: "session", nativeThreadRef: "native" }],
+      providerSessions: [{ id: "session", status: "ready", capabilities: { sessions: { supportsProviderSwitchingViaHandoff: true } } }],
+    } });
+    snapshot();
+    f.receive({ kind: "synchronized" });
+    f.session.select("");
+    configure();
+    f.session.select("thread");
+    expect(f.request().payload).toEqual({ threadId: "thread", acceptBoundedSnapshot: true });
+    snapshot();
+    expect(f.session.history("thread").synchronized).toBe(true);
+    expect(f.session.settings("thread").groups.some((group) => group.id === "claude")).toBe(true);
+    f.session.disconnected("Disconnected");
+    f.open();
+    configure();
+    expect(f.request().payload).toEqual({ threadId: "thread", acceptBoundedSnapshot: true });
+    snapshot();
+    expect(f.session.history("thread").synchronized).toBe(true);
+    expect(f.session.settings("thread").groups.some((group) => group.id === "claude")).toBe(true);
+  });
+
+  test("uses bounded snapshots and resumes the matching projection after replay and reconnect", () => {
+    const f = historySession();
+    expect(f.request().payload).toEqual({ threadId: "thread", acceptBoundedSnapshot: true, requestCompletionMarker: true });
+    f.snapshot();
+    expect(f.session.history("thread")).toMatchObject({ ready: true, synchronized: false, hasMore: true });
+    f.event(27, "turn-item.updated", historyRow("recent", 10, { text: "live" }).item);
+    f.event(27, "turn-item.updated", historyRow("recent", 10, { text: "duplicate" }).item);
+    f.receive({ kind: "synchronized" });
+    expect(f.bodies()).toEqual(["live"]);
+    expect(f.session.history("thread").synchronized).toBe(true);
+    f.session.select("");
+    f.session.select("thread");
+    expect(f.request().payload.afterSequence).toBe(27);
+    f.event(31, "future.event", {});
+    f.session.disconnected("Disconnected");
+    const subscriptions = f.requests.filter((request) => request.tag === "orchestration.subscribeThread").length;
+    f.open();
+    expect(f.requests.filter((request) => request.tag === "orchestration.subscribeThread")).toHaveLength(subscriptions);
+    f.configure();
+    expect(f.request().payload.afterSequence).toBe(31);
+    expect(f.bodies()).toEqual(["live"]);
+  });
+
+  test("treats visible timeline as authoritative including inherited content and empty history", () => {
+    const f = historySession();
+    const raw = { id: "raw", role: "user", text: "hidden raw", createdAt: "2026-11-10T12:00:00Z" };
+    const inherited = { ...historyRow("ancestor", 2, { attachments: [{ id: "image", type: "image", url: "relative" }] }), visibility: "inherited", sourceThreadId: "parent" };
+    f.snapshot({ projection: { thread: { id: "thread" }, messages: [raw], visibleTurnItems: [inherited] } });
+    expect(f.bodies()).toEqual(["ancestor"]);
+    expect(f.session.timeline("thread")[0]?.item.attachments).toEqual(inherited.item.attachments);
+    f.snapshot({ projection: { thread: { id: "thread" }, messages: [raw], visibleTurnItems: [] } });
+    expect(f.bodies()).toEqual([]);
+    f.snapshot({ projection: { thread: { id: "thread" }, messages: [raw] } });
+    expect(f.bodies()).toEqual(["hidden raw"]);
+  });
+
+  test("prepends older pages without replacing live rows or the resume cursor", async () => {
+    const f = historySession();
+    f.snapshot();
+    const page = Promise.withResolvers<unknown>();
+    let requestedPath = "";
+    const loading = f.session.loadEarlier("thread", (path) => { requestedPath = path; return page.promise; });
+    expect(new URL(requestedPath, "http://local").searchParams.get("cursor")).toBe("older/opaque+cursor");
+    expect(f.session.history("thread").loading).toBe(true);
+    f.event(24, "turn-item.updated", historyRow("recent", 10, { text: "newest" }).item);
+    page.resolve({ snapshotSequence: 900, items: [historyRow("old", 1), historyRow("recent", 10)], nextCursor: null, hasMoreHistory: false });
+    expect(await loading).toEqual({ ok: true, error: "" });
+    expect(f.bodies()).toEqual(["old", "newest"]);
+    expect(f.session.history("thread")).toMatchObject({ loading: false, hasMore: false, error: "" });
+    f.session.select(""); f.session.select("thread");
+    expect(f.request().payload.afterSequence).toBe(24);
+  });
+
+  test("discards pages overtaken by replacement snapshots and keeps failures thread-local", async () => {
+    const f = historySession();
+    f.snapshot();
+    const page = Promise.withResolvers<unknown>();
+    const loading = f.session.loadEarlier("thread", () => page.promise);
+    f.snapshot({ snapshotSequence: 40, historyCursor: "replacement" });
+    page.resolve({ items: [historyRow("stale", 1)], nextCursor: null, hasMoreHistory: false });
+    await loading;
+    expect(f.bodies()).toEqual(["recent"]);
+    expect(f.session.history("thread").hasMore).toBe(true);
+    expect(await f.session.loadEarlier("thread", async () => { throw new Error("History unavailable"); })).toEqual({ ok: false, error: "History unavailable" });
+    expect(f.session.history("thread").error).toBe("History unavailable");
+    expect(f.session.environment.status).toBe("Connected");
+    expect(await f.session.loadEarlier("thread", async () => ({ items: [], nextCursor: "replacement", hasMoreHistory: true }))).toEqual({ ok: false, error: "History did not advance. Retry loading it." });
+    const deletedPage = Promise.withResolvers<unknown>();
+    const deletedLoad = f.session.loadEarlier("thread", () => deletedPage.promise);
+    f.event(45, "thread.deleted", { threadId: "thread" });
+    deletedPage.resolve({ items: [historyRow("deleted", 1)], nextCursor: null, hasMoreHistory: false });
+    await deletedLoad;
+    expect(f.bodies()).toEqual([]);
+    expect(f.session.history("thread")).toMatchObject({ ready: false, loading: false, hasMore: false });
+  });
+
+  test("does not resurrect rolled-back rows or unloaded old updates", async () => {
+    const f = historySession();
+    f.snapshot();
+    f.event(21, "turn-item.updated", historyRow("unloaded", 2).item);
+    f.event(22, "run.created", { id: "active", status: "running" });
+    f.event(23, "turn-item.updated", historyRow("active-old-ordinal", 3, { runId: "active" }).item);
+    expect(f.bodies()).toEqual(["active-old-ordinal", "recent"]);
+    f.event(24, "run.updated", { id: "active", status: "rolled_back" });
+    await f.session.loadEarlier("thread", async () => ({ items: [historyRow("active-old-ordinal", 3, { runId: "active" }), historyRow("earlier", 1)], nextCursor: null, hasMoreHistory: false }));
+    expect(f.bodies()).toEqual(["earlier", "recent"]);
+  });
+});
+
 describe("direct T3 connection", () => {
+  test("visits send the raw watermark and clear Done only after the shell echo", async () => {
+    const { session, commands, accept, updateThread } = settingsSession();
+    const completed = {
+      status: "completed", updatedAt: "1970-01-01T00:00:20.000Z",
+      latestRunId: "run", latestRunCompletedAt: "1970-01-01T00:00:20.000Z",
+    };
+    updateThread({ ...completed, lastVisitedAt: "1970-01-01T00:00:10.000Z" });
+    expect(session.threads(30000)[0]?.status).toBe("Done");
+    const visiting = session.visit("thread", "1970-01-01T00:00:20.000Z", true, "first-open");
+    expect(commands().map(({ tag, payload }) => ({ tag, payload }))).toEqual([{
+      tag: "orchestration.dispatchCommand",
+      payload: {
+        type: "thread.visit", commandId: "first-open", threadId: "thread",
+        visitedAt: "1970-01-01T00:00:20.000Z", opened: true,
+      },
+    }]);
+    accept(commands()[0]!);
+    expect(await visiting).toEqual({ ok: true, error: "" });
+    expect(session.threads(30000)[0]?.status).toBe("Done");
+    updateThread({ ...completed, lastVisitedAt: "1970-01-01T00:00:20.000Z" });
+    expect(session.threads(30000)[0]?.status).toBe("");
+  });
+
+  test("visit failures retain unread status and allow an explicit retry of the same watermark", async () => {
+    const { session, commands, updateThread } = settingsSession();
+    updateThread({
+      status: "completed", updatedAt: "1970-01-01T00:00:20.000Z",
+      latestRunId: "run", latestRunCompletedAt: "1970-01-01T00:00:20.000Z",
+      lastVisitedAt: "1970-01-01T00:00:10.000Z",
+    });
+    const first = session.visit("thread", "1970-01-01T00:00:20.000Z", false, "visit-attempt");
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: commands()[0]!.id, exit: {
+      _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Visits are not permitted." } }],
+    } }));
+    expect(await first).toEqual({ ok: false, error: "Visits are not permitted." });
+    expect(session.threads(30000)[0]?.status).toBe("Done");
+    const retried = session.visit("thread", "1970-01-01T00:00:20.000Z", false, "visit-retry");
+    expect(commands().map(({ payload }) => payload)).toEqual([
+      { type: "thread.visit", commandId: "visit-attempt", threadId: "thread", visitedAt: "1970-01-01T00:00:20.000Z" },
+      { type: "thread.visit", commandId: "visit-retry", threadId: "thread", visitedAt: "1970-01-01T00:00:20.000Z" },
+    ]);
+    session.disconnected("Connection lost");
+    expect(await retried).toEqual({ ok: false, error: "Connection lost" });
+    expect(session.threads(30000)[0]?.status).toBe("Done");
+  });
+
+  test("visit metadata keeps raw completion and read times independent of display time", () => {
+    const { session, updateThread } = settingsSession();
+    const completed = {
+      status: "completed", updatedAt: "1970-01-01T00:00:20.000Z",
+      latestRunId: "run", latestRunCompletedAt: "1970-01-01T00:00:20.000Z",
+    };
+    updateThread({ ...completed, lastVisitedAt: "1970-01-01T00:00:10.000Z" });
+    expect(session.threads(30000)[0]).toMatchObject({
+      id: "env:thread", status: "Done", updatedAt: "<1m",
+      visit: {
+        ready: true, supported: true, at: "1970-01-01T00:00:20.000Z",
+        watermark: 20000, seen: 10000, urgent: true,
+      },
+    });
+    updateThread({ ...completed, lastVisitedAt: "1970-01-01T00:00:20.000Z" });
+    expect(session.threads(30000)[0]).toMatchObject({
+      status: "", visit: { watermark: 20000, seen: 20000, urgent: false },
+    });
+    updateThread({ ...completed, lastVisitedAt: "1970-01-01T00:00:05.000Z" });
+    expect(session.threads(30000)[0]).toMatchObject({
+      status: "Done", visit: { watermark: 20000, seen: 5000, urgent: true },
+    });
+    updateThread({ updatedAt: "invalid" });
+    expect(session.threads(30000)[0]).toMatchObject({
+      visit: { ready: false, supported: false, at: "", watermark: -1 },
+    });
+  });
+
   test("normalizes pairing links without retaining a credential in the origin", () => {
     expect(parsePairingAddress("127.0.0.1:13773", "test-code")).toEqual({
       origin: "http://127.0.0.1:13773",
@@ -275,10 +518,19 @@ describe("direct T3 connection", () => {
         activityAt: Date.parse("2026-11-08T11:59:00Z"),
         settled: true,
         status: "",
+        visit: {
+          ready: true,
+          supported: false,
+          at: "2026-11-08T12:00:00Z",
+          watermark: Date.parse("2026-11-08T12:00:00Z"),
+          seen: -1,
+          urgent: false,
+        },
         updatedAt: "1m",
         lastError: "",
         lastErrorTime: expect.any(String),
         messages: [],
+        history: { ready: false, synchronized: false, hasMore: false, loading: false, error: "" },
       },
     ]);
     expect(sent.map((frame) => JSON.parse(frame))).toContainEqual({ _tag: "Ack", requestId: "1" });
