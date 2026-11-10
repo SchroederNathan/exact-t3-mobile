@@ -215,7 +215,10 @@ function message(value: ObjectValue): Message | null {
   };
 }
 
-function activityRow(value: ObjectValue): Activity | null {
+function activityRow(
+  value: ObjectValue,
+  metadata: { position?: unknown; sourceThreadId?: unknown; sourceItemId?: unknown } = {},
+): Activity | null {
   const id = string(value.id);
   const kind = string(value.type) || "activity";
   if (!id) return null;
@@ -257,6 +260,10 @@ function activityRow(value: ObjectValue): Activity | null {
     detail,
     status,
     startedAt: string(value.startedAt) || string(value.updatedAt),
+    runId: string(value.runId),
+    position: Number(metadata.position ?? value.position ?? value.ordinal ?? 0),
+    sourceThreadId: string(metadata.sourceThreadId ?? value.sourceThreadId),
+    sourceItemId: string(metadata.sourceItemId ?? value.sourceItemId) || id,
   };
 }
 
@@ -733,7 +740,11 @@ export class DirectSession {
           const source = string(item.id) ? item : row;
           return {
             row: string(item.id) ? row : { item: row, position: row.position ?? row.ordinal },
-            activity: activityRow(source),
+            activity: activityRow(source, {
+              position: row.position,
+              sourceThreadId: row.sourceThreadId,
+              sourceItemId: row.sourceItemId,
+            }),
           };
         })
         .filter((value): value is { row: ObjectValue; activity: Activity } => value.activity !== null)
@@ -793,7 +804,7 @@ export class DirectSession {
     const messages = source.map((message) => ({ ...message, activities: [...message.activities] }));
     for (const { row, activity: next } of rows) {
       const item = object(row.item);
-      const runId = string(item.runId) || string(row.runId);
+      const runId = next.runId || string(item.runId) || string(row.runId);
       let index = messages.findLastIndex(
         (message) =>
           message.role === "assistant" && (!runId || !message.runId || message.runId === runId),

@@ -92,7 +92,7 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
-const sizes = [1000, 5000];
+const sizes = [1000, 5000, 20000];
 const trials: Trial[] = [];
 for (const size of sizes) {
   run(size);
