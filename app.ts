@@ -193,6 +193,12 @@ const sources: Sources = {
           crypto.randomUUID(),
         );
       }
+      if (operation === "delete" || operation === "settle" || operation === "unsettle") {
+        const identity = threadIdentity(id);
+        if (current?.environment.id !== identity.environmentId)
+          throw new Error("Select this thread’s environment to change it.");
+        return current.threadCommand(identity.threadId, operation, crypto.randomUUID());
+      }
       const environments = await loadEnvironments(storage);
       if (operation === "pair") {
         const paired = await pair(id, value);
