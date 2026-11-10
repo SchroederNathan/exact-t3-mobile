@@ -589,7 +589,6 @@ component ThreadList
                   else
                     view flex=1
                   image "assets/openai.svg" width=14 height=14 opacity=0.6
-          view height=1 background-color="edge" margin-left=16 display=(sidebar ? "none" : "flex")
       if visibleThreads.filter(thread => thread.settled).length > 0
         section
           button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
