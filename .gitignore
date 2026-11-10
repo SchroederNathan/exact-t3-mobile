@@ -6,3 +6,5 @@
 /app.contract.d.ts
 /.exact/
 /.env.local
+/release/credentials.json
+/release/credentials/
