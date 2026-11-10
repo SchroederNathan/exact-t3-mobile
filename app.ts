@@ -124,6 +124,15 @@ async function loadCatalog(
 }
 
 const sources: Sources = {
+  deviceTraits: (_args, _store, _storage, native) => {
+    if (!native?.available) return { kind: "phone", rail: false };
+    native.watch("device");
+    try {
+      return native.call({ op: "device" }) as Result<"deviceTraits">;
+    } catch {
+      return { kind: "phone", rail: false };
+    }
+  },
   loadCatalog: (args, store, storage) =>
     loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage),
   inspectThread: async ([id, kind, path]) => {

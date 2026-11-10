@@ -13,38 +13,6 @@ func configureWorkspacePageTitle(_ item: UINavigationItem, bar: UINavigationBar?
   item.compactScrollEdgeAppearance = appearance(item.compactScrollEdgeAppearance ?? bar?.compactScrollEdgeAppearance, transparent: true)
 }
 
-func configureWorkspaceBack(_ route: ExactRoute) {
-  guard let id = ["thread-back", "environment-back"].first(where: { route.element($0) != nil }) else { return }
-  let item = route.controller.navigationItem
-  item.leftBarButtonItems = item.leftBarButtonItems?.filter { $0.accessibilityLabel != "Back" }
-  item.leftItemsSupplementBackButton = false
-  let compact = route.controller.traitCollection.horizontalSizeClass != .regular
-  item.hidesBackButton = !compact
-  item.backAction = compact ? UIAction(title: "Back", image: UIImage(systemName: "chevron.left")) { [weak route] _ in
-    route?.element(id)?.click()
-  } : nil
-}
-
-func configureWorkspaceCompose(_ route: ExactRoute) {
-  let item = route.controller.navigationItem
-  let existing = item.rightBarButtonItems ?? []
-  let spacerID = "workspace-compose-group"
-  var buttons = existing.filter { $0.accessibilityIdentifier != spacerID }
-  if let index = buttons.firstIndex(where: { $0.accessibilityIdentifier == "workspace-compose" }) {
-    if #available(iOS 26.0, *) { buttons[index].identifier = "workspace-compose" }
-    if buttons.count > 1 {
-      let spacer = existing.first { $0.accessibilityIdentifier == spacerID }
-        ?? UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-      spacer.accessibilityIdentifier = spacerID
-      spacer.width = 8
-      buttons.insert(spacer, at: index + 1)
-    }
-  }
-  if buttons.count != existing.count || !zip(buttons, existing).allSatisfy({ $0 === $1 }) {
-    item.rightBarButtonItems = buttons.isEmpty ? nil : buttons
-  }
-}
-
 final class WorkspaceBrandTitleView: UIView {
   private let wordmark = WorkspaceWordmarkView()
   private let code = UILabel()

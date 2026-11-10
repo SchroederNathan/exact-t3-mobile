@@ -19,11 +19,9 @@ routes nav
 shape Time
   epochAtZero: number
 
-shape Viewport
-  width: number
-  height: number
-  horizontalViewportSegments: number
-  verticalViewportSegments: number
+shape Device
+  kind: string
+  rail: bool
 
 shape Environment
   id: string
@@ -121,7 +119,7 @@ component T3Code
   state inspectorPath = ""
   state composerBottomAdjustment = 0
   resource time = exactTime() as shape Time
-  resource viewport = exactViewport() as shape Viewport
+  resource device = deviceTraits() as shape Device else empty()
   resource catalog = loadCatalog(selectedEnvironment) with time.epochAtZero as shape Catalog else empty()
   mutation changed as shape Reply refreshes catalog
   mutation sent as shape Reply then afterSend
@@ -136,8 +134,9 @@ component T3Code
   derive current = top(nav)
   derive currentThreadId = current.name == "thread" or current.name == "inspector" ? current.params.id : ""
   derive currentThread = selectedThread(catalog, currentThreadId)
-  derive wide = viewport.width >= 600 or viewport.horizontalViewportSegments == 2
-  derive duo = viewport.width >= 800 or viewport.horizontalViewportSegments == 2
+  derive duoFolded = device.kind == "duo-folded"
+  derive duoDevice = duoFolded or device.kind == "duo-unfolded"
+  derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive canSend = composer.trim() != "" and not pending(sent)
@@ -149,6 +148,8 @@ component T3Code
     query = value
 
   action toggleSearch
+    if searchOpen
+      query = ""
     searchOpen = not searchOpen
 
   action filterEnvironment(id: string)
@@ -175,12 +176,12 @@ component T3Code
 
   action afterPair
     if pairError == ""
-      nav = open(nav, "/environments")
+      nav = back(nav)
       address = ""
       code = ""
 
   action openThread(url: string)
-    nav = top(nav).name == "thread" and wide ? replace(nav, url) : push(nav, url)
+    nav = push(nav, url)
     send opened = command("open-url", url, "")
 
   action workspaceAction(value: string)
@@ -238,169 +239,103 @@ component T3Code
 
   view
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=openThread width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
-      column flex=1 min-height=0 position="relative" display="flex" flex-direction=(wide ? "row" : "column")
+      column flex=1 min-height=0 position="relative"
         for t in nav.tabs key=t.name
-          column role="tabpanel" id=`panel-${t.name}` display=(nav.tab == t.name ? "flex" : "none") flex=(wide and (t.name == "threads" or t.name == "settings") ? 0 : 1) min-height=0 position=(wide ? "relative" : "absolute") top=0 bottom=0 left=0 right=0 width=(wide and t.name == "threads" ? (duo ? 200 : 320) : wide and t.name == "settings" ? (duo ? 200 : 320) : wide ? "auto" : "100%") flex-grow=(wide and (t.name == "threads" or t.name == "settings") ? 0 : wide ? 1 : 0) flex-shrink=0 flex-direction="column"
+          column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
             for e in t.stack key=e.id
               if e.name == "threads"
-                column navigationKey=`${e.id}` navigationScroll="home" navigationBar=(wide ? "none" : "auto") navigationSplit=(duo ? "200" : "320") data-workspace-header="true" data-search-placement=(not wide ? "button" : "integrated") data-brand-stage="DEV" background-color=(wide ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
-                  column width=(wide ? (duo ? 200 : 320) : "auto") min-width=(wide ? (duo ? 200 : 320) : 0) flex=(wide ? 0 : 1) flex-shrink=0 display="flex" flex-direction="column" background-color=(wide ? "drawer" : "screen")
-                    header display=(wide ? "none" : "flex")
-                      button press=back aria-label="Back" display=(wide ? "none" : "flex")
-                        image "symbol:sf/chevron.left"
-                      text "T3 Code Exact iOS" role="heading" aria-level=2
-                    header display="flex" align-items="center" gap=5 padding=(wide ? "24px 20px 12px" : "8px 16px")
-                          image "assets/t3-wordmark.svg" width=25 height=15
-                          text "Code" font-size=21 line-height="23px" color="muted"
-                          text "DEV" font-size=12 line-height="16px" font-weight=700 color="muted" background-color="card" border-radius=999 padding="2px 6px"
-                    header display=(wide ? "none" : "flex") position="absolute" top=0 left=0 right=0 height=60 z-index=10
-                      if searchOpen
-                        input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="absolute" top=0 left=16 right=16
-                      else
-                        button press=toggleSearch appearance="none" aria-label="Search threads" testId="search-open" position="absolute" top=48 right=16 width=44 height=44 border-radius=999 backgroundMaterial="glass"
-                          image "symbol:search" width=24 height=24
-                    if failed(catalog)
-                      EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
-                    else if visibleThreads.length == 0 and not pending(catalog)
-                      column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
-                        text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
-                        text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
-                        if catalog.environments.length == 0
-                          button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
-                            text "Add environment"
-                    else
-                      list id="home" appearance="none" flex=1 min-height=0 background-color=(wide ? "drawer" : "screen")
-                        section
-                          row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
-                            button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
-                              text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
-                              image "symbol:sf/chevron.down" width=11 height=11
-                            button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
-                              text selectedProjectLabel
-                              image "symbol:sf/chevron.down" width=11 height=11
-                        section
-                          for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
-                            link href=path("thread", thread.id) testId=`thread-${thread.id}` margin=(wide ? "0 8px" : "0") border-radius=(wide ? 12 : 0) background-color=(wide and currentThreadId == thread.id ? "thread-selected" : "transparent")
-                              column flex=1 min-width=0 gap=3.5 padding=(wide ? "10px 12px" : "8.75px 17.5px")
-                                row align-items="flex-start" gap=7
-                                  if thread.projectIcon != ""
-                                    image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
-                                  else
-                                    text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
-                                  text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                                  text thread.updatedAt font-size=13 line-height="18px" color=(wide and currentThreadId == thread.id ? "foreground" : "muted")
-                                row align-items="center" gap=6 min-height=14
-                                  if catalog.environments.length > 1
-                                    image "symbol:sf/laptopcomputer" font-size=12 color="muted"
-                                    text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
-                                  else
-                                    view flex=1
-                                  image "assets/openai.svg" width=14 height=14 opacity=0.6
-                            view height=1 background-color="edge" margin-left=16 display=(wide ? "none" : "flex")
-                        if visibleThreads.filter(thread => thread.settled).length > 0
-                          section
-                            button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
-                              row align-items="center" gap=10 width="100%"
-                                text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
-                                view flex=1 height=1 background-color="edge"
-                                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
-                      if wide
-                        input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="duo-search" margin="12px 20px 20px" padding="10px 14px" backgroundMaterial="glass" border-radius=22
-                  if wide and currentThreadId == ""
-                    column flex=1 min-width=0 position="relative" background-color="screen"
-                      button appearance="none" aria-label="Expand sidebar" position="absolute" left=24 top=24 width=48 height=48 border-radius=24 backgroundMaterial="glass"
-                        image "symbol:sf/arrow.up.left.and.arrow.down.right" width=22 height=22
-                      button press=workspaceAction("compose") appearance="none" aria-label="New thread" position="absolute" right=24 top=24 width=48 height=48 border-radius=24 backgroundMaterial="glass"
-                        image "symbol:compose" width=22 height=22
-                      column position="absolute" left=0 right=0 top=0 bottom=0 align-items="center" justify-content="center" gap=14
-                        image "symbol:sf/sidebar.leading" width=38 height=38 color="muted"
-                        text "Select a thread" font-size=21 line-height="28px" font-weight=700
-                        text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" max-width=360 text-align="center"
+                column navigationKey=`${e.id}` navigationScroll="home" data-workspace-header="brand" data-search-placement=(duoDevice ? "integrated" : "button") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Chats" role="heading" aria-level=2
+                    if not duoFolded or searchOpen
+                      input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search"
+                    if duoFolded
+                      button press=workspaceAction("compose") buttonStyle="glass" aria-label="New chat" testId="workspace-compose"
+                        image "symbol:compose"
+                      button press=toggleSearch buttonStyle="glass" aria-label=(searchOpen ? "Close search" : "Search threads") testId="workspace-search"
+                        image (searchOpen ? "symbol:close" : "symbol:search")
+                  if failed(catalog)
+                    EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
+                  else if visibleThreads.length == 0 and not pending(catalog)
+                    column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
+                      text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
+                      text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
+                      if catalog.environments.length == 0
+                        button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
+                          text "Add environment"
+                  else
+                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, toggleSettled=toggleSettled)
               if e.name == "environments"
-                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column") background-color="screen"
-                  if wide
-                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
-                      SettingsList(openEnvironments=openEnvironments)
-                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    header
-                      button id="environment-back" press=back aria-label="Back"
-                        image "symbol:sf/chevron.left"
-                      text "Environments" role="heading" aria-level=2
-                      button press=addEnvironment aria-label="Add environment" testId="environment-add"
-                        image "symbol:add"
-                    scroll id="environments" flex=1 min-height=0 padding="14px 17.5px 36px"
-                      column border-radius=24 background-color="card" overflow="hidden"
-                        if catalog.environments.length == 0
-                          column align-items="center" gap=10.5 padding="28px 21px"
-                            row width=42 height=42 border-radius=16 background-color="bubble" align-items="center" justify-content="center"
-                              image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
-                            text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
-                        for environment in catalog.environments key=environment.id
-                          row gap=10.5 padding="12.25px 14px" align-items="center"
-                            column flex=1 min-width=0 gap=1.75
-                              row align-items="center" gap=5.25
-                                view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
-                                image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
-                                text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
-                              text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
-                              text environment.status font-size=13 line-height="17px" color="muted"
-                            input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
-                            button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
-                              image "symbol:forward-chevron" width=12 height=12
+                column navigationKey=`${e.id}` navigationScroll="environments" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Environments" role="heading" aria-level=2
+                    button press=addEnvironment aria-label="Add environment" testId="environment-add"
+                      image "symbol:add"
+                  scroll id="environments" flex=1 min-height=0 padding="14px 17.5px 36px"
+                    column border-radius=24 background-color="card" overflow="hidden"
+                      if catalog.environments.length == 0
+                        column align-items="center" gap=10.5 padding="28px 21px"
+                          row width=42 height=42 border-radius=16 background-color="bubble" align-items="center" justify-content="center"
+                            image "symbol:sf/point.3.connected.trianglepath.dotted" width=20 height=20 color="muted"
+                          text "No environments connected yet.\nTap + to add one." font-size=14 line-height="21px" color="muted" text-align="center"
+                      for environment in catalog.environments key=environment.id
+                        row gap=10.5 padding="12.25px 14px" align-items="center"
+                          column flex=1 min-width=0 gap=1.75
+                            row align-items="center" gap=5.25
+                              view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "#22c55e" : "muted")
+                              image `symbol:sf/${environment.machineSymbol}` width=14 height=14 color="muted"
+                              text environment.label font-weight=700 font-size=16 line-height="20px" flex=1 min-width=0
+                            text environment.url font-size=13 line-height="17px" color="muted" line-clamp=1
+                            text environment.status font-size=13 line-height="17px" color="muted"
+                          input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
+                          button aria-label=`Manage ${environment.label}` appearance="none" width=44 height=44 color="muted"
+                            image "symbol:forward-chevron" width=12 height=12
               if e.name == "addEnvironment"
-                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column") background-color="screen"
-                  if wide
-                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
-                      SettingsList(openEnvironments=openEnvironments)
-                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    header
-                      text "Add environment" role="heading" aria-level=2
-                      button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
-                        image "symbol:sf/checkmark"
-                    scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
-                      column gap=22.75
-                        column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
-                          column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
-                            image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
-                            text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
-                          text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
-                        column gap=7
-                          text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
-                          column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"
-                            row height=45.5 gap=10.5 padding="0 14px" align-items="center"
-                              text "Address" width=70 color="muted" line-height="23px"
-                              input value=address input=editAddress placeholder="192.168.1.100:3773" aria-label="Address" testId="address" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
-                                ::placeholder
-                                  color="muted"
-                            view height=1 margin-left=14 background-color="edge"
-                            row height=45.5 gap=10.5 padding="0 14px" align-items="center"
-                              text "Code" width=70 color="muted" line-height="23px"
-                              input value=code input=editCode submit=pair placeholder="Pairing code" aria-label="Code" testId="pair-code" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
-                                ::placeholder
-                                  color="muted"
-                          text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
+                column navigationKey=`${e.id}` navigationScroll="add-environment" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Add environment" role="heading" aria-level=2
+                    button press=pair disabled=(address.trim() == "" or pending(paired)) aria-label="Connect" testId="connect"
+                      image "symbol:sf/checkmark"
+                  scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
+                    column gap=22.75
+                      column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
+                        column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
+                          image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
+                          text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
+                        text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
+                      column gap=7
+                        text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
+                        column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"
+                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                            text "Address" width=70 color="muted" line-height="23px"
+                            input value=address input=editAddress placeholder="192.168.1.100:3773" aria-label="Address" testId="address" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
+                              ::placeholder
+                                color="muted"
+                          view height=1 margin-left=14 background-color="edge"
+                          row height=45.5 gap=10.5 padding="0 14px" align-items="center"
+                            text "Code" width=70 color="muted" line-height="23px"
+                            input value=code input=editCode submit=pair placeholder="Pairing code" aria-label="Code" testId="pair-code" appearance="none" flex=1 min-width=0 border="none" padding=0 background-color="transparent" font-family="DM Sans" font-size=16 line-height="23px" transform="translate(-0.333px, 1px)"
+                              ::placeholder
+                                color="muted"
+                        text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
               if e.name == "newThread"
-                column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
-                  if wide
-                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
-                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
-                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    header
-                      text "New thread" role="heading" aria-level=2
-                    list id="projects" appearance="none" flex=1
-                      section
-                        text "Select a project" font-size=21 font-weight=700 padding=20
-                        for project in catalog.projects key=project.id
-                          button press=createProjectThread(project.id) disabled=pending(created) appearance="none" padding=16 width="100%"
-                            text project.title font-size=16
-                      match created
-                        case some(reply)
-                          if not reply.ok
-                            text reply.error color="-exact-system-red" padding=16
-                        case none
-                          view
+                column navigationKey=`${e.id}` navigationScroll="projects" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "New thread" role="heading" aria-level=2
+                  list id="projects" appearance="none" flex=1
+                    section
+                      text "Select a project" font-size=21 font-weight=700 padding=20
+                      for project in catalog.projects key=project.id
+                        button press=createProjectThread(project.id) disabled=pending(created) appearance="none" padding=16 width="100%"
+                          text project.title font-size=16
+                    match created
+                      case some(reply)
+                        if not reply.ok
+                          text reply.error color="-exact-system-red" padding=16
+                      case none
+                        view
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
+                column navigationKey=`${e.id}` navigationScroll="thread" data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     text currentThreadTitle(selectedThread(catalog, e.params.id)) role="heading" aria-level=2
                     text currentThreadSubtitle(catalog, selectedThread(catalog, e.params.id))
@@ -410,97 +345,89 @@ component T3Code
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     button press=inspect("files") aria-label="Open files" testId="thread-files"
                       image "symbol:sf/folder"
-                  if wide
-                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
-                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
-                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    for thread in selectedThread(catalog, e.params.id) key=thread.id
-                      if openError != ""
-                        text openError color="-exact-system-red" padding=16
-                      column flex=1 min-height=0 height="100%" position="relative"
-                        column position="absolute" inset=0 z-index=0
-                          list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 max-height="100%" padding=(wide ? "12px 20px 128px" : "12px 16px 112px")
-                            for message in thread.messages key=message.id
-                              column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                                if message.role == "user"
-                                  text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                                  row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                                    text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                                    button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                                      image "symbol:sf/document.on.document" width=13 height=13
-                                else
-                                  column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                                    for block in message.blocks key=block.id
-                                      row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                        if block.depth > 0
-                                          if block.marker == "•"
-                                            column width=14 height=23 justify-content="center"
-                                              view width=6 height=6 border-radius=3 background-color="foreground"
-                                          else
-                                            text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                        if block.kind == "thematic-break"
-                                          view height=1 flex=1 margin="8px 0" background-color="edge"
-                                        else if block.kind == "code"
-                                          text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
+                  for thread in selectedThread(catalog, e.params.id) key=thread.id
+                    if openError != ""
+                      text openError color="-exact-system-red" padding=16
+                    column flex=1 min-height=0 height="100%" position="relative"
+                      column position="absolute" inset=0 z-index=0
+                        list id="thread" appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 max-height="100%" padding="12px 16px 112px"
+                          for message in thread.messages key=message.id
+                            column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+                              if message.role == "user"
+                                text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
+                                row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+                                  text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+                                  button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+                                    image "symbol:sf/document.on.document" width=13 height=13
+                              else
+                                column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
+                                  for block in message.blocks key=block.id
+                                    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
+                                      if block.depth > 0
+                                        if block.marker == "•"
+                                          column width=14 height=23 justify-content="center"
+                                            view width=6 height=6 border-radius=3 background-color="foreground"
                                         else
-                                          text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
-                          if thread.lastError != ""
-                            row align-items="flex-start" gap=8 position="absolute" left=20 right=16 bottom=64 z-index=1
-                              image "symbol:alert-fill" width=16 height=16 color="-exact-system-red"
-                              column gap=2 flex=1 min-width=0
-                                row align-items="center" gap=8
-                                  text "Provider error" flex=1 color="-exact-system-red" font-size=14 line-height="19px"
-                                  text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
-                                text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
-                      row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
-                        row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
-                          workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
-                          button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
-                            image "symbol:sf/plus" width=20 height=20
-                          textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
-                            ::placeholder
-                              color="muted"
-                          button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
-                            row align-items="center" gap=7
-                              image "assets/openai.svg" width=16 height=16
-                              image "symbol:sf/chevron.down" font-size=10
-                          button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label="Send" testId="send" width=44 height=44
-                            row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
-                              image "symbol:sf/arrow.up" font-size=16 font-weight=600
+                                          text block.marker width=14 font-size=16 line-height="23px" color="foreground"
+                                      if block.kind == "thematic-break"
+                                        view height=1 flex=1 margin="8px 0" background-color="edge"
+                                      else if block.kind == "code"
+                                        text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
+                                      else
+                                        text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                        if thread.lastError != ""
+                          row align-items="flex-start" gap=8 position="absolute" left=20 right=16 bottom=64 z-index=1
+                            image "symbol:alert-fill" width=16 height=16 color="-exact-system-red"
+                            column gap=2 flex=1 min-width=0
+                              row align-items="center" gap=8
+                                text "Provider error" flex=1 color="-exact-system-red" font-size=14 line-height="19px"
+                                text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
+                              text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
+                    row align-items="flex-end" gap=8 padding="6px 12px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=0 z-index=2 flex-wrap="wrap" width="100%" min-width=0 box-sizing="border-box"
+                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
+                        workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
+                        button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
+                          image "symbol:sf/plus" width=20 height=20
+                        textarea id="composer" value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
+                          ::placeholder
+                            color="muted"
+                        button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
+                          row align-items="center" gap=7
+                            image "assets/openai.svg" width=16 height=16
+                            image "symbol:sf/chevron.down" font-size=10
+                        button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label="Send" testId="send" width=44 height=44
+                          row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
+                            image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "inspector"
-                column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
-                  if wide
-                    column width=(duo ? 200 : 320) min-width=(duo ? 200 : 320) flex-shrink=0 position="relative" background-color="drawer"
-                      ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProjectLabel=selectedProjectLabel, showSettled=showSettled, currentThreadId=currentThreadId, query=query, showSearch=false, search=search, filterEnvironment=filterEnvironment, filterProject=filterProject, toggleSettled=toggleSettled, openThread=openThread)
-                  column flex=1 min-width=0 position="relative" display="flex" flex-direction="column"
-                    header
-                      text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
-                    scroll id="inspector" flex=1 min-height=0 padding=16
-                      if pending(inspected)
-                        text "Loading…" color="muted"
-                      else
-                        match inspected
-                          case some(result)
-                            if result.error != ""
-                              text result.error color="-exact-system-red"
-                            else
-                              column gap=10
-                                text result.title font-size=21 font-weight=700
-                                text result.body user-select="text" white-space="pre-wrap" font-size=14 line-height="21px" color="muted"
-                                for item in result.items key=item.id
-                                  button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left"
-                                    row align-items="center" gap=10
-                                      image (item.kind == "directory" ? "symbol:sf/folder" : "symbol:sf/document") width=20 height=20
-                                      column flex=1 min-width=0 gap=3
-                                        text item.label font-size=16
-                                        if item.detail != ""
-                                          text item.detail font-size=13 color="muted"
-                          case none
-                            view
+                column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
+                  scroll id="inspector" flex=1 min-height=0 padding=16
+                    if pending(inspected)
+                      text "Loading…" color="muted"
+                    else
+                      match inspected
+                        case some(result)
+                          if result.error != ""
+                            text result.error color="-exact-system-red"
+                          else
+                            column gap=10
+                              text result.title font-size=21 font-weight=700
+                              text result.body user-select="text" white-space="pre-wrap" font-size=14 line-height="21px" color="muted"
+                              for item in result.items key=item.id
+                                button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left"
+                                  row align-items="center" gap=10
+                                    image (item.kind == "directory" ? "symbol:sf/folder" : "symbol:sf/document") width=20 height=20
+                                    column flex=1 min-width=0 gap=3
+                                      text item.label font-size=16
+                                      if item.detail != ""
+                                        text item.detail font-size=13 color="muted"
+                        case none
+                          view
               if e.name == "pullRequests"
-                column navigationKey=`${e.id}` navigationScroll="pulls" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header padding="8px 16px"
-                    text "Pull Requests" role="heading" aria-level=1
+                column navigationKey=`${e.id}` navigationScroll="pulls" data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
+                  header
+                    text "Pull Requests" role="heading" aria-level=2
                   list id="pulls" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                     section
                       row
@@ -509,8 +436,8 @@ component T3Code
                         text "Pull requests linked to your threads will appear here." font="-exact-footnote" color="-exact-secondary-label"
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header padding="8px 16px"
-                    text "Usage" role="heading" aria-level=1
+                  header
+                    text "Usage" role="heading" aria-level=2
                   list id="usage" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                     section
                       row
@@ -519,16 +446,16 @@ component T3Code
                           text "0 agent minutes" font="-exact-footnote" color="-exact-secondary-label"
               if e.name == "settings"
                 column navigationKey=`${e.id}` navigationScroll="settings" position="absolute" inset=0 display="flex" flex-direction="column"
-                  header padding="8px 16px"
-                    text "Settings" role="heading" aria-level=1
+                  header
+                    text "Settings" role="heading" aria-level=2
                   list id="settings" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                     section
                       row
                         text "T3 Code" font="-exact-body"
                         text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
-                      row
-                        button press=openEnvironments testId="environments-button" aria-label="Environments"
-                          text "Environments"
+                      link href="/environments" testId="environments-button"
+                        text "Environments"
+                        image "symbol:forward-chevron"
       column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
         button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
           text "All environments"
@@ -548,8 +475,8 @@ component T3Code
         button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide"
           image "symbol:sf/text.bubble"
           text "Review changes"
-      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(wide or current.name == "thread" or current.name == "addEnvironment" or current.name == "environments" or current.name == "inspector" or current.name == "newThread" ? "none" : "flex")
-      row role="tablist" aria-label="Workspace" testId="tabs" display=(wide ? "flex" : "none")
+      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail ? "flex" : "none")
+      row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail ? "flex" : "none")
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
           image "symbol:sf/text.bubble"
           text "Chats"
@@ -563,7 +490,6 @@ component T3Code
           image "symbol:settings"
           text "Settings"
 
-
 component ThreadList
   props
     catalog: Catalog
@@ -571,73 +497,40 @@ component ThreadList
     selectedEnvironment: string
     selectedProjectLabel: string
     showSettled: bool
-    currentThreadId: string
-    query: string
-    showSearch: bool
-    search: action
-    filterEnvironment: action
-    filterProject: action
     toggleSettled: action
-    openThread: action
   view
-    column navigationScroll="home" data-workspace-header="true" data-search-placement="integrated" data-brand-stage="DEV" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
-      header display="flex" align-items="center" gap=8 padding="8px 16px"
-        row align-items="center" gap=5 role="heading" aria-level=2
-          image "assets/t3-wordmark.svg" width=25 height=15
-          text "Code" font-size=21 line-height="23px" color="muted"
-          text "DEV" font-size=12 line-height="16px" font-weight=700 color="muted" background-color="card" border-radius=999 padding="2px 6px"
-        view flex=1
-        if showSearch
-          input type="search" value=query input=search placeholder="Search threads" aria-label="Search threads" testId="search" position="sticky" top=0 width=150 min-width=0
-      list id="home" appearance="none" flex=1 min-height=0 background-color="drawer"
+    list id="home" appearance="none" flex=1 min-height=0 background-color="screen"
+      section
+        row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
+          button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
+            text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
+            image "symbol:sf/chevron.down" width=11 height=11
+          button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
+            text selectedProjectLabel
+            image "symbol:sf/chevron.down" width=11 height=11
+      section
+        for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
+          link href=path("thread", thread.id) testId=`thread-${thread.id}`
+            column flex=1 min-width=0 gap=3.5 padding="8.75px 17.5px"
+              row align-items="flex-start" gap=7
+                if thread.projectIcon != ""
+                  image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
+                else
+                  text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
+                text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
+                text thread.updatedAt font-size=13 line-height="18px" color="muted"
+              row align-items="center" gap=6 min-height=14
+                if catalog.environments.length > 1
+                  image "symbol:sf/laptopcomputer" font-size=12 color="muted"
+                  text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
+                else
+                  view flex=1
+                image "assets/openai.svg" width=14 height=14 opacity=0.6
+          view height=1 background-color="edge" margin-left=16
+      if visibleThreads.filter(thread => thread.settled).length > 0
         section
-          row gap=7 padding="2px 16px 10px 20px" flex-wrap="nowrap"
-            button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-environments"
-              text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment))
-              image "symbol:sf/chevron.down" width=11 height=11
-            button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color="muted" testId="all-projects"
-              text selectedProjectLabel
-              image "symbol:sf/chevron.down" width=11 height=11
-        section
-          for thread in visibleThreads.filter(thread => not thread.settled or showSettled) key=thread.id
-            link href=path("thread", thread.id) testId=`thread-${thread.id}` margin="0 8px" border-radius=12 background-color=(currentThreadId == thread.id ? "thread-selected" : "transparent")
-              column flex=1 min-width=0 gap=3.5 padding="10px 12px"
-                row align-items="flex-start" gap=7
-                  if thread.projectIcon != ""
-                    image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
-                  else
-                    text thread.projectInitials width=20 height=20 border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
-                  text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                  text thread.updatedAt font-size=13 line-height="18px" color=(currentThreadId == thread.id ? "foreground" : "muted")
-                row align-items="center" gap=6 min-height=14
-                  if catalog.environments.length > 1
-                    image "symbol:sf/laptopcomputer" font-size=12 color="muted"
-                    text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
-                  else
-                    view flex=1
-                  image "assets/openai.svg" width=14 height=14 opacity=0.6
-        if visibleThreads.filter(thread => thread.settled).length > 0
-          section
-            button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
-              row align-items="center" gap=10 width="100%"
-                text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
-                view flex=1 height=1 background-color="edge"
-                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
-
-component SettingsList
-  props
-    openEnvironments: action
-  view
-    column navigationScroll="settings" background-color="drawer" position="absolute" inset=0 display="flex" flex-direction="column"
-      header display="flex" align-items="center" padding="8px 16px"
-        text "T3 Code" role="heading" aria-level=2 flex=1
-        text "DEV" font-size=12 color="muted"
-      list id="settings" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-        section
-          row
-            text "T3 Code" font="-exact-body"
-            text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
-          row
-            button press=openEnvironments testId="environments-button" aria-label="Environments"
-              text "Environments"
-
+          button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
+            row align-items="center" gap=10 width="100%"
+              text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
+              view flex=1 height=1 background-color="edge"
+              image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"

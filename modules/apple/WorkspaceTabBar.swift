@@ -173,26 +173,49 @@ private final class T3SidebarTabBarView: UIView, UITabBarDelegate {
 }
 
 final class T3NativeModule: ExactModule {
-  override func tabContainer(_ contents: ExactTabContents) -> UIViewController? {
-    MainActor.assumeIsolated { WorkspaceContainer.make(contents) }
+  private var probe: DeviceProbe?
+  private var device = DeviceTraits(kind: "phone", rail: false)
+
+  override func call(_ request: [String: Any]) throws -> [String: Any] {
+    guard request["op"] as? String == "device" else { throw ExactNativeRefusal("t3 answers device") }
+    return ["kind": device.kind, "rail": device.rail]
+  }
+
+  override func window(_ window: ExactWindow) {
+    MainActor.assumeIsolated {
+      guard let host = context.sessionView as? UIView else { return }
+      if probe?.superview !== host {
+        probe?.removeFromSuperview()
+        let probe = DeviceProbe { [weak self] traits in
+          guard let self, self.device != traits else { return }
+          self.device = traits
+          self.context.changed("device")
+        }
+        host.addSubview(probe)
+        self.probe = probe
+        window.owns(view: probe, "device probe: hinge and vertical bar edge")
+      }
+      probe?.publish()
+    }
+  }
+
+  override func windowEnded(_ window: ExactWindow) {
+    MainActor.assumeIsolated {
+      probe?.removeFromSuperview()
+      probe = nil
+    }
   }
 
   override func route(_ route: ExactRoute) {
     MainActor.assumeIsolated {
-      configureWorkspaceBack(route)
-      configureWorkspaceCompose(route)
-      if route.isNew {
-        route.controller.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak route] (_: UIViewController, _: UITraitCollection) in
-          if let route { configureWorkspaceBack(route) }
-        }
-      }
       let item = route.controller.navigationItem
-      guard route.data[.workspaceHeader] == "true" else {
-        configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
-        return
-      }
+      configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
+      item.backButtonDisplayMode = .minimal
+      let style = route.data[.workspaceHeader]
+      guard style == "brand" || style == "editor" else { return }
       item.style = .editor
       if #available(iOS 27.2, *) { item.titleAlignment = .leading }
+      guard style == "brand" else { return }
       let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
       let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
       let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
@@ -219,6 +242,9 @@ final class T3NativeModule: ExactModule {
             navigation.setToolbarHidden(toolbar.isEmpty, animated: false)
           }
         }
+      } else if #available(iOS 26.0, *), route.controller.toolbarItems != nil {
+        route.controller.toolbarItems = nil
+        route.navigation?.controller.setToolbarHidden(true, animated: false)
       }
     }
   }
@@ -268,5 +294,56 @@ private final class WorkspaceTabBarInstance: ExactNativeInstance {
         ? UIColor(red: 52 / 255, green: 107 / 255, blue: 241 / 255, alpha: 1)
         : UIColor(red: 27 / 255, green: 78 / 255, blue: 216 / 255, alpha: 1) }
     }
+  }
+}
+
+struct DeviceTraits: Equatable {
+  var kind: String
+  var rail: Bool
+}
+
+// Mirrors the Expo app's layout metrics: a hinge marks a Duo, its width class the pose.
+private final class DeviceProbe: UIView {
+  private let onChange: (DeviceTraits) -> Void
+  private var hasHinge = false
+
+  init(onChange: @escaping (DeviceTraits) -> Void) {
+    self.onChange = onChange
+    super.init(frame: .zero)
+    isUserInteractionEnabled = false
+    isHidden = true
+    isAccessibilityElement = false
+    registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (view: DeviceProbe, _: UITraitCollection) in
+      view.publish()
+    }
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) {
+      addInteraction(UIHingeInteraction { [weak self] _, update in
+        guard let self, update.hinge != nil, !self.hasHinge else { return }
+        self.hasHinge = true
+        self.publish()
+      })
+      registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (view: DeviceProbe, _: UITraitCollection) in
+        view.publish()
+      }
+    }
+    #endif
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    publish()
+  }
+
+  func publish() {
+    guard window != nil else { return }
+    var rail = false
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) { rail = traitCollection.verticalBarEdge != .unspecified }
+    #endif
+    let unfolded = traitCollection.horizontalSizeClass == .regular
+    onChange(DeviceTraits(kind: hasHinge ? (unfolded ? "duo-unfolded" : "duo-folded") : "phone", rail: rail))
   }
 }
