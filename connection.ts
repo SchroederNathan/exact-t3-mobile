@@ -203,20 +203,25 @@ function errorDetails(thread: ObjectValue): { message: string; time: string } {
 }
 
 function status(thread: ObjectValue): string {
-  if (thread.pendingRuntimeRequest) return "Waiting";
-  switch (thread.status) {
-    case "preparing":
-    case "starting":
-    case "running":
-      return "Working";
-    case "waiting":
-    case "queued":
-      return "Waiting";
-    case "failed":
-      return "Error";
-    default:
-      return "Done";
-  }
+  const request = string(object(thread.pendingRuntimeRequest).kind);
+  if (request === "user_input") return "Input";
+  if (request && request !== "auth_refresh") return "Approval";
+  if (Number(thread.pendingGuestMessageCount) > 0) return "Request";
+  const waiting = records(thread.pendingBackgroundTasks).some((task) =>
+    task.awaited === true || task.kind === "subagent" || task.kind === "background_task");
+  if (thread.status !== "failed" && waiting) return "Waiting";
+  const state = string(thread.activityRunStatus) || string(thread.status);
+  if (state === "running" && thread.blockedOnThreadWait === true) return "Waiting";
+  if (["preparing", "starting", "running", "waiting", "queued"].includes(state))
+    return object(thread.goal).status === "active" ? "Goal" : "Working";
+  if (state === "failed") return thread.lastErrorClass === "usage_limit" ? "Limited" : "Failed";
+  if (state === "idle" && (thread.latestRunId || thread.activeProviderThreadId)) return "Waiting";
+  const completed = thread.latestRunId
+    ? timestamp(thread.latestRunCompletedAt === undefined ? thread.updatedAt : thread.latestRunCompletedAt)
+    : 0;
+  return completed > 0 && Boolean(thread.lastVisitedAt) &&
+    (Number.isNaN(Date.parse(string(thread.lastVisitedAt))) || completed > timestamp(thread.lastVisitedAt))
+    ? "Done" : "";
 }
 
 function failure(exit: ObjectValue): string {

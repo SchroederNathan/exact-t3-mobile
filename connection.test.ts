@@ -214,7 +214,7 @@ describe("direct T3 connection", () => {
         model: "GPT Test",
         activityAt: Date.parse("2026-11-08T11:59:00Z"),
         settled: true,
-        status: "Done",
+        status: "",
         updatedAt: "1m",
         lastError: "",
         lastErrorTime: expect.any(String),
@@ -329,6 +329,29 @@ describe("direct T3 connection", () => {
       "Fixed startup",
       "Older activity",
     ]);
+    for (const [fields, expected] of [
+      [{ status: "completed", latestRunId: "run", latestRunCompletedAt: "2026-11-08T13:00:00Z", lastVisitedAt: "2026-11-08T12:00:00Z" }, "Done"],
+      [{ status: "completed", latestRunId: "run", latestRunCompletedAt: "2026-11-08T13:00:00Z", lastVisitedAt: "2026-11-08T14:00:00Z" }, ""],
+      [{ status: "completed", latestRunId: "run", latestRunCompletedAt: "2026-11-08T13:00:00Z", lastVisitedAt: null }, ""],
+      [{ status: "running", pendingRuntimeRequest: { kind: "command_execution" } }, "Approval"],
+      [{ status: "running", pendingRuntimeRequest: { kind: "user_input", blocking: false } }, "Input"],
+      [{ status: "running", pendingRuntimeRequest: { kind: "auth_refresh" } }, "Working"],
+      [{ status: "running", pendingGuestMessageCount: 1 }, "Request"],
+      [{ status: "running", blockedOnThreadWait: true }, "Waiting"],
+      [{ status: "queued" }, "Working"],
+      [{ status: "running", goal: { status: "active" } }, "Goal"],
+      [{ status: "failed", lastErrorClass: "usage_limit" }, "Limited"],
+      [{ status: "failed", lastError: "Provider failed" }, "Failed"],
+      [{ status: "completed", pendingBackgroundTasks: [{ kind: "subagent" }] }, "Waiting"],
+      [{ status: "completed", pendingBackgroundTasks: [{ kind: "command", awaited: false }] }, ""],
+    ] as const) {
+      session.receive(JSON.stringify({ _tag: "Chunk", requestId: "1", values: [{
+        kind: "thread.updated", location: "active", thread: {
+          id: "t", projectId: "p", title: "Fixed startup", latestUserMessageAt: "2026-11-08T12:00:00Z", ...fields,
+        },
+      }] }));
+      expect(session.threads().find((thread) => thread.id === "env:t")?.status).toBe(expected);
+    }
     session.receive(
       JSON.stringify({
         _tag: "Chunk",

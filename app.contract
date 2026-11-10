@@ -116,6 +116,8 @@ fn threadMessages(threads: Thread[]): Message[] = match first(threads) { case so
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
+fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn threadDraft(drafts: ThreadDraft[], id: string): ThreadDraft = match first(drafts.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0) }
 
 component T3Code
@@ -514,10 +516,10 @@ component T3Code
                           color="muted"
                       button appearance="none" aria-label="Model and reasoning settings" height=44 padding="0 7px"
                         row align-items="center" gap=7
-                          image "assets/openai.svg" width=16 height=16
+                          ProviderIcon(provider=(match first(selectedThread(catalog, e.params.id)) { case some(thread) => thread.provider, case none => "" }), size=16)
                           image "symbol:sf/chevron.down" font-size=10
                       button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label="Send" testId="send" width=44 height=44
-                        row width=30 height=30 border-radius=15 background-color=(canSend ? "foreground" : "#dedede") color=(canSend ? "screen" : "#9d9d9d") align-items="center" justify-content="center"
+                        row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
                           image "symbol:sf/arrow.up" font-size=16 font-weight=600
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
@@ -674,10 +676,10 @@ component ThreadList
                 else
                   text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
                 text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                if thread.lastError != ""
-                  row align-items="center" gap=3.5 min-height=23
-                    image "symbol:sf/exclamationmark.circle" width=13 height=13 font-weight=600 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
-                    text "Failed" font-size=13 line-height="17px" font-weight=700 color=(sidebar and selectedId == thread.id ? "foreground" : "danger")
+                if thread.status != ""
+                  row align-items="center" gap=3.5 min-height=23 color=(sidebar and selectedId == thread.id ? "foreground" : threadStatusColor(thread.status))
+                    image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600
+                    text thread.status font-size=13 line-height="17px" font-weight=700
                 else
                   text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
               row align-items="center" gap=7 min-height=14 padding-left=27
@@ -688,7 +690,8 @@ component ThreadList
                   text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
                 else
                   view flex=1
-                image "assets/openai.svg" width=14 height=14 opacity=0.6
+                row opacity=0.6
+                  ProviderIcon(provider=thread.provider, size=14)
           if index < displayedThreads.length - 1
             view height=1 background-color="edge" opacity=0.7 margin-left=16 display=(sidebar ? "none" : "flex")
       if visibleThreads.filter(thread => thread.settled).length > 0
@@ -726,7 +729,7 @@ component EnvironmentRow
   derive label = detail ? `${expanded ? "Collapse" : "Expand"} details for ${environment.label}` : `Manage ${environment.label}`
   view
     row gap=10.5 padding="12.25px 14px" align-items="center"
-      button press=manageEnvironment(environment.id) appearance="none" aria-label=label testId=`manage-${environment.id}` flex=1 min-width=0 display="flex" flex-direction="column" align-items="stretch" gap=1.75 color="foreground"
+      button press=manageEnvironment(environment.id) appearance="none" aria-label=label testId=`manage-${environment.id}` text-align="left" flex=1 min-width=0 display="flex" flex-direction="column" align-items="stretch" gap=1.75 color="foreground"
         row align-items="center" gap=5.25
           row width=16 height=16 align-items="center" justify-content="center"
             view width=8 height=8 border-radius=4 background-color=(environment.status == "Connected" ? "online" : "muted")
@@ -737,3 +740,20 @@ component EnvironmentRow
       input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
       button press=manageEnvironment(environment.id) aria-label=label appearance="none" width=44 height=44 color="muted"
         image (detail ? (expanded ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") : "symbol:forward-chevron") width=12 height=12
+
+component ProviderIcon
+  props
+    provider: string
+    size: number
+  derive monochrome = provider == "codex" or provider == "cursor" or provider == "grok" or provider == "fx" or provider == "pi" or provider == "openrouter" or provider == "acpRegistry" or provider == ""
+  derive source = provider == "claudeAgent" ? "assets/provider-claude.svg" : provider == "antigravity" ? "assets/provider-antigravity.png" : provider == "acpRegistry" ? "assets/provider-acp-registry.svg" : ["codex", "cursor", "grok", "fx", "kiro", "muse", "pi", "openrouter"].includes(provider) ? `assets/provider-${provider}.svg` : "assets/provider-codex.svg"
+  derive ink = provider == "cursor" ? "provider-cursor-ink" : provider == "grok" or provider == "fx" or provider == "pi" ? "provider-neutral-ink" : provider == "openrouter" ? "provider-openrouter-ink" : "provider-ink"
+  view
+    if provider == "opencode"
+      svg width=size height=size viewBox="0 0 32 40" fill="none"
+        path d="M24 32H8V16H24V32Z" fill="provider-opencode-inner"
+        path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="provider-opencode-outer"
+    else if monochrome or source == "assets/provider-codex.svg"
+      image source width=size height=size -exact-tint-color=ink
+    else
+      image source width=size height=size
