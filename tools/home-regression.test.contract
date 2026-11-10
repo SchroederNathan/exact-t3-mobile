@@ -214,3 +214,60 @@ test "two environments stay independent through filtering and connection managem
   clock data
   expect text "composer" == ""
   request POST "http://127.0.0.1:0/assert/sent-secondary"
+
+test "a native relaunch keeps environments and delivered links restore their parent chain" on ios
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/threads/fixture%3Aalpha"
+  clock data
+  clock settle
+  expect state current.name == "thread"
+  expect state activeThreadId == "fixture:alpha"
+  expect text "message-alpha-message" == "This is a deterministic test conversation."
+  reload
+  clock data
+  clock settle
+  expect state current.name == "threads"
+  expect tree has "thread-fixture:alpha"
+  type "root" "/threads/fixture%3Aalpha"
+  clock data
+  clock settle
+  expect state current.name == "thread"
+  expect state activeThreadId == "fixture:alpha"
+  expect text "message-alpha-message" == "This is a deterministic test conversation."
+  back
+  clock settle
+  expect state current.name == "threads"
+  type "root" "/threads/fixture%3Aalpha/inspect/files"
+  clock settle
+  clock data
+  expect state current.name == "inspector"
+  expect state current.params.id == "fixture:alpha"
+  expect state current.params.kind == "files"
+  back
+  clock settle
+  expect state current.name == "thread"
+  expect text "message-alpha-message" == "This is a deterministic test conversation."
+  back
+  clock settle
+  expect state current.name == "threads"
+  expect tree has "thread-fixture:alpha"
+  type "root" "/environments/fixture"
+  clock settle
+  expect state current.name == "environmentDetail"
+  expect state current.params.id == "fixture"
+  expect state activeThreadId == ""
+  expect tree has "manage-fixture"
+  back
+  clock settle
+  expect state current.name == "environments"
+  expect tree has "manage-fixture"
+  back
+  clock settle
+  expect state current.name == "settings"

@@ -10,14 +10,19 @@ routes nav
   tab threadDetail "/detail"
     newThread "/threads/new"
     thread "/threads/:id"
-    inspector "/threads/:id/inspect/:kind"
+      inspector "/threads/:id/inspect/:kind"
   tab pullRequests "/pulls"
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
     environments "/environments"
-    addEnvironment "/environments/new"
-    environmentDetail "/environments/:id"
+      addEnvironment "/environments/new"
+      environmentDetail "/environments/:id"
+
+shape NavigationChange
+  before: Router
+  after: Router
+  split: bool
 
 shape Time
   epochAtZero: number
@@ -138,10 +143,10 @@ component T3Code
   state composerBottomAdjustment = 0
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
-  resource catalog = loadCatalog(selectedEnvironment) with time.epochAtZero as shape Catalog else empty()
+  resource catalog = loadCatalog(selectedEnvironment, activeThreadId) with time.epochAtZero as shape Catalog else empty()
+  mutation regrouped as shape NavigationChange then afterRegroup
   mutation changed as shape Reply refreshes catalog
   mutation sent as shape Reply then afterSend
-  mutation opened as shape Reply
   mutation created as shape CreatedThread then afterCreate
   mutation paired as shape Reply refreshes catalog then afterPair
   mutation savedEnvironment as shape Reply refreshes catalog then afterEnvironmentSave
@@ -151,7 +156,6 @@ component T3Code
   derive changeError = failed(changed) ? "The connection could not be changed." : match changed { case some(reply) => reply.error, case none => "" }
   derive removeError = failed(removed) ? "The environment could not be removed." : match removed { case some(reply) => reply.error, case none => "" }
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
-  derive openError = match opened { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
   derive duoFolded = device.kind == "duo-folded"
@@ -160,35 +164,42 @@ component T3Code
   derive threadNav = nav.tab == "threadDetail" ? nav : select(nav, "threadDetail")
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
-  derive activeThreadId = split ? top(threadNav).params.id : current.params.id
+  derive threadRoute = split ? top(threadNav) : current
+  derive activeThreadId = threadRoute.name == "thread" or threadRoute.name == "inspector" ? threadRoute.params.id : ""
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
-  derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" : nav.tab == "threadDetail" or nav.tab == "settingsDetail"
+  derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(drafts, activeThreadId).text
   derive composerError = submission.id == activeThreadId and submission.revision == threadDraft(drafts, activeThreadId).revision and not pending(sent) ? sendError : ""
   derive canSend = composer.trim() != "" and not pending(sent)
 
-  task regroup when needsRegroup key=`${split}:${nav.tab}:${current.id}`
+  task defaultSettings when split and current.name == "settingsDetail" key=current.id
+    after(1, openEnvironments)
+
+  task inspector when current.name == "inspector" and selectedThread(catalog, current.params.id).length > 0 key=`${current.id}:${current.params.kind}`
+    after(1, loadInspector)
+
+  action loadInspector
+    send inspected = inspectThread(current.params.id, current.params.kind, "")
+
+  task regroup when needsRegroup key=`${split}:${nav.tab}:${nav.next}:${current.id}`
     after(1, regroupNow)
 
   action regroupNow
-    let url = current.url
-    if not needsRegroup
-      nav = nav
-    else if split
-      nav = current.name == "thread" ? push(select(select(back(nav), "threadDetail"), "threadDetail"), url) : current.name == "threads" ? select(nav, "threadDetail") : current.name == "settings" ? select(nav, "settingsDetail") : back(nav)
-    else if current.name == "thread"
-      nav = push(select(back(nav), "threads"), url)
-    else if current.name == "threadDetail"
-      nav = select(nav, "threads")
-    else if current.name == "settingsDetail"
-      nav = select(nav, "settings")
-    else
-      nav = back(nav)
+    if needsRegroup
+      send regrouped = regroupNavigation(nav, split)
+
+  action afterRegroup
+    match regrouped
+      case some(change)
+        if change.before == nav and change.split == split
+          nav = change.after
+      case none
+        nav = nav
 
   action selectTab(name: string)
-    nav = select(nav, name)
+    nav = select(nav, split and name == "threads" ? "threadDetail" : split and name == "settings" ? "settingsDetail" : name)
 
   action search(value: string)
     query = value
@@ -208,7 +219,7 @@ component T3Code
     selectedProject = ""
 
   action openEnvironments
-    nav = split ? select(settingsNav, "settingsDetail") : push(nav, "/environments")
+    nav = go(split ? select(settingsNav, "settingsDetail") : nav, "/environments")
 
   action manageEnvironment(id: string)
     expandedEnvironment = ""
@@ -269,11 +280,12 @@ component T3Code
       code = ""
 
   action follow(url: string)
-    nav = go(split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav, url)
+    let base = split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav
+    let followed = go(base, url)
+    nav = followed.next == base.next ? followed : open(base, url)
 
   action openThread(url: string)
-    nav = split ? push(select(threadNav, "threadDetail"), url) : push(nav, url)
-    send opened = command("open-url", url, "")
+    nav = split ? push(go(select(threadNav, "threadDetail"), "/detail"), url) : push(nav, url)
 
   action compose
     nav = split ? push(select(threadNav, "threadDetail"), "/threads/new") : push(nav, "/threads/new")
@@ -292,7 +304,6 @@ component T3Code
       case some(reply)
         if reply.ok
           nav = replace(split ? threadNav : nav, path("thread", reply.threadId))
-          send opened = command("open", reply.threadId, "")
       case none
         nav = nav
 
@@ -314,7 +325,6 @@ component T3Code
 
   action inspect(kind: string)
     inspectorPath = ""
-    send inspected = inspectThread(activeThreadId, kind, "")
     nav = push(split ? threadNav : nav, path("inspector", activeThreadId, kind))
 
   action inspectEntry(id: string, kind: string)
@@ -368,7 +378,13 @@ component T3Code
                       image "symbol:sf/sidebar.left" width=34 height=34 color="muted"
                       text "Select a thread" font-size=21 line-height="28px" font-weight=700 text-align="center"
                       text "Choose a thread from the sidebar or start a new task." font-size=16 line-height="24px" color="muted" max-width=360 text-align="center"
-              if e.name == "environments" or e.name == "settingsDetail"
+              if e.name == "settingsDetail"
+                column navigationKey=`${e.id}` data-workspace-header="editor" position="absolute" inset=0 background-color="screen"
+                  header
+                    text "Settings" role="heading" aria-level=2
+                  button press=openEnvironments testId="detail-environments" aria-label="Environments"
+                    text "Environments"
+              if e.name == "environments"
                 column navigationKey=`${e.id}` navigationScroll=`environments-${e.id}` data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     text "Environments" role="heading" aria-level=2
@@ -502,8 +518,6 @@ component T3Code
                             text "Provider error" flex=1 color="rose" font-size=14 line-height="19px" font-weight=500
                             text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
                           text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
-                  if openError != ""
-                    text openError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(112 + composerBottomAdjustment) z-index=1
                   if composerError != ""
                     text composerError color="danger" font-size=14 line-height="19px" position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=2 testId="send-error"
                   row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment position="absolute" bottom=0 left=0 right=(split ? "env(safe-area-inset-right)" : 0) z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"

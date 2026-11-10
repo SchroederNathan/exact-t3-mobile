@@ -1,4 +1,5 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
+import { regroupNavigation } from "./navigation";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -19,7 +20,6 @@ export const grants =
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
 let current: DirectSession | undefined;
-let selectedThread = "";
 let savedEnvironments: Promise<Environment[]> | undefined;
 let nextGeneration = 0;
 const connections = new Map<string, {
@@ -104,6 +104,7 @@ function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Pro
 function nativeCatalog(
   environments: Environment[],
   tokens: Record<string, string>,
+  activeThread: ReturnType<typeof threadIdentity> | undefined,
   now: number,
   native: NativeModule,
 ): Catalog {
@@ -119,16 +120,14 @@ function nativeCatalog(
   for (const environment of enabled) {
     if (!connections.has(environment.id)) {
       const session = new DirectSession(environment);
-      if (selectedThread) {
-        const identity = threadIdentity(selectedThread);
-        if (identity.environmentId === environment.id) session.select(identity.threadId);
-      }
       connections.set(environment.id, {
         origin: environment.url, token: tokens[environment.id]!,
         generation: ++nextGeneration, session, open: false,
       });
     }
-    connections.get(environment.id)!.session.environment.label = environment.label;
+    const session = connections.get(environment.id)!.session;
+    session.environment.label = environment.label;
+    session.select(activeThread?.environmentId === environment.id ? activeThread.threadId : "");
   }
   const result = native.call({ op: "connections.sync", connections: [...connections].map(([id, connection]) => ({
     id, generation: connection.generation, origin: connection.origin, token: connection.token,
@@ -178,21 +177,24 @@ function nativeCatalog(
 
 async function loadCatalog(
   selected: string,
+  activeThreadId: string,
   now: number,
   store: Store,
   storage: Storage,
   native?: NativeModule | null,
 ): Promise<Catalog> {
   const tokens = credentials(store);
+  const activeThread = activeThreadId ? threadIdentity(activeThreadId) : undefined;
   if (native?.available) {
     native.watch("connections");
-    return nativeCatalog(await loadEnvironments(storage), tokens, now, native);
+    return nativeCatalog(await loadEnvironments(storage), tokens, activeThread, now, native);
   }
   current?.disconnected("Disconnected");
   current = undefined;
   const environments = await loadEnvironments(storage);
-  const environment = selected
-    ? environments.find((entry) => entry.id === selected && entry.enabled)
+  const environmentId = activeThread?.environmentId || selected;
+  const environment = environmentId
+    ? environments.find((entry) => entry.id === environmentId && entry.enabled)
     : environments.find((entry) => entry.enabled);
   if (!environment) return { environments, threads: [], projects: [] };
   const token = tokens[environment.id];
@@ -206,10 +208,7 @@ async function loadCatalog(
     };
   const session = new DirectSession(environment);
   current = session;
-  if (selectedThread) {
-    const identity = threadIdentity(selectedThread);
-    if (identity.environmentId === environment.id) session.select(identity.threadId);
-  }
+  if (activeThread?.environmentId === environment.id) session.select(activeThread.threadId);
   const snapshot = (): Catalog => ({
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,
@@ -247,6 +246,7 @@ async function loadCatalog(
 }
 
 const sources: Sources = {
+  regroupNavigation: ([nav, split]) => regroupNavigation(nav, split),
   deviceTraits: (_args, _store, _storage, native) => {
     if (!native?.available) return { kind: "web", rail: false, split: false };
     native.watch("device");
@@ -256,8 +256,8 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadCatalog: (args, store, storage, native) =>
-    loadCatalog(String(args[0] ?? ""), Number(args[1] ?? 0), store, storage, native),
+  loadCatalog: ([selected, activeThreadId, now], store, storage, native) =>
+    loadCatalog(selected, activeThreadId, now, store, storage, native),
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(["update-environment", id, JSON.stringify({ label, url })], store, storage, native),
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
@@ -296,7 +296,6 @@ const sources: Sources = {
       if (operation === "open" || operation === "open-url") {
         const threadId = operation === "open-url" ? threadIdFromUrl(id) : id;
         const identity = threadIdentity(threadId);
-        selectedThread = threadId;
         sessionFor(identity.environmentId).select(identity.threadId);
         return { ok: true, error: "" };
       }

@@ -35,7 +35,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const receipts = new Map<string, { finish?: () => void; finished: boolean }>();
   const delayedRegistrations: (() => void)[] = [];
   let delayRegistration = false;
-  const sent: { environmentId: string; generation: number; frame: { id: string; tag: string; payload: Record<string, unknown> } }[] = [];
+  const sent: { environmentId: string; generation: number; frame: { _tag: string; id: string; requestId?: string; tag: string; payload: Record<string, unknown> } }[] = [];
   const native: NativeModule = {
     available: true,
     watch() {},
@@ -83,7 +83,8 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     },
   };
   using _fetch = spyOn(globalThis, "fetch").mockRejectedValue(new Error("Use the native transport"));
-  const load = (selected = "") => answer("loadCatalog", [selected, 0], store, storage, native);
+  let activeThread = "b:t";
+  const load = (selected = "") => answer("loadCatalog", [selected, activeThread, 0], store, storage, native);
   const emit = (id: string, type: string, data = "", reason = "") => {
     events.push({ id, generation: connections.find((entry) => entry.id === id)?.generation ?? 1, type, data, reason });
   };
@@ -105,6 +106,15 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     }] } });
   }
   const catalog = await load();
+  const initialSubscriptions = sent.filter(({ frame }) => frame.tag === "orchestration.subscribeThread");
+  expect(initialSubscriptions.map(({ environmentId, frame }) => ({ environmentId, threadId: frame.payload.threadId }))).toEqual([
+    { environmentId: "b", threadId: "t" },
+  ]);
+  const bSubscription = initialSubscriptions[0]!.frame.id;
+  chunk("b", bSubscription, { kind: "snapshot", projection: {
+    messages: [{ id: "b-message", role: "user", text: "Opened by a cold link", createdAt: "2026-11-10T00:00:00Z" }],
+  } });
+  expect((await load()).threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["Opened by a cold link"]);
   expect(catalog.threads.map(({ id, title }) => ({ id, title }))).toEqual([
     { id: "a:t", title: "Thread a" }, { id: "b:t", title: "Thread b" },
   ]);
@@ -117,6 +127,39 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     expect((await load(selected)).threads.map(({ id }) => id)).toEqual(["a:t", "b:t"]);
     expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(initialGenerations);
   }
+  expect(sent.filter(({ frame }) => frame.tag === "orchestration.subscribeThread").length).toBe(1);
+
+  activeThread = "a:t";
+  const beforeSwitch = sent.length;
+  await load();
+  expect(sent.slice(beforeSwitch).map(({ environmentId, frame }) => ({
+    environmentId, type: frame._tag, threadId: frame.payload?.threadId, requestId: frame.requestId,
+  }))).toEqual([
+    { environmentId: "a", type: "Request", threadId: "t", requestId: undefined },
+    { environmentId: "b", type: "Interrupt", threadId: undefined, requestId: bSubscription },
+  ]);
+  const aSubscription = sent.slice(beforeSwitch).find(({ environmentId }) => environmentId === "a")!.frame.id;
+  chunk("b", bSubscription, { kind: "snapshot", projection: {
+    messages: [{ id: "stale", role: "user", text: "Stale unsubscribed transcript" }],
+  } });
+  chunk("a", aSubscription, { kind: "snapshot", projection: {
+    messages: [{ id: "a-message", role: "user", text: "Selected by the route", createdAt: "2026-11-10T00:00:00Z" }],
+  } });
+  const switched = await load();
+  expect(switched.threads.find(({ id }) => id === "a:t")?.messages.map(({ body }) => body)).toEqual(["Selected by the route"]);
+  expect(switched.threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["Opened by a cold link"]);
+  const afterSwitch = sent.length;
+  await load();
+  expect(sent.length).toBe(afterSwitch);
+
+  activeThread = "";
+  await load();
+  expect(sent.slice(afterSwitch).map(({ environmentId, frame }) => ({ environmentId, type: frame._tag, requestId: frame.requestId }))).toEqual([
+    { environmentId: "a", type: "Interrupt", requestId: aSubscription },
+  ]);
+  const afterLeaving = sent.length;
+  await load();
+  expect(sent.length).toBe(afterLeaving);
 
   expect(await answer("command", ["open", "b:t", ""], store, storage, native)).toEqual({ ok: true, error: "" });
   expect(sent.at(-1)).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.subscribeThread", payload: { threadId: "t" } } });
@@ -194,9 +237,16 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(disconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connection lost");
   const reconnecting = connections.find(({ id }) => id === "b")!.generation;
   await answer("command", ["reconnect", "b", ""], store, storage, native);
+  activeThread = "b:t";
   const reconnected = await load();
   expect(connections.find(({ id }) => id === "b")!.generation).not.toBe(reconnecting);
   expect(reconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connecting");
+  const beforeReopen = sent.length;
+  emit("b", "open");
+  await load();
+  expect(sent.slice(beforeReopen).filter(({ frame }) => frame.tag === "orchestration.subscribeThread").map(({ environmentId, frame }) => ({ environmentId, threadId: frame.payload.threadId }))).toEqual([
+    { environmentId: "b", threadId: "t" },
+  ]);
 
   const beforeEdit = connections.map(({ id, generation }) => ({ id, generation }));
   expect(await answer("updateEnvironment", ["a", " Renamed Mac ", "http://a.example/"], store, storage, native)).toEqual({ ok: true, error: "" });
@@ -221,6 +271,6 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(JSON.parse(secrets.get("t3-environment-tokens")!)).toEqual({ b: "token-b" });
   expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(beforeEdit.filter(({ id }) => id === "b"));
 
-  const fallback = await answer("loadCatalog", ["b", 0], store, storage, null);
+  const fallback = await answer("loadCatalog", ["b", "b:t", 0], store, storage, null);
   expect(fallback.environments.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "b", status: "Use the native transport" }]);
 });

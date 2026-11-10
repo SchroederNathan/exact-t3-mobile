@@ -469,7 +469,7 @@ export class DirectSession {
     if (!this.socket || this.socket.readyState !== 1) return;
     if (this.threadRequest)
       this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: this.threadRequest }));
-    this.threadRequest = this.request("orchestration.subscribeThread", { threadId });
+    this.threadRequest = threadId ? this.request("orchestration.subscribeThread", { threadId }) : "";
   }
 
   send(threadId: string, text: string, commandId: string, messageId: string): Promise<Reply> {
