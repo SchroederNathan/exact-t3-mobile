@@ -25,7 +25,7 @@ def require(condition, message):
 
 
 def signing_certificate(app, prefix):
-    run("codesign", "-d", "--extract-certificates", str(prefix), str(app))
+    run("codesign", "-d", f"--extract-certificates={prefix}", str(app))
     certificate = Path(str(prefix) + "0").read_bytes()
     return hashlib.sha1(certificate).hexdigest().upper()
 
