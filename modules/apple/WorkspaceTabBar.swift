@@ -193,7 +193,7 @@ final class T3NativeModule: ExactModule {
   }
 
   override func later(_ request: [String: Any], reply: ExactReply) {
-    if request["op"] as? String == "markdown.highlight" {
+    if let op = request["op"] as? String, op == "markdown.highlight" || op == "markdown.measureTable" {
       MarkdownHighlight.later(request, reply: reply)
     } else {
       connections.later(request, reply: reply)
