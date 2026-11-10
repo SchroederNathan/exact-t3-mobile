@@ -483,6 +483,26 @@ export class DirectSession {
     return new Promise((resolve) => this.replies.set(id, resolve));
   }
 
+  threadCommand(
+    threadId: string,
+    operation: "delete" | "settle" | "unsettle",
+    commandId: string,
+  ): Promise<Reply> {
+    const type =
+      operation === "delete"
+        ? "thread.delete"
+        : operation === "settle"
+          ? "thread.settle"
+          : "thread.unsettle";
+    const id = this.request("orchestration.dispatchCommand", {
+      type,
+      commandId,
+      threadId,
+      ...(operation === "unsettle" ? { reason: "user" } : {}),
+    });
+    return new Promise((resolve) => this.replies.set(id, resolve));
+  }
+
   create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
     const project = this.projects.get(projectId);
     if (!project || project.archivedAt || project.deletedAt)

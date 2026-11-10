@@ -600,4 +600,44 @@ describe("direct T3 connection", () => {
     expect((await remainingQueries).every((result) => result.status === "rejected")).toBe(true);
     expect(session.threads()[0]?.messages).toEqual([]);
   });
+
+  test("thread swipe commands use the orchestration thread operations", async () => {
+    const sent: string[] = [];
+    const session = new DirectSession({
+      id: "env",
+      label: "Mac",
+      url: "http://localhost:13773",
+      enabled: true,
+      status: "Connecting",
+      machineSymbol: "server.rack",
+    });
+    session.open({
+      readyState: 1,
+      bufferedAmount: 0,
+      send: (frame) => sent.push(String(frame)),
+      close() {},
+    });
+    for (const [operation, type, extra] of [
+      ["settle", "thread.settle", {}],
+      ["unsettle", "thread.unsettle", { reason: "user" }],
+      ["delete", "thread.delete", {}],
+    ] as const) {
+      const reply = session.threadCommand("thread", operation, `${operation}-command`);
+      const request = JSON.parse(sent.at(-1)!);
+      expect(request.payload).toEqual({
+        type,
+        commandId: `${operation}-command`,
+        threadId: "thread",
+        ...extra,
+      });
+      session.receive(
+        JSON.stringify({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: { _tag: "Success", value: { sequence: 1 } },
+        }),
+      );
+      await expect(reply).resolves.toEqual({ ok: true, error: "" });
+    }
+  });
 });
