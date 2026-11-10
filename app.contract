@@ -246,7 +246,9 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="home" navigationBar=(wide ? "none" : "auto") navigationSplit=(duo ? "200" : "320") data-workspace-header="true" data-search-placement=(not wide ? "button" : "integrated") data-brand-stage="DEV" background-color=(wide ? "drawer" : "screen") position="absolute" inset=0 display="flex" flex-direction=(wide ? "row" : "column")
                   column width=(wide ? (duo ? 200 : 320) : "auto") min-width=(wide ? (duo ? 200 : 320) : 0) flex=(wide ? 0 : 1) flex-shrink=0 display="flex" flex-direction="column" background-color=(wide ? "drawer" : "screen")
                     header display=(wide ? "none" : "flex")
-                      text "T3 Code Exact iOS" role="heading" aria-level=2 display="none"
+                      button press=back aria-label="Back" display=(wide ? "none" : "flex")
+                        image "symbol:sf/chevron.left"
+                      text "T3 Code Exact iOS" role="heading" aria-level=2
                     header display="flex" align-items="center" gap=5 padding=(wide ? "24px 20px 12px" : "8px 16px")
                           image "assets/t3-wordmark.svg" width=25 height=15
                           text "Code" font-size=21 line-height="23px" color="muted"
