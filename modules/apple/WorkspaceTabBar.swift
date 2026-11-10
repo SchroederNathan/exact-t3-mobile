@@ -193,7 +193,11 @@ final class T3NativeModule: ExactModule {
   }
 
   override func later(_ request: [String: Any], reply: ExactReply) {
-    connections.later(request, reply: reply)
+    if request["op"] as? String == "markdown.highlight" {
+      MarkdownHighlight.later(request, reply: reply)
+    } else {
+      connections.later(request, reply: reply)
+    }
   }
 
   private let toolbarFollower = ToolbarFollower()
