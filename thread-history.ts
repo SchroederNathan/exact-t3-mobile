@@ -1,4 +1,5 @@
 import { markdownBlocks } from "./markdown";
+import { toolSummary, type ToolSummary } from "./tool-activity";
 
 export type HistoryRecord = Record<string, unknown>;
 export interface TimelineRow {
@@ -50,6 +51,9 @@ function displayMessage(id: string, role: string, body: string, createdAt: strin
 }
 
 type DisplayMessage = ReturnType<typeof displayMessage>;
+export type FeedRow =
+  | { id: string; message: DisplayMessage; activity: null }
+  | { id: string; message: null; activity: ToolSummary };
 
 export class ThreadHistory {
   sequence: number | null = null;
@@ -69,8 +73,10 @@ export class ThreadHistory {
   private runs = new Map<string, HistoryRecord>();
   private attempts = new Map<string, HistoryRecord>();
   private latestLocalOrdinal: number | null = null;
-  private rendered: DisplayMessage[] | undefined;
+  private rendered: FeedRow[] | undefined;
   private messageCache = new Map<string, DisplayMessage>();
+  private activityCache = new WeakMap<HistoryRecord, ToolSummary | null>();
+  private rowIndex: Map<string, TimelineRow> | undefined;
 
   constructor(readonly threadId: string) {}
 
@@ -80,6 +86,16 @@ export class ThreadHistory {
   }
 
   visibleRows(): readonly TimelineRow[] { return this.rows; }
+
+  row(id: string): TimelineRow | undefined {
+    this.rowIndex ??= new Map(this.rows.map((row) => [key(row), row]));
+    return this.rowIndex.get(id);
+  }
+
+  private invalidate() {
+    this.rendered = undefined;
+    this.rowIndex = undefined;
+  }
 
   subscribing(waitForCompletion: boolean) {
     this.waitForCompletion = waitForCompletion;
@@ -106,6 +122,7 @@ export class ThreadHistory {
     this.runs.clear();
     this.attempts.clear();
     this.messageCache.clear();
+    this.rowIndex = undefined;
     this.rendered = [];
   }
 
@@ -130,7 +147,7 @@ export class ThreadHistory {
     this.latestLocalOrdinal = sequence(snapshot.latestLocalTurnOrdinal);
     this.loading = false;
     this.error = "";
-    this.rendered = undefined;
+    this.invalidate();
   }
 
   apply(item: HistoryRecord): boolean {
@@ -152,7 +169,7 @@ export class ThreadHistory {
         break;
       case "message.updated":
         if (id) this.rawMessages.set(id, payload);
-        if (!this.timeline) this.rendered = undefined;
+        if (!this.timeline) this.invalidate();
         break;
       case "turn-item.updated":
         if (id && this.timeline) this.updateItem(payload);
@@ -193,7 +210,7 @@ export class ThreadHistory {
     const filtered = this.rows.filter((row) => !this.local(row) || this.visible(row.item));
     if (filtered.length !== this.rows.length) {
       this.rows = filtered.map((row, position) => row.position === position ? row : { ...row, position });
-      this.rendered = undefined;
+      this.invalidate();
     }
   }
 
@@ -233,7 +250,7 @@ export class ThreadHistory {
     }
     this.latestLocalOrdinal = Math.max(this.latestLocalOrdinal ?? 0, ordinal(item));
     this.rows = this.rows.map((row, position) => row.position === position ? row : { ...row, position });
-    this.rendered = undefined;
+    this.invalidate();
   }
 
   mergePage(page: HistoryRecord) {
@@ -258,30 +275,40 @@ export class ThreadHistory {
     this.cursor = text(page.nextCursor) || null;
     this.hasMore = page.hasMoreHistory === true;
     this.error = "";
-    this.rendered = undefined;
+    this.invalidate();
   }
 
-  messages(): DisplayMessage[] {
+  feed(): FeedRow[] {
     if (this.rendered) return this.rendered;
-    const messages: DisplayMessage[] = [];
+    const rows: FeedRow[] = [];
+    const messages = new Map<string, DisplayMessage>();
     const append = (id: string, role: string, body: string, createdAt: string) => {
       if (!id || !["user", "assistant", "system"].includes(role)) return;
       const cached = this.messageCache.get(id);
       const message = cached?.body === body && cached.role === role && cached.createdAt === createdAt
         ? cached : displayMessage(id, role, body, createdAt);
-      messages.push(message);
+      messages.set(id, message);
+      rows.push({ id, message, activity: null });
     };
     if (this.timeline) {
       for (const row of this.rows) {
         const item = row.item;
-        if (item.type !== "user_message" && item.type !== "assistant_message") continue;
+        if (item.type !== "user_message" && item.type !== "assistant_message") {
+          let activity = this.activityCache.get(item);
+          if (activity === undefined) {
+            activity = toolSummary(item);
+            this.activityCache.set(item, activity);
+          }
+          if (activity) rows.push({ id: key(row), message: null, activity });
+          continue;
+        }
         if (item.type === "user_message" && item.inputIntent === "queued_turn" && item.status === "pending") continue;
         append(key(row), item.type === "user_message" ? "user" : "assistant", text(item.text), text(item.startedAt) || text(item.updatedAt));
       }
     } else {
       for (const item of this.rawMessages.values()) append(text(item.id), text(item.role), text(item.text), text(item.createdAt));
     }
-    this.messageCache = new Map(messages.map((message) => [message.id, message]));
-    return this.rendered = messages;
+    this.messageCache = messages;
+    return this.rendered = rows;
   }
 }

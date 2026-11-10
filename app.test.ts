@@ -114,7 +114,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   chunk("b", bSubscription, { kind: "snapshot", projection: {
     messages: [{ id: "b-message", role: "user", text: "Opened by a cold link", createdAt: "2026-11-10T00:00:00Z" }],
   } });
-  expect((await load()).threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["Opened by a cold link"]);
+  expect((await load()).threads.find(({ id }) => id === "b:t")?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["Opened by a cold link"]);
   expect(catalog.threads.map(({ id, title }) => ({ id, title }))).toEqual([
     { id: "a:t", title: "Thread a" }, { id: "b:t", title: "Thread b" },
   ]);
@@ -146,8 +146,8 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     messages: [{ id: "a-message", role: "user", text: "Selected by the route", createdAt: "2026-11-10T00:00:00Z" }],
   } });
   const switched = await load();
-  expect(switched.threads.find(({ id }) => id === "a:t")?.messages.map(({ body }) => body)).toEqual(["Selected by the route"]);
-  expect(switched.threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["Opened by a cold link"]);
+  expect(switched.threads.find(({ id }) => id === "a:t")?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["Selected by the route"]);
+  expect(switched.threads.find(({ id }) => id === "b:t")?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["Opened by a cold link"]);
 
   const visiting = answer("visitThread", ["b:t", "2026-11-10T01:00:00Z", true], store, storage, native);
   const visit = sent.at(-1)!;
@@ -195,7 +195,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   page.resolve(Response.json({ items: [historyRow("earlier", 1)], nextCursor: null, hasMoreHistory: false }));
   expect(await loadingHistory).toEqual({ ok: true, error: "" });
   const withHistory = (await load()).threads.find(({ id }) => id === "a:t");
-  expect(withHistory?.messages.map(({ body }) => body)).toEqual(["earlier", "recent"]);
+  expect(withHistory?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["earlier", "recent"]);
   expect(withHistory?.history).toMatchObject({ hasMore: false, loading: false, error: "" });
   _fetch.mockClear();
   const afterSwitch = sent.length;
@@ -311,7 +311,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   activeThread = "b:t";
   const reconnected = await load();
   expect(connections.find(({ id }) => id === "b")!.generation).not.toBe(reconnecting);
-  expect(reconnected.threads.find(({ id }) => id === "b:t")?.messages.map(({ body }) => body)).toEqual(["earlier-b", "recent-b"]);
+  expect(reconnected.threads.find(({ id }) => id === "b:t")?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["earlier-b", "recent-b"]);
   expect(reconnected.environments.find(({ id }) => id === "b")?.status).toBe("Reconnecting");
   const beforeReopen = sent.length;
   emit("b", "open");
@@ -328,8 +328,34 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   });
   chunk("b", resumedSubscriptions[0]!.frame.id, { kind: "synchronized" });
   const resumed = (await load()).threads.find(({ id }) => id === "b:t");
-  expect(resumed?.messages.map(({ body }) => body)).toEqual(["earlier-b", "resumed-b"]);
+  expect(resumed?.rows.flatMap((row) => row.message ? [row.message] : []).map(({ body }) => body)).toEqual(["earlier-b", "resumed-b"]);
   expect(resumed?.history).toMatchObject({ synchronized: true, hasMore: false });
+
+  chunk("b", reopenedConfig.frame.id, { type: "snapshot", config: {
+    threadSnapshotPagination: true, threadResumeCompletionMarker: true,
+    environment: { capabilities: { commandOutputStreaming: true } },
+  } });
+  const tool = { ...historyRow("command", 11), item: {
+    id: "command", threadId: "t", type: "command_execution", ordinal: 11, input: "bun test", outputOmitted: true,
+    status: "running", updatedAt: "2026-11-10T12:00:00Z",
+  } };
+  chunk("b", resumedSubscriptions[0]!.frame.id, { kind: "event", sequence: 32,
+    event: { threadId: "t", type: "turn-item.updated", payload: tool.item },
+  });
+  const toolThread = (await load()).threads.find(({ id }) => id === "b:t")!;
+  const wanted = [{ rowId: JSON.stringify(["t", "command"]), revision: "live", retry: 1 }];
+  const openingTool = answer("loadToolPanels", ["b:t", toolThread.toolViewKey, wanted], store, storage, native);
+  const stream = sent.at(-1)!;
+  expect(stream).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.subscribeCommandOutput", payload: { threadId: "t", itemId: "command" } } });
+  chunk("b", stream.frame.id, { kind: "replace", text: "Initial output", truncated: false, running: true });
+  const firstPanels = await answer("loadToolPanels", ["b:t", toolThread.toolViewKey, wanted], store, storage, native);
+  expect(firstPanels.panels[0]).toMatchObject({ state: "ready", output: "Initial output" });
+  expect(await openingTool).toEqual(firstPanels);
+  chunk("b", stream.frame.id, { kind: "append", text: "\nFinished", truncated: false, running: false });
+  expect((await answer("loadToolPanels", ["b:t", toolThread.toolViewKey, wanted], store, storage, native)).panels[0]?.output).toBe("Initial output\nFinished");
+  expect(await answer("loadToolPanels", ["", "", []], store, storage, native)).toEqual({ viewKey: "", panels: [] });
+  expect(sent.at(-1)).toMatchObject({ environmentId: "b", frame: { _tag: "Interrupt", requestId: stream.frame.id } });
+  expect(receipts.size).toBe(0);
 
   const beforeEdit = connections.map(({ id, generation }) => ({ id, generation }));
   expect(await answer("updateEnvironment", ["a", " Renamed Mac ", "http://a.example/"], store, storage, native)).toEqual({ ok: true, error: "" });

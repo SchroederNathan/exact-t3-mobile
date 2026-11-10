@@ -1,6 +1,8 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
+import { summarized, toolBody, toolNeedsDetail, toolRevision, toolSummary, type ToolBatch, type ToolPanel, type ToolRequest } from "./tool-activity";
+import { appendTerminalOutput, EMPTY_TERMINAL_OUTPUT, terminalOutputPlainText, type TerminalOutputState } from "./terminal-output";
 import {
   decodeSelection,
   projectThreadSettings,
@@ -17,6 +19,19 @@ export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
+let sessionSerial = 0;
+interface ExpandedTool {
+  threadId: string;
+  viewKey: string;
+  request: ToolRequest;
+  source: ObjectValue;
+  panel: ToolPanel;
+  requestId: string;
+  stream: boolean;
+  terminal: TerminalOutputState;
+  first: Promise<void>;
+  resolve: () => void;
+}
 export interface Inspection {
   ok: boolean;
   error: string;
@@ -385,6 +400,8 @@ function upsertSwitchingRecord<T extends { id: string }>(rows: T[], value: T): T
 
 export class DirectSession {
   readonly environment: Environment;
+  private readonly serial = ++sessionSerial;
+  private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
   private shellRequest = "";
@@ -508,6 +525,7 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.clearToolPanels();
     for (const history of this.transcripts.values()) history.disconnect();
     this.shellLive = false;
     this.switching = undefined;
@@ -524,6 +542,7 @@ export class DirectSession {
 
   select(threadId: string) {
     if (threadId === this.selected && this.threadRequest) return;
+    if (threadId !== this.selected) this.clearToolPanels();
     this.switching = undefined;
     this.selected = threadId;
     if (!this.socket || this.socket.readyState !== 1) return;
@@ -559,6 +578,135 @@ export class DirectSession {
 
   timeline(threadId: string): readonly TimelineRow[] {
     return this.transcripts.get(threadId)?.visibleRows() ?? [];
+  }
+
+  private toolViewKey(threadId: string): string {
+    return JSON.stringify([this.environment.id, this.serial, threadId, this.transcripts.get(threadId)?.generation ?? -1]);
+  }
+
+  private currentTool(entry: ExpandedTool): TimelineRow | undefined {
+    if (entry.threadId !== this.selected || entry.viewKey !== this.toolViewKey(entry.threadId)) return;
+    const history = this.transcripts.get(entry.threadId);
+    const row = history?.row(entry.request.rowId);
+    return !history?.deleted && row && toolSummary(row.item) && toolRevision(row.item) === entry.request.revision ? row : undefined;
+  }
+
+  private removeTool(entry: ExpandedTool) {
+    this.tools.delete(entry.request.rowId);
+    if (entry.requestId && this.socket?.readyState === 1)
+      this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: entry.requestId }));
+    entry.resolve();
+  }
+
+  clearToolPanels() {
+    for (const entry of this.tools.values()) this.removeTool(entry);
+  }
+
+  private pruneTools() {
+    for (const entry of this.tools.values()) {
+      const row = this.currentTool(entry);
+      if (!row) { this.removeTool(entry); continue; }
+      if (row.item === entry.source) continue;
+      const needsDetail = toolNeedsDetail(row.item, entry.stream);
+      if (!entry.stream && needsDetail && !toolNeedsDetail(entry.source, false)) {
+        this.removeTool(entry);
+        continue;
+      }
+      entry.source = row.item;
+      const body = toolBody(row.item);
+      if (!entry.stream && !needsDetail) {
+        if (entry.requestId && this.socket?.readyState === 1)
+          this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: entry.requestId }));
+        entry.requestId = "";
+        entry.panel = { ...entry.panel, ...body, state: "ready", error: "" };
+        entry.resolve();
+      } else if (!needsDetail || !summarized(row.item.input)) {
+        entry.panel.input = body.input;
+      }
+    }
+  }
+
+  async toolPanels(threadId: string, viewKey: string, wanted: readonly ToolRequest[]): Promise<ToolBatch> {
+    if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return { viewKey, panels: [] };
+    this.pruneTools();
+    for (const entry of this.tools.values()) {
+      if (!wanted.some((request) => request.rowId === entry.request.rowId && request.revision === entry.request.revision && request.retry === entry.request.retry))
+        this.removeTool(entry);
+    }
+    const entries: ExpandedTool[] = [];
+    for (const request of wanted) {
+      const row = this.transcripts.get(threadId)?.row(request.rowId);
+      if (!row || !toolSummary(row.item) || toolRevision(row.item) !== request.revision) continue;
+      let entry = this.tools.get(request.rowId);
+      if (!entry) {
+        let resolve = () => {};
+        const first = new Promise<void>((done) => { resolve = done; });
+        const streaming = row.item.type === "command_execution" && object(object(this.config.environment).capabilities).commandOutputStreaming === true;
+        entry = {
+          threadId, viewKey, request, source: row.item, requestId: "", stream: streaming, terminal: EMPTY_TERMINAL_OUTPUT, first, resolve,
+          panel: { ...request, state: "loading", ...toolBody(row.item), error: "" },
+        };
+        this.tools.set(request.rowId, entry);
+        try {
+          if (streaming) {
+            entry.panel.output = "";
+            entry.requestId = this.request("orchestration.subscribeCommandOutput", { threadId: row.sourceThreadId, itemId: row.sourceItemId });
+          } else if (toolNeedsDetail(row.item, false)) {
+            entry.requestId = this.request("orchestration.getTurnItem", { threadId: row.sourceThreadId, itemId: row.sourceItemId, revision: request.revision });
+          } else {
+            entry.panel.state = "ready";
+            entry.resolve();
+          }
+        } catch (error) {
+          entry.panel.state = "error";
+          entry.panel.error = error instanceof Error ? error.message : "Could not load this activity.";
+          entry.resolve();
+        }
+      }
+      entries.push(entry);
+    }
+    if (entries.length) await Promise.race(entries.map((entry) => entry.first));
+    return {
+      viewKey,
+      panels: entries.filter((entry) => this.tools.get(entry.request.rowId) === entry && this.currentTool(entry)).map((entry) => ({ ...entry.panel })),
+    };
+  }
+
+  private toolFrame(entry: ExpandedTool, frame: ObjectValue) {
+    if (!this.currentTool(entry)) { this.removeTool(entry); return; }
+    if (!entry.stream || !["replace", "append"].includes(string(frame.kind)) || typeof frame.text !== "string" ||
+      typeof frame.running !== "boolean" || typeof frame.truncated !== "boolean") {
+      entry.panel.state = "error";
+      entry.panel.error = "The server returned invalid command output.";
+      entry.resolve();
+      return;
+    }
+    const before = frame.kind === "replace" ? EMPTY_TERMINAL_OUTPUT : entry.terminal;
+    entry.terminal = appendTerminalOutput(before, frame.text);
+    entry.panel = {
+      ...entry.panel, state: "ready", output: terminalOutputPlainText(entry.terminal.text),
+      truncated: entry.terminal.truncated || frame.truncated || (frame.kind === "append" && entry.panel.truncated), error: "",
+    };
+    entry.resolve();
+  }
+
+  private toolExit(entry: ExpandedTool, exit: ObjectValue, error: string) {
+    if (!this.currentTool(entry)) { this.removeTool(entry); return; }
+    entry.requestId = "";
+    if (error) entry.panel = { ...entry.panel, state: "error", error };
+    else if (entry.stream) entry.panel = { ...entry.panel, state: "ready" };
+    else {
+      const value = object(exit.value);
+      const item = object(value.item);
+      const current = this.currentTool(entry)!;
+      if (value.item === null) entry.panel = { ...entry.panel, state: "missing", error: "This activity is no longer available." };
+      else if (item.id !== current.sourceItemId || item.threadId !== current.sourceThreadId || item.type !== current.item.type)
+        entry.panel = { ...entry.panel, state: "error", error: "The server returned invalid activity detail." };
+      else if (entry.request.revision !== "live" && toolRevision(item) !== entry.request.revision)
+        entry.panel = { ...entry.panel, state: "error", error: "This activity changed while its output loaded. Retry to load it again." };
+      else entry.panel = { ...entry.panel, ...toolBody(item), state: "ready", error: "" };
+    }
+    entry.resolve();
   }
 
   async loadEarlier(threadId: string, read: (relativePath: string) => Promise<unknown>): Promise<Reply> {
@@ -777,6 +925,7 @@ export class DirectSession {
   }
 
   disconnected(reason: string) {
+    this.clearToolPanels();
     this.shellLive = false;
     this.shellRequest = "";
     this.switching = undefined;
@@ -794,8 +943,10 @@ export class DirectSession {
     const parsed: unknown = JSON.parse(data);
     for (const frame of records(Array.isArray(parsed) ? parsed : [parsed])) {
       const id = String(frame.requestId ?? "");
+      const tool = [...this.tools.values()].find((entry) => entry.requestId !== "" && entry.requestId === id);
       if (frame._tag === "Chunk") {
         for (const item of records(frame.values)) {
+          if (tool) this.toolFrame(tool, item);
           if (id === this.shellRequest) this.shell(item);
           if (this.threadRequest && id === this.threadRequest) this.transcript(item);
           if (id === this.configRequest) {
@@ -821,6 +972,7 @@ export class DirectSession {
         }
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
+        if (tool) this.toolExit(tool, exit, error);
         if (threadEnded) {
           const history = this.transcripts.get(this.selected);
           history?.disconnect();
@@ -888,6 +1040,7 @@ export class DirectSession {
       this.transcripts.get(string(item.threadId))?.remove();
       this.transcripts.delete(string(item.threadId));
       this.switchingSnapshots.delete(string(item.threadId));
+      this.pruneTools();
     }
   }
 
@@ -927,6 +1080,7 @@ export class DirectSession {
         this.switching = this.switchingSnapshots.get(this.selected);
       }
     }
+    this.pruneTools();
   }
 
   private updateSwitching(event: ObjectValue) {
@@ -980,7 +1134,7 @@ export class DirectSession {
           records(provider.models).find((entry) => entry.slug === selection.model) ?? {};
         const settled = thread.settledOverride === "settled" && thread.status !== "queued";
         const activityAt = activity(thread, settled);
-        const transcript = this.transcripts.get(id)?.messages() ?? [];
+        const rows = this.transcripts.get(id)?.feed() ?? [];
         const error = errorDetails(thread);
         return {
           id: scopedThreadId(this.environment.id, id),
@@ -1009,7 +1163,8 @@ export class DirectSession {
           status: status(thread),
           visit: visitMetadata(thread),
           updatedAt: relativeTime(activityAt, now),
-          messages: transcript,
+          rows,
+          toolViewKey: this.toolViewKey(id),
           history: this.history(id),
         };
       })

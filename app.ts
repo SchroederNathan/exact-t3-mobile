@@ -342,6 +342,27 @@ const sources: Sources = {
       return { ok: false, error: error instanceof Error ? error.message : "Earlier messages could not be loaded." };
     }
   },
+  loadToolPanels: async ([id, viewKey, wanted], _store, _storage, native) => {
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
+    if (!id) {
+      for (const connection of connections.values()) connection.session.clearToolPanels();
+      current?.clearToolPanels();
+      return { viewKey, panels: [] };
+    }
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(sessionFor(identity.environmentId).toolPanels(identity.threadId, viewKey, wanted), native);
+    } catch (error) {
+      return {
+        viewKey,
+        panels: wanted.map((request) => ({
+          ...request, state: "error", input: "", output: "", truncated: false,
+          error: error instanceof Error ? error.message : "Could not load this activity.",
+        })),
+      };
+    }
+  },
   inspectThread: async ([id, kind, path], _store, _storage, native) => {
     try {
       const identity = threadIdentity(id);

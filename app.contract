@@ -94,6 +94,43 @@ shape Message
   timeLabel: string
   blocks: MarkdownBlock[]
 
+shape ToolSummary
+  category: string
+  status: string
+  title: string
+  symbol: string
+  revision: string
+  exitLabel: string
+
+shape FeedRow
+  id: string
+  message: option<Message>
+  activity: option<ToolSummary>
+
+shape ToolRequest
+  rowId: string
+  revision: string
+  retry: number
+
+shape ToolExpansion
+  threadId: string
+  rowId: string
+  attempt: number
+
+shape ToolPanel
+  rowId: string
+  revision: string
+  retry: number
+  state: string
+  input: string
+  output: string
+  truncated: bool
+  error: string
+
+shape ToolBatch
+  viewKey: string
+  panels: ToolPanel[]
+
 shape MarkdownBlock
   id: string
   kind: string
@@ -150,7 +187,8 @@ shape Thread
   title: string
   status: string
   updatedAt: string
-  messages: Message[]
+  rows: FeedRow[]
+  toolViewKey: string
 
 shape Project
   id: string
@@ -192,8 +230,15 @@ shape Inspection
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
-fn threadMessages(threads: Thread[]): Message[] = match first(threads) { case some(thread) => thread.messages, case none => [] }
-fn threadRows(threads: Thread[]): option<Message>[] = [none].concat(threadMessages(threads).map(message => some(message)))
+fn threadFeed(threads: Thread[]): FeedRow[] = match first(threads) { case some(thread) => thread.rows, case none => [] }
+fn threadRows(threads: Thread[]): option<FeedRow>[] = [none].concat(threadFeed(threads).map(row => some(row)))
+fn threadToolViewKey(threads: Thread[]): string = match first(threads) { case some(thread) => thread.toolViewKey, case none => "" }
+fn toolAttempt(expanded: ToolExpansion[], threadId: string, rowId: string): number = match first(expanded.filter(entry => entry.threadId == threadId and entry.rowId == rowId)) { case some(entry) => entry.attempt, case none => -1 }
+fn toolRevision(row: FeedRow): string = match row.activity { case some(tool) => tool.revision, case none => "" }
+fn wantedTools(rows: FeedRow[], expanded: ToolExpansion[], threadId: string): ToolRequest[] = rows.filter(row => toolRevision(row) != "" and toolAttempt(expanded, threadId, row.id) >= 0).map(row => ToolRequest(rowId=row.id, revision=toolRevision(row), retry=toolAttempt(expanded, threadId, row.id)))
+fn matchingToolPanels(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number): ToolPanel[] = batch.viewKey == viewKey ? batch.panels.filter(panel => panel.rowId == rowId and panel.revision == revision and panel.retry == attempt) : []
+fn toolStatusSymbol(status: string): string = status == "error" ? "symbol:sf/exclamationmark.circle" : status == "interrupted" ? "symbol:sf/stop.circle" : "symbol:sf/clock"
+fn toolCopyText(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number, title: string): string = attempt < 0 or matchingToolPanels(batch, viewKey, rowId, revision, attempt).length == 0 ? title : matchingToolPanels(batch, viewKey, rowId, revision, attempt).map(panel => [panel.input, panel.output].filter(part => part != "").join("\n\n")).join("\n\n")
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
@@ -231,6 +276,8 @@ component T3Code
   state visitTracker = VisitTracker(id="", openPending=false, watermark=-1, cooling=false, serial=0)
   state threadOpens: ThreadOpen[] = []
   state loadingHistoryId = ""
+  state expandedTools: ToolExpansion[] = []
+  state toolAttemptSerial = 0
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
   mutation savedDraft as shape Reply queue
   resource restoredModelSettings = restoreModelSettings() as shape Reply else empty()
@@ -276,6 +323,10 @@ component T3Code
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
   derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
+  derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
+  derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
+  resource toolPanels = loadToolPanels(activeToolThreadId, toolViewKey, toolRequests) as shape ToolBatch else empty()
   derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
@@ -320,6 +371,19 @@ component T3Code
   action loadEarlier(id: string)
     loadingHistoryId = id
     send earlierHistory = loadEarlierThread(id)
+
+  action toggleTool(threadId: string, rowId: string)
+    if toolAttempt(expandedTools, threadId, rowId) >= 0
+      expandedTools = expandedTools.filter(entry => entry.threadId != threadId or entry.rowId != rowId)
+    else
+      let attempt = toolAttemptSerial + 1
+      toolAttemptSerial = attempt
+      expandedTools = expandedTools.concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=attempt)])
+
+  action retryTool(threadId: string, rowId: string)
+    let attempt = toolAttemptSerial + 1
+    toolAttemptSerial = attempt
+    expandedTools = expandedTools.filter(entry => entry.threadId != threadId or entry.rowId != rowId).concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=attempt)])
 
   task defaultSettings when split and current.name == "settingsDetail" key=current.id
     after(1, openEnvironments)
@@ -698,41 +762,83 @@ component T3Code
                     button press=inspect("files") aria-label="Open files" testId="thread-files"
                       image "symbol:sf/folder"
                   list id=`thread-${e.params.id}` appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(112 + composerBottomAdjustment)
-                    for item in threadRows(selectedThread(catalog, e.params.id)) key=(match item { case some(message) => `message-${message.id}`, case none => "history" })
+                    for item in threadRows(selectedThread(catalog, e.params.id)) key=(match item { case some(row) => row.id, case none => "history" })
                       column width="100%" box-sizing="border-box"
                         match item
                           case none
                             for thread in selectedThread(catalog, e.params.id) key=thread.id
-                              if thread.history.hasMore
-                                column align-items="center" gap=6 padding-bottom=12
+                              column align-items="center" gap=6 padding-bottom=12
+                                if thread.history.hasMore
                                   button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" color="muted" padding="8px 12px" testId="load-earlier"
                                     text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier messages…" : "Load earlier messages") font-size=14
-                                  if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
-                                    text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
-                          case some(message)
-                            column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-                              if message.role == "user"
-                                text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
-                                row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-                                  text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-                                  button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-                                    image "symbol:sf/document.on.document" width=13 height=13
-                              else
-                                column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
-                                  for block in message.blocks key=block.id
-                                    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
-                                      if block.depth > 0
-                                        if block.marker == "•"
-                                          column width=14 height=23 justify-content="center"
-                                            view width=6 height=6 border-radius=3 background-color="foreground"
-                                        else
-                                          text block.marker width=14 font-size=16 line-height="23px" color="foreground"
-                                      if block.kind == "thematic-break"
-                                        view height=1 flex=1 margin="8px 0" background-color="edge"
-                                      else if block.kind == "code"
-                                        text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
-                                      else
-                                        text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                                if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
+                                  text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
+                          case some(row)
+                            match row.message
+                              case some(message)
+                                column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+                                  if message.role == "user"
+                                    text message.body user-select="text" overflow-wrap="break-word" max-width="85%" box-sizing="border-box" padding="8.75px 12.25px" border-radius=20 background-color="bubble" color="foreground" font-size=16 line-height="23px" testId=`message-${message.id}`
+                                    row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
+                                      text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+                                      button press=copyMessage(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+                                        image "symbol:sf/document.on.document" width=13 height=13
+                                  else
+                                    column width="100%" min-width=0 box-sizing="border-box" padding="0 4px" testId=`message-${message.id}`
+                                      for block in message.blocks key=block.id
+                                        row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color="edge" padding-left=(block.quoteDepth > 0 ? 12 : 0)
+                                          if block.depth > 0
+                                            if block.marker == "•"
+                                              column width=14 height=23 justify-content="center"
+                                                view width=6 height=6 border-radius=3 background-color="foreground"
+                                            else
+                                              text block.marker width=14 font-size=16 line-height="23px" color="foreground"
+                                          if block.kind == "thematic-break"
+                                            view height=1 flex=1 margin="8px 0" background-color="edge"
+                                          else if block.kind == "code"
+                                            text block.body white-space="pre-wrap" user-select="text" flex=1 min-width=0 padding=12 border-radius=8 background-color="card" font-family="Menlo" font-size=14.4 line-height="23px"
+                                          else
+                                            text block.body markup="markdown" user-select="text" overflow-wrap="break-word" flex=1 min-width=0 font-size=(block.kind == "heading" ? 16 * (1.6 - block.headingLevel * 0.1) : 16) line-height=(block.kind == "heading" ? `${16 * (1.6 - block.headingLevel * 0.1) * 1.35}px` : "23px") font-weight=(block.kind == "heading" ? 700 : 400) margin-top=(block.kind == "heading" ? 8 : 0)
+                              case none
+                                match row.activity
+                                  case some(tool)
+                                    column padding-bottom=2 testId=`tool-${row.id}`
+                                      button press=toggleTool(e.params.id, row.id) contextmenu=copyMessage(toolCopyText(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id), tool.title)) appearance="none" display="flex" align-items="center" gap=5.25 min-height=28 width="100%" box-sizing="border-box" padding="0 1.75px" text-align="left" color="muted" aria-label=`${tool.title}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
+                                        row width=21 height=21 align-items="center" justify-content="center" flex-shrink=0
+                                          image `symbol:sf/${tool.symbol}` width=14 height=14
+                                        text tool.title flex=1 min-width=0 font-size=14 line-height="19px" line-clamp=1 text-overflow="ellipsis" testId=`tool-title-${row.id}`
+                                        if tool.status != "completed"
+                                          image toolStatusSymbol(tool.status) width=12 height=12 color=(tool.status == "error" ? "danger" : "muted")
+                                        image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11
+                                      if toolAttempt(expandedTools, e.params.id, row.id) >= 0
+                                        column padding-top=1.75 padding-bottom=3.5 gap=5.25 min-width=0
+                                          if matchingToolPanels(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id)).length == 0
+                                            if failed(toolPanels)
+                                              text "Could not load this activity." color="danger" font-size=12 testId=`tool-error-${row.id}`
+                                              button press=retryTool(e.params.id, row.id) aria-label="Retry activity" testId=`tool-retry-${row.id}`
+                                                text "Retry"
+                                            else
+                                              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${row.id}`
+                                          for panel in matchingToolPanels(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id)) key=panel.rowId
+                                            if panel.state == "loading"
+                                              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${row.id}`
+                                            else if panel.state == "error" or panel.state == "missing"
+                                              text panel.error color="danger" font-size=12 overflow-wrap="break-word" testId=`tool-error-${row.id}`
+                                              if panel.state == "error"
+                                                button press=retryTool(e.params.id, row.id) aria-label="Retry activity" testId=`tool-retry-${row.id}`
+                                                  text "Retry"
+                                            else
+                                              if panel.truncated
+                                                text "Earlier or large output not shown" color="muted" font-size=11 testId=`tool-truncated-${row.id}`
+                                              if tool.category == "command"
+                                                list appearance="none" virtualized=true max-height=210 min-height=0 scroll-start="end" scrollFollowEnd=true
+                                                  for detail in [panel] key=detail.rowId
+                                                    ToolDetail(panel=detail, tool=tool, rowId=row.id)
+                                              else
+                                                scroll max-height=210 min-height=0
+                                                  ToolDetail(panel=panel, tool=tool, rowId=row.id)
+                                  case none
+                                    view
                   for thread in selectedThread(catalog, e.params.id) key=thread.id
                     if thread.lastError != ""
                       row align-items="flex-start" gap=8 position="absolute" left=20 right=(split ? "calc(16px + env(safe-area-inset-right))" : 16) bottom=(66 + composerBottomAdjustment) z-index=1
@@ -954,6 +1060,22 @@ component T3Code
         button role="tab" aria-controls="panel-settingsDetail" aria-selected=(nav.tab == "settingsDetail") press=selectTab("settingsDetail") testId="tab-settingsDetail" display="none"
           image "symbol:settings"
           text "Setting"
+
+component ToolDetail
+  props
+    panel: ToolPanel
+    tool: ToolSummary
+    rowId: string
+  view
+    column gap=5.25 padding-right=8
+      if panel.input != ""
+        text panel.input font-size=12 line-height="18px" color="foreground" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-input-${rowId}`
+      if panel.output != ""
+        text panel.output font-size=12 line-height="18px" color="muted" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-output-${rowId}`
+      else
+        text (tool.status == "running" or tool.status == "pending" ? "No output yet." : "No output.") font-size=12 color="muted" testId=`tool-empty-${rowId}`
+      if tool.exitLabel != ""
+        text tool.exitLabel font-size=12 line-height="18px" color="danger" testId=`tool-exit-${rowId}`
 
 component ThreadList
   props

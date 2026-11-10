@@ -18,6 +18,7 @@ type SettingsRequest = {
 
 function settingsSession(initializeShell = true) {
   const requests: SettingsRequest[] = [];
+  const frames: { _tag: string; requestId?: string }[] = [];
   const dispatched = Promise.withResolvers<SettingsRequest>();
   const session = new DirectSession({
     id: "env", label: "Mac", url: "http://localhost:13773",
@@ -27,6 +28,7 @@ function settingsSession(initializeShell = true) {
     readyState: 1, bufferedAmount: 0,
     send(frame) {
       const request = JSON.parse(String(frame)) as SettingsRequest;
+      frames.push(request);
       if (request._tag !== "Request") return;
       requests.push(request);
       if (request.payload.type === "message.dispatch") dispatched.resolve(request);
@@ -71,7 +73,7 @@ function settingsSession(initializeShell = true) {
     _tag: "Exit", requestId: request.id, exit: { _tag: "Success", value: { sequence: 2 } },
   }));
   const commands = () => requests.filter((request) => request.tag === "orchestration.dispatchCommand");
-  return { session, provider, updateProviders, updateThread, requests, commands, dispatched: dispatched.promise, accept, open };
+  return { session, provider, updateProviders, updateThread, requests, frames, commands, dispatched: dispatched.promise, accept, open };
 }
 
 function historySession() {
@@ -97,7 +99,7 @@ function historySession() {
     kind: "event", sequence, event: { threadId: "thread", type, payload },
   });
   return { ...fixture, configure, request, receive, snapshot, event,
-    bodies: () => fixture.session.threads()[0]!.messages.map((message) => message.body) };
+    bodies: () => fixture.session.threads()[0]!.rows.flatMap((row) => row.message ? [row.message] : []).map((message) => message.body) };
 }
 
 function historyRow(id: string, ordinal: number, fields: Record<string, unknown> = {}) {
@@ -235,6 +237,205 @@ describe("long thread history", () => {
     f.event(24, "run.updated", { id: "active", status: "rolled_back" });
     await f.session.loadEarlier("thread", async () => ({ items: [historyRow("active-old-ordinal", 3, { runId: "active" }), historyRow("earlier", 1)], nextCursor: null, hasMoreHistory: false }));
     expect(f.bodies()).toEqual(["earlier", "recent"]);
+  });
+});
+
+function activitySession(streaming = false) {
+  const f = historySession();
+  f.session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{
+    type: "snapshot", config: { environment: { capabilities: { commandOutputStreaming: streaming } } },
+  }] }));
+  const install = (rows: ReturnType<typeof historyRow>[]) => f.snapshot({
+    hasMoreHistory: false, historyCursor: null,
+    projection: { thread: { id: "thread" }, visibleTurnItems: rows, messages: [{ id: "hidden", role: "assistant", text: "Hidden raw" }] },
+  });
+  const thread = () => f.session.threads()[0]!;
+  const rowId = (id: string, source = "thread") => JSON.stringify([source, id]);
+  const panels = (ids: string[], retry = 0) => f.session.toolPanels("thread", thread().toolViewKey,
+    ids.map((id) => ({ rowId: id, revision: thread().rows.find((row) => row.id === id)!.activity!.revision, retry })));
+  const reply = (request: SettingsRequest, item: unknown) => f.session.receive(JSON.stringify({
+    _tag: "Exit", requestId: request.id, exit: { _tag: "Success", value: { item } },
+  }));
+  const output = (request: SettingsRequest, text: string, kind = "replace", running = false, truncated = false) =>
+    f.session.receive(JSON.stringify({ _tag: "Chunk", requestId: request.id, values: [{ kind, text, running, truncated }] }));
+  const toolRequests = () => f.requests.filter((request) => ["orchestration.getTurnItem", "orchestration.subscribeCommandOutput"].includes(request.tag));
+  return { ...f, install, thread, rowId, panels, reply, output, toolRequests };
+}
+
+describe("tool activity feed", () => {
+  test("keeps mixed and tool-only timelines ordered without fetching collapsed output", async () => {
+    const f = activitySession();
+    const command = historyRow("cmd", 2, { type: "command_execution", input: "bun test", outputOmitted: true, exitCode: 0, outputIndicatesFailure: true });
+    f.install([
+      historyRow("message", 1), command,
+      historyRow("edit", 3, { type: "file_change", fileName: "app.ts", additions: 2, deletions: 1 }),
+      historyRow("search", 4, { type: "file_search", pattern: "TODO", results: [] }),
+      historyRow("mcp", 5, { type: "dynamic_tool", toolName: "mcp__files__read", input: { path: "app.ts" }, output: { isError: true, content: [{ type: "text", text: "Denied" }] } }),
+    ]);
+    expect(f.thread().rows.map((row) => row.message ? ["message", row.message.body] : [row.activity!.category, row.activity!.status])).toEqual([
+      ["message", "message"], ["command", "completed"], ["file-change", "completed"], ["search", "completed"], ["mcp", "error"],
+    ]);
+    expect(await f.panels([])).toEqual({ viewKey: f.thread().toolViewKey, panels: [] });
+    expect(f.toolRequests()).toEqual([]);
+    f.install([command]);
+    expect(f.thread().rows.map((row) => row.id)).toEqual([f.rowId("cmd")]);
+    f.install([]);
+    expect(f.thread().rows).toEqual([]);
+  });
+
+  test("loads inherited omitted input once, unwraps MCP output and retries failures locally", async () => {
+    const f = activitySession();
+    const item = { ...historyRow("mcp", 1, { threadId: "ancestor", type: "dynamic_tool", toolName: "mcp__files__read", input: { truncated: true, summary: "Large input" } }), sourceThreadId: "ancestor", visibility: "inherited" };
+    f.install([item]);
+    const id = f.rowId("mcp", "ancestor");
+    const first = f.panels([id]);
+    const duplicate = f.panels([id]);
+    expect(f.toolRequests()).toHaveLength(1);
+    expect(f.toolRequests()[0]!.payload).toEqual({ threadId: "ancestor", itemId: "mcp", revision: "2026-11-10T12:00:00Z" });
+    f.reply(f.toolRequests()[0]!, { ...item.item, input: { path: "app.ts" }, output: { content: [{ type: "text", text: "File contents" }, { type: "resource", resource: { uri: "file:///app.ts", text: "resource contents" } }] } });
+    for (const result of await Promise.all([first, duplicate])) expect(result.panels[0]).toMatchObject({ state: "ready", input: '{\n  "path": "app.ts"\n}', output: "File contents\nresource contents" });
+    await f.panels([]);
+    const failing = f.panels([id]);
+    const request = f.toolRequests().at(-1)!;
+    f.session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: { _tag: "Failure", cause: [{ error: { message: "Output unavailable" } }] } }));
+    expect((await failing).panels[0]).toMatchObject({ state: "error", error: "Output unavailable" });
+    expect(f.session.environment.status).toBe("Connected");
+    const retry = f.panels([id], 1);
+    f.reply(f.toolRequests().at(-1)!, null);
+    expect((await retry).panels[0]).toMatchObject({ state: "missing", error: "This activity is no longer available." });
+    const recovered = f.panels([id], 2);
+    f.reply(f.toolRequests().at(-1)!, { ...item.item, input: {}, output: "Recovered" });
+    expect((await recovered).panels[0]).toMatchObject({ state: "ready", output: "Recovered", error: "" });
+    for (const [retry, change] of [
+      [3, { threadId: "unrelated" }], [4, { updatedAt: "2026-11-10T11:59:00Z" }],
+    ] as const) {
+      const invalid = f.panels([id], retry);
+      f.reply(f.toolRequests().at(-1)!, { ...item.item, ...change, input: {}, output: "Wrong detail" });
+      expect((await invalid).panels[0]).toMatchObject({ state: "error", output: "" });
+    }
+  });
+
+  test("refreshes open live inline output and fetches only when it becomes omitted", async () => {
+    const f = activitySession();
+    const running = historyRow("mcp", 1, { type: "dynamic_tool", input: {}, output: "First", status: "running" });
+    f.install([running]);
+    const id = f.rowId("mcp");
+    expect((await f.panels([id])).panels[0]?.output).toBe("First");
+    f.event(21, "turn-item.updated", { ...running.item, output: "Second", updatedAt: "2026-11-10T12:01:00Z" });
+    expect((await f.panels([id])).panels[0]?.output).toBe("Second");
+    f.event(22, "turn-item.updated", { ...running.item, outputOmitted: true, updatedAt: "2026-11-10T12:02:00Z" });
+    const omitted = f.panels([id]);
+    expect(f.toolRequests()).toHaveLength(1);
+    const request = f.toolRequests()[0]!;
+    f.event(23, "turn-item.updated", { ...running.item, outputOmitted: true, updatedAt: "2026-11-10T12:03:00Z" });
+    const duplicate = f.panels([id]);
+    expect(f.toolRequests()).toHaveLength(1);
+    f.reply(request, { ...running.item, output: "Fetched" });
+    for (const result of await Promise.all([omitted, duplicate])) expect(result.panels[0]?.output).toBe("Fetched");
+    f.event(24, "turn-item.updated", { ...running.item, outputOmitted: true, updatedAt: "2026-11-10T12:04:00Z" });
+    expect((await f.panels([id])).panels[0]?.output).toBe("Fetched");
+    expect(f.toolRequests()).toHaveLength(1);
+    const retry = f.panels([id], 1);
+    const retryRequest = f.toolRequests().at(-1)!;
+    f.event(25, "turn-item.updated", { ...running.item, input: { current: true }, outputOmitted: false, output: "Authoritative inline", updatedAt: "2026-11-10T12:05:00Z" });
+    f.reply(retryRequest, { ...running.item, output: "Stale reply" });
+    expect((await retry).panels[0]).toMatchObject({ state: "ready", input: '{\n  "current": true\n}', output: "Authoritative inline" });
+    expect(f.frames).toContainEqual({ _tag: "Interrupt", requestId: retryRequest.id });
+    expect((await f.panels([id], 1)).panels[0]?.output).toBe("Authoritative inline");
+  });
+
+  test("rejects live detail after completion, rollback, replacement and reconnect", async () => {
+    const f = activitySession();
+    const running = historyRow("cmd", 1, { type: "command_execution", input: "build", status: "running", outputOmitted: true, runId: "run" });
+    f.install([running]);
+    const id = f.rowId("cmd");
+    const live = f.panels([id]);
+    const liveRequest = f.toolRequests().at(-1)!;
+    f.event(21, "turn-item.updated", { ...running.item, status: "completed", updatedAt: "2026-11-10T12:01:00Z" });
+    const final = f.panels([id]);
+    const finalRequest = f.toolRequests().at(-1)!;
+    f.reply(finalRequest, { ...running.item, status: "completed", updatedAt: "2026-11-10T12:01:00Z", output: "Final output" });
+    f.reply(liveRequest, { ...running.item, output: "Old live output" });
+    expect((await final).panels[0]?.output).toBe("Final output");
+    expect((await live).panels).toEqual([]);
+    expect((await f.panels([id])).panels[0]?.output).toBe("Final output");
+    for (const change of ["rollback", "snapshot", "disconnect"] as const) {
+      f.install([running]);
+      const pending = f.panels([id]);
+      const request = f.toolRequests().at(-1)!;
+      if (change === "rollback") f.event(30, "run.updated", { id: "run", status: "rolled_back" });
+      else if (change === "snapshot") f.install([]);
+      else f.session.disconnected("Disconnected");
+      f.reply(request, { ...running.item, output: "Stale output" });
+      expect((await pending).panels).toEqual([]);
+    }
+  });
+
+  test("streams bounded command output only while expanded and interrupts stale subscriptions", async () => {
+    const f = activitySession(true);
+    const command = historyRow("cmd", 1, { type: "command_execution", input: "build", outputOmitted: true, status: "running" });
+    f.install([command]);
+    const id = f.rowId("cmd");
+    const opening = f.panels([id]);
+    const stream = f.toolRequests()[0]!;
+    expect(stream.tag).toBe("orchestration.subscribeCommandOutput");
+    expect(stream.payload).toEqual({ threadId: "thread", itemId: "cmd" });
+    f.output(stream, "a".repeat(65536), "replace", true);
+    expect((await opening).panels[0]).toMatchObject({ state: "ready", truncated: false });
+    f.output(stream, "finished\n", "append", false);
+    const tail = (await f.panels([id])).panels[0]!;
+    expect(tail.output).toBe("a".repeat(65527) + "finished\n");
+    expect(tail.truncated).toBe(true);
+    f.event(21, "turn-item.updated", { ...command.item, input: "build --verbose", output: "Inline must not replace stream", updatedAt: "2026-11-10T12:01:00Z" });
+    expect((await f.panels([id])).panels[0]).toMatchObject({ input: "build --verbose", output: "a".repeat(65527) + "finished\n" });
+    expect(f.toolRequests()).toHaveLength(1);
+    f.event(22, "turn-item.updated", historyRow("held", 2, { type: "dynamic_tool", input: {}, outputOmitted: true }).item);
+    const withPending = await f.panels([id, f.rowId("held")]);
+    expect(withPending.panels.map((panel) => [panel.rowId, panel.state])).toEqual([[id, "ready"], [f.rowId("held"), "loading"]]);
+    f.output(stream, "updated while another tool waits", "replace", true);
+    expect((await f.panels([id, f.rowId("held")])).panels[0]?.output).toBe("updated while another tool waits");
+    await f.panels([]);
+    expect(f.frames).toContainEqual({ _tag: "Interrupt", requestId: stream.id });
+    f.output(stream, "late append", "append");
+    const reopening = f.panels([id]);
+    expect(f.toolRequests()).toHaveLength(3);
+    f.output(f.toolRequests()[2]!, "Reopened output");
+    expect((await reopening).panels[0]?.output).toBe("Reopened output");
+    f.session.select("");
+    expect(f.frames).toContainEqual({ _tag: "Interrupt", requestId: f.toolRequests()[2]!.id });
+    for (const change of ["rollback", "deleted", "snapshot", "disconnect"] as const) {
+      const pending = activitySession(true);
+      pending.install([historyRow("cmd", 1, { ...command.item, runId: "run" })]);
+      const opening = pending.panels([pending.rowId("cmd")]);
+      const stream = pending.toolRequests()[0]!;
+      if (change === "rollback") pending.event(21, "run.updated", { id: "run", status: "rolled_back" });
+      else if (change === "deleted") pending.event(21, "thread.deleted", { threadId: "thread" });
+      else if (change === "snapshot") pending.install([]);
+      else pending.session.disconnected("Disconnected");
+      expect(pending.frames).toContainEqual({ _tag: "Interrupt", requestId: stream.id });
+      pending.output(stream, "Late output");
+      expect((await opening).panels).toEqual([]);
+    }
+  });
+
+  test("expands embedded legacy output, search results and file diffs without extra requests", async () => {
+    const f = activitySession();
+    f.install([
+      historyRow("cmd", 1, { type: "command_execution", input: "echo hello", output: '{"stdout":"hello","stderr":"warning","interrupted":false}' }),
+      historyRow("edit", 2, { type: "file_change", fileName: "app.ts", diffStr: "-old\n+new" }),
+      historyRow("search", 3, { type: "file_search", pattern: "hello", results: [{ fileName: "app.ts", line: 12, preview: "hello()" }] }),
+    ]);
+    const result = await f.panels(["cmd", "edit", "search"].map((id) => f.rowId(id)));
+    expect(result.panels.map((panel) => [panel.input, panel.output])).toEqual([
+      ["echo hello", "hello\nwarning"], ["app.ts", "-old\n+new"], ["hello", "app.ts:12\nhello()"],
+    ]);
+    expect(f.toolRequests()).toEqual([]);
+    f.install([historyRow("edit", 1, { type: "file_change", fileName: "app.ts" })]);
+    const missingDiff = f.panels([f.rowId("edit")]);
+    const request = f.toolRequests().at(-1)!;
+    expect(request.payload).toEqual({ threadId: "thread", itemId: "edit", revision: "2026-11-10T12:00:00Z" });
+    f.reply(request, { ...historyRow("edit", 1).item, type: "file_change", fileName: "app.ts", diffStr: "+loaded diff" });
+    expect((await missingDiff).panels[0]?.output).toBe("+loaded diff");
   });
 });
 
@@ -529,7 +730,8 @@ describe("direct T3 connection", () => {
         updatedAt: "1m",
         lastError: "",
         lastErrorTime: expect.any(String),
-        messages: [],
+        rows: [],
+        toolViewKey: expect.any(String),
         history: { ready: false, synchronized: false, hasMore: false, loading: false, error: "" },
       },
     ]);
@@ -600,7 +802,7 @@ describe("direct T3 connection", () => {
         },
       ]),
     );
-    expect(session.threads()[0]?.messages.map((message) => message.body)).toEqual([
+    expect(session.threads()[0]?.rows.flatMap((row) => row.message ? [row.message] : []).map((message) => message.body)).toEqual([
       "Hello",
       "Actual server response",
     ]);
@@ -933,7 +1135,7 @@ describe("direct T3 connection", () => {
     await expect(interrupted).resolves.toEqual({ ok: false, error: "Connection lost" });
     await expect(interruptedFiles).rejects.toThrow("Connection lost");
     expect((await remainingQueries).every((result) => result.status === "rejected")).toBe(true);
-    expect(session.threads()[0]?.messages).toEqual([]);
+    expect(session.threads()[0]?.rows).toEqual([]);
   });
 });
 
