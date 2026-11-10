@@ -19,7 +19,7 @@ export type SettingsOption = {
   kind: string;
   value: string;
   explicit: boolean;
-  choices: Array<{ id: string; label: string }>;
+  choices: Array<{ id: string; label: string; description: string }>;
 };
 
 export type SettingsModel = {
@@ -32,6 +32,7 @@ export type SettingsModel = {
   unavailableReason: string;
   isDefault: boolean;
   isLegacy: boolean;
+  isFavorite: boolean;
   options: SettingsOption[];
 };
 
@@ -141,9 +142,9 @@ function optionRows(model: RecordValue, selection: ModelSelection | null): Setti
       value,
       explicit: explicit.has(id),
       choices: descriptor.type === "boolean"
-        ? [{ id: "true", label: "On" }, { id: "false", label: "Off" }]
+        ? [{ id: "true", label: "On", description: "" }, { id: "false", label: "Off", description: "" }]
         : choices.filter((choice) => !promptInjected.includes(string(choice.id))).map((choice) => ({
-            id: string(choice.id), label: string(choice.label) || string(choice.id),
+            id: string(choice.id), label: string(choice.label) || string(choice.id), description: string(choice.description),
           })),
     };
   });
@@ -218,6 +219,8 @@ export function projectThreadSettings(
   const providers = records(config.providers);
   const lockedId = policy.lockedProviderInstanceId ?? (policy.canSwitchProvider === false ? persisted?.instanceId ?? "" : "");
   const preferences = object(object(config.settings).providerModelPreferences);
+  const favorites = new Set(records(object(config.settings).favorites)
+    .map((favorite) => `${string(favorite.provider)}:${string(favorite.model)}`));
   const groups: Array<{ id: string; label: string; provider: string; models: SettingsModel[] }> = [];
   const modelRow = (provider: RecordValue, model: RecordValue, unavailableReason = ""): SettingsModel => {
     const instanceId = string(provider.instanceId);
@@ -228,6 +231,7 @@ export function projectThreadSettings(
       label: string(model.name) || slug,
       available: !unavailableReason, unavailableReason,
       isDefault: model.isDefault === true, isLegacy: model.isLegacy === true,
+      isFavorite: favorites.has(id),
       options: optionRows(model, id === selectionId(current) ? current : id === selectionId(persisted) ? persisted : null),
     };
   };
@@ -284,6 +288,8 @@ export function projectThreadSettings(
   const runtime = choices.find((choice) => choice.id === runtimeMode);
   const error = !selectedModel ? "Choose a model." : selectedModel.unavailableReason
     || (!runtime ? "This provider does not support the selected runtime mode." : runtime.unavailableReason);
+  for (const group of groups)
+    group.models.sort((left, right) => Number(right.isFavorite) - Number(left.isFavorite));
   return {
     groups, selectedModelId: selectionId(current), selectedModel, runtimeMode,
     runtimeChoices: choices,

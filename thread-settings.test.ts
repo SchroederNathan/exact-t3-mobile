@@ -11,7 +11,7 @@ function fixture() {
       {
         id: "effort", label: "Reasoning", type: "select",
         options: [
-          { id: "medium", label: "Medium", isDefault: true },
+          { id: "medium", label: "Medium", description: "Balance speed and depth.", isDefault: true },
           { id: "xhigh", label: "Extra high" },
           { id: "ultrathink", label: "Ultrathink" },
         ],
@@ -45,6 +45,32 @@ function fixture() {
 }
 
 describe("thread settings", () => {
+  test("projects server favorites by provider instance and sorts them before the preferred model order", () => {
+    const { config, thread } = fixture();
+    const settings = {
+      favorites: [
+        { provider: "other-account", model: "gpt-6" },
+        { provider: "codex-work", model: "gpt-6-mini" },
+      ],
+      providerModelPreferences: { "codex-work": { modelOrder: ["gpt-6", "gpt-6-mini"] } },
+    };
+    const before = JSON.stringify(settings);
+    const view = projectThreadSettings({ ...config, settings }, thread);
+    expect(view.groups[0]?.models.map(({ slug, isFavorite }) => ({ slug, isFavorite }))).toEqual([
+      { slug: "gpt-6-mini", isFavorite: true },
+      { slug: "gpt-6", isFavorite: false },
+    ]);
+    expect(view.selectedModel?.isFavorite).toBe(false);
+    for (const favorites of [[], null]) {
+      expect(projectThreadSettings({ ...config, settings: { ...settings, favorites } }, thread).groups[0]?.models.map((model) => model.slug)).toEqual(["gpt-6", "gpt-6-mini"]);
+    }
+    const both = projectThreadSettings({ ...config, settings: {
+      ...settings, favorites: [...settings.favorites, { provider: "codex-work", model: "gpt-6" }],
+    } }, thread);
+    expect(both.groups[0]?.models.map((model) => model.slug)).toEqual(["gpt-6", "gpt-6-mini"]);
+    expect(JSON.stringify(settings)).toBe(before);
+  });
+
   test("projects catalog groups and defaults without sending implicit options", () => {
     const { config, thread } = fixture();
     const before = JSON.stringify({ config, thread });
@@ -59,8 +85,9 @@ describe("thread settings", () => {
       { id: "ultracode", value: "false" },
       { id: "variant", value: "" },
     ]);
-    expect(view.selectedModel?.options[0]?.choices.map((choice) => choice.id)).toEqual([
-      "medium", "xhigh",
+    expect(view.selectedModel?.options[0]?.choices).toEqual([
+      { id: "medium", label: "Medium", description: "Balance speed and depth." },
+      { id: "xhigh", label: "Extra high", description: "" },
     ]);
     expect(view.selection?.modelSelection.options).toBeUndefined();
     expect(view.error).toBe("");

@@ -685,6 +685,96 @@ describe("direct T3 connection", () => {
 });
 
 describe("direct thread settings", () => {
+  test("persists favorites with the server settings patch and reflects authoritative settings", async () => {
+    const { session, provider, requests } = settingsSession();
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: {
+      providers: [provider], settings: { favorites: null },
+    } }] }));
+    const favorite = () => session.settings("thread").groups[0]?.models.find((model) => model.slug === "gpt-6-mini")?.isFavorite;
+    const adding = session.setModelFavorite("thread", "codex:gpt-6-mini", true);
+    const addRequest = requests.at(-1)!;
+    expect(addRequest.tag).toBe("server.updateSettings");
+    expect(addRequest.payload).toEqual({ patch: {
+      setModelFavorites: [{ provider: "codex", model: "gpt-6-mini", favorite: true }],
+      migrateModelPreferences: { favorites: [] },
+    } });
+    expect(favorite()).toBe(false);
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: addRequest.id, exit: { _tag: "Success", value: {
+      favorites: [{ provider: "codex", model: "gpt-6-mini" }],
+    } } }));
+    await expect(adding).resolves.toEqual({ ok: true, error: "" });
+    expect(favorite()).toBe(true);
+    const removing = session.setModelFavorite("thread", "codex:gpt-6-mini", false);
+    const removeRequest = requests.at(-1)!;
+    expect(removeRequest.payload).toEqual({ patch: { setModelFavorites: [{ provider: "codex", model: "gpt-6-mini", favorite: false }] } });
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: removeRequest.id, exit: { _tag: "Success", value: { favorites: [] } } }));
+    await expect(removing).resolves.toEqual({ ok: true, error: "" });
+    expect(favorite()).toBe(false);
+    const lateReply = session.setModelFavorite("thread", "codex:gpt-6-mini", true);
+    const lateRequest = requests.at(-1)!;
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "settingsUpdated", payload: { settings: { favorites: [] } } }] }));
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: lateRequest.id, exit: { _tag: "Success", value: { favorites: [{ provider: "codex", model: "gpt-6-mini" }] } } }));
+    await expect(lateReply).resolves.toEqual({ ok: true, error: "" });
+    expect(favorite()).toBe(false);
+  });
+
+  test("validates favorite identity independently of availability and keeps server-rejected favorites unchanged", async () => {
+    const { session, provider, requests } = settingsSession();
+    const update = (providers: unknown[], favorites: Array<{ provider: string; model: string }> = []) => session.receive(JSON.stringify({
+      _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { providers, settings: { favorites } } }],
+    }));
+    update([provider]);
+    const count = requests.length;
+    await expect(session.setModelFavorite("missing", "codex:gpt-6", true)).resolves.toMatchObject({ ok: false });
+    await expect(session.setModelFavorite("thread", "codex:unknown", true)).resolves.toMatchObject({ ok: false });
+    await expect(session.setModelFavorite("thread", "codex:unknown", false)).resolves.toMatchObject({ ok: false });
+    expect(requests.length).toBe(count);
+    for (const providers of [
+      [{ ...provider, enabled: false }],
+      [{ ...provider, installed: false }],
+      [{ ...provider, availability: "unavailable" }],
+      [{ ...provider, auth: { status: "unauthenticated" } }],
+      [{ ...provider, models: [] }],
+      [],
+    ]) {
+      update(providers);
+      for (const favorite of [true, false]) {
+        const before = requests.length;
+        const changing = session.setModelFavorite("thread", "codex:gpt-6", favorite);
+        expect(requests.length).toBe(before + 1);
+        const request = requests.at(-1)!;
+        expect(request.payload).toEqual({ patch: { setModelFavorites: [{ provider: "codex", model: "gpt-6", favorite }] } });
+        session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: {
+          _tag: "Success", value: { favorites: favorite ? [{ provider: "codex", model: "gpt-6" }] : [] },
+        } }));
+        await expect(changing).resolves.toEqual({ ok: true, error: "" });
+        expect(session.settings("thread").selectedModel?.isFavorite).toBe(favorite);
+      }
+    }
+    const retired = { provider: "retired-account", model: "retired:model" };
+    update([], [retired]);
+    const retiredId = `${retired.provider}:${retired.model}`;
+    const before = requests.length;
+    await expect(session.setModelFavorite("thread", retiredId, true)).resolves.toMatchObject({ ok: false });
+    expect(requests.length).toBe(before);
+    const removing = session.setModelFavorite("thread", retiredId, false);
+    expect(requests.length).toBe(before + 1);
+    const removal = requests.at(-1)!;
+    expect(removal.payload).toEqual({ patch: { setModelFavorites: [{ ...retired, favorite: false }] } });
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: removal.id, exit: { _tag: "Success", value: { favorites: [] } } }));
+    await expect(removing).resolves.toEqual({ ok: true, error: "" });
+    await expect(session.setModelFavorite("thread", retiredId, false)).resolves.toMatchObject({ ok: false });
+    expect(requests.length).toBe(before + 1);
+    update([provider]);
+    const rejected = session.setModelFavorite("thread", "codex:gpt-6-mini", true);
+    const request = requests.at(-1)!;
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: {
+      _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Settings access denied" } }],
+    } }));
+    await expect(rejected).resolves.toEqual({ ok: false, error: "Settings access denied" });
+    expect(session.settings("thread").groups[0]?.models.every((model) => !model.isFavorite)).toBe(true);
+  });
+
   test("uses shell start markers until the selected thread supplies provider handoff capabilities", () => {
     const { session, provider, updateProviders, requests } = settingsSession();
     updateProviders([provider, { ...provider, instanceId: "claude", driver: "claudeAgent" }]);

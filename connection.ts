@@ -566,6 +566,32 @@ export class DirectSession {
       : { ok: false, error: "This thread is no longer available.", selection: null };
   }
 
+  async setModelFavorite(threadId: string, modelId: string, favorite: boolean): Promise<Reply> {
+    if (!this.shells.has(threadId)) return { ok: false, error: "This thread is no longer available." };
+    const settings = this.config.settings;
+    if (!settings) return { ok: false, error: "Model favorites are still loading." };
+    const model = this.settings(threadId).groups.flatMap((group) => group.models)
+      .find((model) => model.id === modelId);
+    const saved = !favorite ? records(object(settings).favorites)
+      .find((entry) => `${string(entry.provider)}:${string(entry.model)}` === modelId) : undefined;
+    const target = model ? { provider: model.instanceId, model: model.slug }
+      : saved ? { provider: string(saved.provider), model: string(saved.model) } : undefined;
+    if (!target?.provider || !target.model)
+      return { ok: false, error: "This model is no longer available." };
+    try {
+      const updated = await this.query("server.updateSettings", {
+        patch: {
+          setModelFavorites: [{ ...target, favorite }],
+          ...(object(settings).favorites === null ? { migrateModelPreferences: { favorites: [] } } : {}),
+        },
+      });
+      if (this.config.settings === settings) this.config.settings = updated;
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The favorite could not be updated." };
+    }
+  }
+
   private settingsPolicy(thread: ObjectValue | undefined) {
     const projection = this.switching;
     if (thread && projection && projection.thread.id === thread.id)
