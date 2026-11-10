@@ -1,6 +1,7 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft } from "./drafts";
+import { ComposerSettings } from "./composer-settings";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -20,6 +21,7 @@ export const grants =
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
+const composerSettings = new ComposerSettings();
 let current: DirectSession | undefined;
 let savedEnvironments: Promise<Environment[]> | undefined;
 let nextGeneration = 0;
@@ -247,6 +249,27 @@ async function loadCatalog(
 }
 
 const sources: Sources = {
+  loadSettings: ([id], _store, _storage, native) => {
+    if (!id) return { groups: [], options: [], selectedModelId: "", runtimeMode: "", runtimeLabel: "", runtimeChoices: [], saveLabel: "Done", error: "" };
+    native?.watch("connections");
+    const identity = threadIdentity(id);
+    return composerSettings.project(id, identity.threadId, sessionFor(identity.environmentId));
+  },
+  beginSettings: ([id]) => {
+    const identity = threadIdentity(id);
+    return composerSettings.begin(id, identity.threadId, sessionFor(identity.environmentId));
+  },
+  changeSettings: ([id, kind, option, value]) => {
+    const identity = threadIdentity(id);
+    return composerSettings.change(id, identity.threadId, sessionFor(identity.environmentId),
+      kind === "model" ? { type: "model", id: option }
+        : kind === "runtime" ? { type: "runtime", id: value }
+          : { type: "option", id: option, value });
+  },
+  closeSettings: ([id, save]) => {
+    const identity = threadIdentity(id);
+    return composerSettings.close(id, identity.threadId, sessionFor(identity.environmentId), save);
+  },
   loadDrafts: (_args, _store, storage) => loadDrafts(storage),
   saveDraft: async ([id, text, revision], _store, storage) => {
     await saveDraft(storage, id, text, revision);
@@ -313,6 +336,7 @@ const sources: Sources = {
           value.trim(),
           crypto.randomUUID(),
           crypto.randomUUID(),
+          composerSettings.selection(id),
         ), native);
       }
       const tokens = operation === "pair" || operation === "remove" ? credentials(store) : {};

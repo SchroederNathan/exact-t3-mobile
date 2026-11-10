@@ -240,36 +240,40 @@ final class T3NativeModule: ExactModule {
   override func route(_ route: ExactRoute) {
     MainActor.assumeIsolated {
       let item = route.controller.navigationItem
+      let style = route.data[.workspaceHeader]
       configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
       item.backButtonDisplayMode = .minimal
       item.hidesBackButton = route.data[.hidesBack] == "true"
       if let sidebar = route.data[.sidebar] { container?.setSidebarHidden(sidebar == "hidden") }
       #if canImport(UIKit, _version: 9127.0.85)
-      if #available(iOS 27.1, *) {
+      if #available(iOS 27.1, *), style != "settings-sheet" {
         // Leading items belong to their own column; only trailing items move to the Duo rail.
         item.leftBarButtonItems?.forEach { $0.axisBehavior = .horizontalOnly }
       }
       #endif
-      let style = route.data[.workspaceHeader]
-      guard style == "brand" || style == "editor" else { return }
-      item.style = .editor
-      if #available(iOS 27.2, *) { item.titleAlignment = .leading }
-      guard style == "brand" else { return }
-      let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
-      let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
-      let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
-      title.preferredWidth = max(120, route.controller.view.bounds.width - 32 - CGFloat(itemCount) * 44)
-      title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
-      title.stageName = route.data[.brandStage] ?? "DEV"
-      item.titleView = title
-      route.owns(view: title, "T3 wordmark and build-stage title")
+      guard style == "brand" || style == "editor" || style == "settings-sheet" else { return }
+      if style != "settings-sheet" {
+        item.style = .editor
+        if #available(iOS 27.2, *) { item.titleAlignment = .leading }
+      }
+      guard style != "editor" else { return }
+      if style == "brand" {
+        let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
+        let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
+        let itemCount = (item.leftBarButtonItems?.count ?? 0) + (item.rightBarButtonItems?.count ?? 0) + searchButtonCount
+        title.preferredWidth = max(120, route.controller.view.bounds.width - 32 - CGFloat(itemCount) * 44)
+        title.frame = CGRect(origin: .zero, size: title.intrinsicContentSize)
+        title.stageName = route.data[.brandStage] ?? "DEV"
+        item.titleView = title
+        route.owns(view: title, "T3 wordmark and build-stage title")
+      }
       if let search = item.searchController {
         search.hidesNavigationBarDuringPresentation = false
         search.obscuresBackgroundDuringPresentation = false
         search.searchBar.autocapitalizationType = .none
         item.hidesSearchBarWhenScrolling = false
         if #available(iOS 26.0, *) {
-          let integrated = route.data[.searchPlacement] == "integrated"
+          let integrated = route.data[.searchPlacement] == "integrated" || style == "settings-sheet"
           item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
           item.searchBarPlacementAllowsToolbarIntegration = integrated
           let placement = item.searchBarPlacementBarButtonItem

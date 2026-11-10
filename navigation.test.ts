@@ -13,13 +13,13 @@ function navigation(tab = "threads"): Router {
       ["threads", "/"], ["threadDetail", "/detail"], ["pullRequests", "/pulls"],
       ["usage", "/usage"], ["settings", "/settings"], ["settingsDetail", "/settings/detail"],
     ].map(([name, url], id) => ({
-      name: name!, stack: [{ id, name: name!, url: url!, tab: name!, params: { id: "", kind: "" }, fragment: "" }],
+      name: name!, stack: [{ id, name: name!, url: url!, tab: name!, params: { id: "", kind: "", option: "" }, fragment: "" }],
     })),
   };
 }
 
 function visit(router: Router, tab: string, name: string, url: string, params = { id: "", kind: "" }, fragment = ""): Entry {
-  const entry = { id: router.next++, tab, name, url, params, fragment };
+  const entry = { id: router.next++, tab, name, url, params: { ...params, option: "" }, fragment };
   router.tabs.find((entry) => entry.name === tab)!.stack.push(entry);
   return entry;
 }

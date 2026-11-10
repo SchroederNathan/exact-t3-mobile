@@ -22,6 +22,7 @@ const accepted = (socket: Socket, requestId: string) => socket.send(JSON.stringi
 }));
 let nextSocket = 0;
 let secondaryAccepted = 0;
+const settingsCommands: Record<string, unknown>[] = [];
 let checkpoint: { primary: number; secondary: number } | undefined;
 
 function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
@@ -55,6 +56,7 @@ function environment(id: string, label: string, secondary = false) {
     projectId: secondary ? "remote" : "active",
     title: id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : "Beta thread",
     status: "idle",
+    runtimeMode: "full-access",
     updatedAt: timestamp,
     latestUserMessageAt: timestamp,
     modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
@@ -76,6 +78,14 @@ function environment(id: string, label: string, secondary = false) {
           label,
           orchestrationProtocolVersion: 2,
         });
+      }
+      if (path === "/assert/settings" && request.method === "POST") {
+        const runtime = settingsCommands.at(-2);
+        const message = settingsCommands.at(-1);
+        const expected = { instanceId: "fixture-provider", model: "fixture-fast", options: [{ id: "effort", value: "high" }] };
+        return runtime?.type === "thread.runtime-mode.set" && runtime.runtimeMode === "approval-required"
+          && message?.type === "message.dispatch" && JSON.stringify(message.modelSelection) === JSON.stringify(expected)
+          ? json({ ok: true }) : json({ error: "The selected model, reasoning and runtime were not dispatched in order." }, 409);
       }
       if (path === "/oauth/token") {
         const form = new URLSearchParams(await request.text());
@@ -122,7 +132,18 @@ function environment(id: string, label: string, secondary = false) {
               providers: [{
                 instanceId: "fixture-provider",
                 driver: "codex",
-                models: [{ slug: "fixture-model", shortName: "Fixture model" }],
+                installed: true,
+                enabled: true,
+                auth: { status: "authenticated" },
+                models: ["fixture-model", "fixture-fast"].map((slug) => ({
+                  slug,
+                  name: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
+                  shortName: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
+                  capabilities: { optionDescriptors: [{
+                    id: "effort", label: "Reasoning", type: "select",
+                    options: [{ id: "medium", label: "Medium", isDefault: true }, { id: "high", label: "High" }],
+                  }] },
+                })),
               }],
             },
           });
@@ -138,6 +159,11 @@ function environment(id: string, label: string, secondary = false) {
               }],
             },
           });
+        } else if (frame.tag === "orchestration.dispatchCommand" && (
+          frame.payload.type === "thread.runtime-mode.set" || frame.payload.text === "Send chosen settings"
+        )) {
+          settingsCommands.push(frame.payload);
+          accepted(socket, frame.id);
         } else if (
           secondary && frame.tag === "orchestration.dispatchCommand" &&
           frame.payload.threadId === "gamma" && frame.payload.text === "Accept on secondary"

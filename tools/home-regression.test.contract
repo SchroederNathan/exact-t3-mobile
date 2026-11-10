@@ -315,3 +315,55 @@ test "a native relaunch keeps environments and delivered links restore their par
   back
   clock settle
   expect state current.name == "settings"
+
+test "native model settings save and cancel through their own navigation stack" on ios
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha"
+  clock data
+  clock settle
+  tap "model-settings"
+  clock data
+  clock settle
+  expect state current.name == "threadSettings"
+  expect state settings.selectedModelId == "fixture-provider:fixture-model"
+  tap "model-fixture-provider:fixture-fast"
+  clock data
+  tap "cancel-settings"
+  clock data
+  clock settle
+  expect state current.name == "thread"
+  tap "model-settings"
+  clock data
+  clock settle
+  expect state settings.selectedModelId == "fixture-provider:fixture-model"
+  tap "model-fixture-provider:fixture-fast"
+  clock data
+  tap "option-effort"
+  clock settle
+  expect state current.name == "settingChoice"
+  tap "choice-high"
+  clock data
+  clock settle
+  expect state current.name == "threadSettings"
+  tap "runtime-options"
+  clock settle
+  tap "choice-approval-required"
+  clock data
+  clock settle
+  expect state settings.runtimeMode == "approval-required"
+  tap "save-settings"
+  clock data
+  clock settle
+  expect state current.name == "thread"
+  type "composer" "Send chosen settings"
+  tap "send"
+  clock data
+  expect text "composer" == ""
+  request POST "http://127.0.0.1:0/assert/settings"
