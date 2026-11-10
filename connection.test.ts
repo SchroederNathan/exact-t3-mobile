@@ -185,6 +185,20 @@ describe("long thread history", () => {
     expect(f.bodies()).toEqual([]);
     f.snapshot({ projection: { thread: { id: "thread" }, messages: [raw] } });
     expect(f.bodies()).toEqual(["hidden raw"]);
+    const unfinished = historyRow("fence", 3, { text: "```ts\nconst value = 1;", streaming: true });
+    f.snapshot({ projection: { visibleTurnItems: [inherited, unfinished] } });
+    const before = f.session.threads(0)[0]!;
+    const inheritedMessage = before.rows[0]!.message;
+    const codeMessage = before.rows[1]!.message!;
+    expect(codeMessage.blocks[0]?.pending).toBe(true);
+    expect(f.session.markdownBlocks("thread", before.toolViewKey, [{ messageId: codeMessage.id, blockId: codeMessage.blocks[0]!.id }], "code")[0]?.body).toBe("const value = 1;");
+    f.event(21, "turn-item.updated", { ...unfinished.item, streaming: false });
+    const completed = f.session.threads(0)[0]!;
+    expect(completed.rows[0]!.message).toBe(inheritedMessage);
+    expect(completed.rows[1]!.message!.blocks[0]?.pending).toBe(false);
+    expect(completed.rows[1]!.message!.id).toBe(codeMessage.id);
+    expect(completed.markdownRevision).toBeGreaterThan(before.markdownRevision);
+    expect(f.session.markdownBlocks("thread", "stale", [{ messageId: codeMessage.id, blockId: codeMessage.blocks[0]!.id }], "code")).toEqual([]);
   });
 
   test("prepends older pages without replacing live rows or the resume cursor", async () => {
@@ -633,6 +647,8 @@ describe("direct T3 connection", () => {
                   settledAt: "2026-11-08T11:59:00Z",
                   lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "t" },
                 },
+                { id: "archived", projectId: "p", title: "Archived", archivedAt: "2026-11-08T00:00:00Z" },
+                { id: "deleted", projectId: "p", title: "Deleted", deletedAt: "2026-11-08T00:00:00Z" },
                 {
                   id: "child",
                   projectId: "p",
@@ -704,9 +720,25 @@ describe("direct T3 connection", () => {
     expect(session.projectList()).toEqual([
       { id: "env:p", title: "T3 Code", environmentId: "env" },
     ]);
+    for (const id of ["child", "side", "archived"]) {
+      session.select(id);
+      const subscription = JSON.parse(sent.at(-1)!);
+      expect(subscription).toMatchObject({ tag: "orchestration.subscribeThread", payload: { threadId: id } });
+      session.receive(JSON.stringify({ _tag: "Chunk", requestId: subscription.id, values: [{ kind: "snapshot", projection: { messages: [{ id: `${id}-message`, role: "assistant", text: `Linked ${id}` }] } }] }));
+      const detail = session.threads().find((thread) => thread.id === `env:${id}`);
+      expect(detail).toMatchObject({ listed: false, rows: [{ message: { body: `Linked ${id}` } }] });
+      expect(session.threads().filter((thread) => thread.listed).map((thread) => thread.id)).toEqual(["env:t"]);
+      session.select("");
+      expect(session.threads().map((thread) => thread.id)).toEqual(["env:t"]);
+    }
+    session.select("deleted");
+    expect(session.threads().map((thread) => thread.id)).toEqual(["env:t"]);
+    expect(session.threadRefs().map((ref) => ref.threadId)).not.toContain("deleted");
+    session.select("");
     expect(session.threads(Date.parse("2026-11-08T12:00:00Z"))).toEqual([
       {
         id: scopedThreadId("env", "t"),
+        listed: true,
         environmentId: "env",
         title: "Fix startup",
         project: "T3 Code",
@@ -732,6 +764,7 @@ describe("direct T3 connection", () => {
         lastErrorTime: expect.any(String),
         rows: [],
         toolViewKey: expect.any(String),
+        markdownRevision: 0,
         history: { ready: false, synchronized: false, hasMore: false, loading: false, error: "" },
       },
     ]);
@@ -1052,6 +1085,23 @@ describe("direct T3 connection", () => {
       body: "const answer = 42;",
       items: [],
     });
+    for (const path of ["/Volumes/ExternalSSD/My Project/a%2Fb.ts", "src/中文.ts"]) {
+      expect(await session.fileLinkPath("thread", path)).toBe(path);
+      const reading = session.inspect("thread", "file", path);
+      const request = JSON.parse(sent.at(-1)!);
+      expect(request.payload).toEqual({ cwd: "/worktree", relativePath: path });
+      session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "File permission refused." } }] } }));
+      await expect(reading).rejects.toThrow("File permission refused.");
+    }
+    const basename = session.fileLinkPath("thread", "app.ts");
+    const search = JSON.parse(sent.at(-1)!);
+    expect(search).toMatchObject({ tag: "projects.searchEntries", payload: { cwd: "/worktree", query: "app.ts", limit: 100, kind: "file" } });
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: search.id, exit: { _tag: "Success", value: { entries: [{ path: "src/app.ts" }], truncated: false } } }));
+    expect(await basename).toBe("src/app.ts");
+    const ambiguous = session.fileLinkPath("thread", "app.ts");
+    const ambiguousSearch = JSON.parse(sent.at(-1)!);
+    session.receive(JSON.stringify({ _tag: "Exit", requestId: ambiguousSearch.id, exit: { _tag: "Success", value: { entries: [{ path: "src/app.ts" }, { path: "test/app.ts" }], truncated: false } } }));
+    await expect(ambiguous).rejects.toThrow("ambiguous");
     const git = session.inspect("thread", "git", "");
     const gitRequest = JSON.parse(sent.at(-1)!);
     expect(gitRequest).toMatchObject({

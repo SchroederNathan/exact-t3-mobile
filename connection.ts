@@ -214,6 +214,11 @@ function errorDetails(thread: ObjectValue): { message: string; time: string } {
   return { message, time };
 }
 
+function listedThread(thread: ObjectValue): boolean {
+  const lineage = object(thread.lineage);
+  return !thread.deletedAt && !thread.archivedAt && lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+}
+
 function status(thread: ObjectValue): string {
   const request = string(object(thread.pendingRuntimeRequest).kind);
   if (request === "user_input") return "Input";
@@ -447,6 +452,28 @@ export class DirectSession {
     return new Promise((resolve, reject) => this.queries.set(id, { resolve, reject }));
   }
 
+  threadRefs() {
+    return [...this.shells].filter(([, thread]) => !thread.deletedAt).map(([threadId]) => ({ environmentId: this.environment.id, threadId }));
+  }
+
+  async fileLinkPath(threadId: string, path: string): Promise<string> {
+    const shell = this.shells.get(threadId);
+    if (!shell) throw new Error("This thread is no longer available.");
+    const cwd = string(shell.worktreePath) || string(this.projects.get(string(shell.projectId))?.workspaceRoot);
+    if (!cwd) throw new Error("This thread has no available workspace.");
+    if (path.startsWith("~/")) {
+      const home = /^(\/Users\/[^/]+|\/home\/[^/]+)/.exec(cwd)?.[1];
+      if (home) return `${home}/${path.slice(2)}`;
+    }
+    if (/[\\/]/.test(path)) return path;
+    const result = await this.query("projects.searchEntries", { cwd, query: path, limit: 100, kind: "file" });
+    const matches = records(result.entries).map((entry) => string(entry.path)).filter((entry) => entry.split("/").at(-1) === path);
+    if (matches.includes(path)) return path;
+    if (matches.length === 1 && result.truncated !== true) return matches[0]!;
+    if (matches.length > 1 || result.truncated === true) throw new Error("This file name is ambiguous. Open a link with its full path.");
+    return path;
+  }
+
   async inspect(threadId: string, kind: string, path: string): Promise<Inspection> {
     const shell = this.shells.get(threadId);
     if (!shell) throw new Error("This thread is no longer available.");
@@ -582,6 +609,16 @@ export class DirectSession {
 
   private toolViewKey(threadId: string): string {
     return JSON.stringify([this.environment.id, this.serial, threadId, this.transcripts.get(threadId)?.generation ?? -1]);
+  }
+
+  markdownBlocks(threadId: string, viewKey: string, refs: { messageId: string; blockId: string }[], kind: "code" | "table") {
+    if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return [];
+    const history = this.transcripts.get(threadId);
+    if (!history || history.deleted) return [];
+    return refs.slice(-64).flatMap((ref) => {
+      const block = history.block(ref.messageId, ref.blockId);
+      return block?.kind === kind ? [block] : [];
+    });
   }
 
   private currentTool(entry: ExpandedTool): TimelineRow | undefined {
@@ -1116,13 +1153,7 @@ export class DirectSession {
 
   threads(now = 0): Thread[] {
     return [...this.shells.entries()]
-      .filter(
-        ([, thread]) =>
-          !thread.deletedAt &&
-          !thread.archivedAt &&
-          object(thread.lineage).relationshipToParent !== "subagent" &&
-          object(thread.lineage).sideChat !== true,
-      )
+      .filter(([id, thread]) => !thread.deletedAt && (id === this.selected || listedThread(thread)))
       .map(([id, thread]) => {
         const project = this.projects.get(string(thread.projectId)) ?? {};
         const selection = object(thread.modelSelection);
@@ -1138,6 +1169,7 @@ export class DirectSession {
         const error = errorDetails(thread);
         return {
           id: scopedThreadId(this.environment.id, id),
+          listed: listedThread(thread),
           environmentId: this.environment.id,
           project: string(project.title) || "Project",
           projectId: scopedThreadId(this.environment.id, string(thread.projectId)),
@@ -1165,6 +1197,7 @@ export class DirectSession {
           updatedAt: relativeTime(activityAt, now),
           rows,
           toolViewKey: this.toolViewKey(id),
+          markdownRevision: this.transcripts.get(id)?.markdownRevision ?? 0,
           history: this.history(id),
         };
       })
