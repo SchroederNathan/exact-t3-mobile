@@ -191,7 +191,7 @@ export class ControlsFixture {
     const request = scenario.requests.get(text(command.requestId));
     if (!request || request.status !== "pending") return "The runtime request is no longer pending.";
     const item = [...scenario.items.values()].filter((item) => item.requestId === request.id).at(-1);
-    if (command.type === "thread.user-input.dismiss") return request.kind === "user_input" && (request.responseCapability.type === "message" || item?.responseMode === "message") ? "" : "Only a message-mode question can be dismissed.";
+    if (command.type === "thread.user-input.dismiss") return request.kind === "user_input" && request.responseCapability.type === "message" ? "" : "This question needs an answer. Answer it or stop the turn.";
     if (request.responseCapability.type === "not_resumable") return request.responseCapability.reason;
     if (request.kind === "command") {
       if (request.responseCapability.type !== "live") return "Approval requires a live provider session.";
@@ -200,6 +200,12 @@ export class ControlsFixture {
     }
     if (request.kind !== "user_input") return "This runtime request is not a user control.";
     const answers = object(command.answers);
+    if (request.responseCapability.type === "message") {
+      const answered = (answer: unknown) => typeof answer === "string" ? answer.trim() !== "" : Array.isArray(answer) && answer.length > 0 && answer.every((value) => typeof value === "string" && value.trim() !== "");
+      const questions = Array.isArray(item?.questions) ? item.questions.map(object) : [];
+      if (!questions.every((question) => question.required === false || answered(answers[text(question.id)]))) return "Answer each question before sending.";
+      return questions.some((question) => answered(answers[text(question.id)])) ? "" : "Enter an answer before sending.";
+    }
     return Array.isArray(item?.questions) && item.questions.every((question) => {
       const id = text(object(question).id);
       return Object.hasOwn(answers, id) && answers[id] !== null && answers[id] !== undefined;
@@ -228,8 +234,8 @@ export class ControlsFixture {
         runId: payload.runId, status: "running", completedAt: null, message: "Waiting for the provider to stop.",
       }));
     } else {
-      this.resolve(scenario, scenario.requests.get(text(payload.requestId))!, payload.type === "thread.user-input.dismiss" ? "cancelled" : "resolved",
-        payload.decision !== undefined ? { decision: payload.decision } : { answers: object(payload.answers) });
+      this.resolve(scenario, scenario.requests.get(text(payload.requestId))!, "resolved",
+        payload.type === "thread.user-input.dismiss" ? { decision: "cancel" } : payload.decision !== undefined ? { decision: payload.decision } : { answers: object(payload.answers) });
     }
     if (this.receiptMode === "held") this.receipts.push({ socket, requestId, sequence: this.sequence });
     else success(socket, requestId, { sequence: this.sequence });
