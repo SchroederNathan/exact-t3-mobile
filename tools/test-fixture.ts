@@ -3,25 +3,27 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { ActivityFixture } from "./activity-fixture";
+import { ControlsFixture } from "./controls-fixture";
 import { MarkdownFixture } from "./markdown-fixture";
 
 const app = resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
 const activityMode = process.argv.includes("--activities");
 const markdownMode = process.argv.includes("--markdown");
+const controlsMode = process.argv.includes("--controls");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
 for (let index = 2; index < process.argv.length; index++) {
   const argument = process.argv[index]!;
-  if (["--activities", "--no-command-stream", "--markdown", "--third-environment"].includes(argument)) continue;
+  if (["--activities", "--no-command-stream", "--markdown", "--controls", "--third-environment"].includes(argument)) continue;
   const match = /^(--(?:port|secondary-port|third-port))(?:=(.*))?$/.exec(argument);
   if (!match) { exactArguments.push(argument); continue; }
   const value = match[2] ?? process.argv[++index] ?? "";
   if (!/^\d+$/.test(value) || Number(value) > 65535) throw new Error(`${match[1]} requires a port from 0 to 65535.`);
   fixturePorts.set(match[1]!, Number(value));
 }
-if (thirdEnvironment && !markdownMode) throw new Error("--third-environment requires --markdown.");
+if (thirdEnvironment && !markdownMode && !controlsMode) throw new Error("--third-environment requires --markdown or --controls.");
 if (fixturePorts.has("--third-port") && !thirdEnvironment) throw new Error("--third-port requires --third-environment.");
 const fixedPorts = [...fixturePorts.values()].filter((port) => port !== 0);
 if (new Set(fixedPorts).size !== fixedPorts.length) throw new Error("Each fixture environment needs a different port.");
@@ -73,6 +75,15 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       chunk(socket, socket.data.shellRequest, { kind: "thread.updated", sequence, location: "active", thread });
     }
   }) : undefined;
+  const controls = controlsMode ? new ControlsFixture(id, secondary ? "remote" : "active", (thread, sequence) => {
+    for (const socket of sockets) if (socket.data.shellRequest) {
+      chunk(socket, socket.data.shellRequest, { kind: "thread.updated", sequence, location: "active", thread });
+    }
+  }, () => {
+    const count = sockets.size;
+    for (const socket of sockets) socket.close(1012, "Fixture connection reset");
+    return count;
+  }) : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const held: { socket: Socket; requestId: string }[] = [];
   const projects = (secondary
@@ -96,6 +107,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     async fetch(request, server) {
       const path = new URL(request.url).pathname;
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      const controlsResponse = await controls?.http(request);
+      if (controlsResponse) return controlsResponse;
       const markdownResponse = await markdown?.http(request);
       if (markdownResponse) return markdownResponse;
       const activityResponse = await activities?.http(request);
@@ -157,7 +170,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           changed();
           return;
         }
-        if (markdown?.receive(socket, frame) || activities?.receive(socket, frame)) {
+        if (controls?.receive(socket, frame) || markdown?.receive(socket, frame) || activities?.receive(socket, frame)) {
           changed();
           return;
         }
@@ -165,7 +178,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         if (frame.tag === "orchestration.subscribeShell") {
           socket.data.shell = true;
           socket.data.shellRequest = frame.id;
-          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads: [...threads, ...(markdown?.threads ?? [])] } });
+          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads: [...threads, ...(markdown?.threads ?? []), ...(controls?.threads ?? [])] } });
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;
           chunk(socket, frame.id, {
@@ -176,7 +189,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
                 platform: { machine: secondary ? "laptop" : "mac-mini" },
                 ...(activities ? { capabilities: activities.config } : {}),
               },
-              ...(activities || markdown ? { threadResumeCompletionMarker: true } : {}),
+              ...(activities || markdown || controls ? { threadResumeCompletionMarker: true } : {}),
+              ...(controls ? { threadSnapshotPagination: true } : {}),
               providers: [{
                 instanceId: "fixture-provider",
                 driver: "codex",
@@ -216,7 +230,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               }],
             },
           });
-          if (activities || markdown) chunk(socket, frame.id, { kind: "synchronized" });
+          if (activities || markdown || controls) chunk(socket, frame.id, { kind: "synchronized" });
         } else if (frame.tag === "orchestration.dispatchCommand" && (
           frame.payload.type === "thread.runtime-mode.set" || frame.payload.text === "Send chosen settings"
         )) {
@@ -249,6 +263,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         sockets.delete(socket);
         markdown?.close(socket);
         activities?.close(socket);
+        controls?.close(socket);
         for (let i = held.length - 1; i >= 0; i--) {
           if (held[i]?.socket === socket) held.splice(i, 1);
         }
