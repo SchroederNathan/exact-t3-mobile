@@ -83,6 +83,8 @@ test("native environments aggregate colliding IDs and keep commands and connecti
         return { events: events.splice(0) };
       }
       if (request.op === "connections.send") {
+        const frame = JSON.parse(String(request.data));
+        if (["runtime-request.respond", "thread.user-input.dismiss", "run.interrupt"].includes(frame.payload?.type) && !readingStore) throw new Error("Controls must send before the first await.");
         const connection = connections.find((entry) => entry.id === request.id && entry.generation === request.generation);
         if (!connection) throw new Error("Disconnected");
         sent.push({ environmentId: connection.id, generation: connection.generation, frame: JSON.parse(String(request.data)) });
@@ -139,7 +141,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(initialSubscriptions.map(({ environmentId, frame }) => ({ environmentId, threadId: frame.payload.threadId }))).toEqual([
     { environmentId: "b", threadId: "t" },
   ]);
-  const bSubscription = initialSubscriptions[0]!.frame.id;
+  let bSubscription = initialSubscriptions[0]!.frame.id;
   chunk("b", bSubscription, { kind: "snapshot", projection: {
     messages: [{ id: "b-message", role: "user", text: "Opened by a cold link", createdAt: "2026-11-10T00:00:00Z" }],
   } });
@@ -151,6 +153,48 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     { id: "a:p", title: "Project a", environmentId: "a" },
     { id: "b:p", title: "Project b", environmentId: "b" },
   ]);
+  chunk("b", bSubscription, { kind: "snapshot", snapshotSequence: 30, projection: {
+    turnItems: [{ id: "approval-item", type: "approval_request", requestId: "request", options: [{ decision: "acceptAlways", label: "Always" }] }],
+    visibleTurnItems: [], runtimeRequests: [{ id: "request", kind: "command", status: "pending", responseCapability: { type: "live" } }],
+  } });
+  const controls = (await load()).threads.find(({ id }) => id === "b:t")!.controls;
+  _fetch.mockImplementationOnce(async (url, init) => {
+    expect(String(url)).toBe("http://b.example/api/auth/session");
+    expect(init?.headers).toEqual({ Authorization: "Bearer token-b" });
+    return new Response(JSON.stringify({ authenticated: true, permissions: ["orchestration:operate"] }));
+  });
+  expect(await answer("loadControlAccess", ["b", controls.accessKey, 0], store, storage, idleNative)).toEqual({ key: controls.accessKey, allowed: true, error: "" });
+  const beforeWrongTarget = sent.length;
+  expect(await answer("submitControl", ["b:t", controls.accessKey, "approve", "request", '["a","t","request"]', "acceptAlways", []], store, storage, native)).toEqual({ ok: false, error: "This request belongs to a different thread.", key: '["a","t","request"]', threadId: "b:t", drafts: [] });
+  expect(sent.length).toBe(beforeWrongTarget);
+  const controlPromise = answer("submitControl", ["b:t", controls.accessKey, "approve", "request", '["b","t","request"]', "acceptAlways", []], store, storage, native);
+  const controlRequest = sent.findLast((entry) => entry.frame.payload?.type === "runtime-request.respond")!;
+  expect(controlRequest.environmentId).toBe("b");
+  expect(controlRequest.frame.payload).toEqual({ type: "runtime-request.respond", commandId: expect.any(String), threadId: "t", requestId: "request", decision: "acceptAlways" });
+  expect(receipts.size).toBe(1);
+  activeThread = "a:t";
+  await load();
+  const aControlSubscription = sent.findLast((entry) => entry.environmentId === "a" && entry.frame.tag === "orchestration.subscribeThread")!.frame.id;
+  chunk("a", aControlSubscription, { kind: "snapshot", projection: { runs: [{ id: "run-A", ordinal: 1, status: "running" }], runtimeRequests: [], turnItems: [], visibleTurnItems: [] } });
+  const aControls = (await load()).threads.find(({ id }) => id === "a:t")!.controls;
+  _fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ authenticated: true, permissions: ["orchestration:operate"] })));
+  await answer("loadControlAccess", ["a", aControls.accessKey, 0], store, storage, idleNative);
+  const stopPromise = answer("stopControl", ["a:t", aControls.accessKey, "run-A", "a:t:stop:run-A"], store, storage, native);
+  const stopRequest = sent.findLast((entry) => entry.frame.payload?.type === "run.interrupt")!;
+  expect(stopRequest.environmentId).toBe("a");
+  expect(stopRequest.frame.payload).toEqual({ type: "run.interrupt", commandId: expect.any(String), threadId: "t", runId: "run-A", holdQueue: true });
+  expect(receipts.size).toBe(2);
+  reply("a", stopRequest.frame.id, { sequence: 1 });
+  await load();
+  expect(await stopPromise).toEqual({ ok: true, error: "", key: "a:t:stop:run-A", threadId: "a:t", drafts: [] });
+  expect(receipts.size).toBe(1);
+  reply("b", controlRequest.frame.id, { sequence: 31 });
+  await load();
+  expect(await controlPromise).toEqual({ ok: true, error: "", key: '["b","t","request"]', threadId: "b:t", drafts: [] });
+  expect(receipts.size).toBe(0);
+  activeThread = "b:t";
+  await load();
+  bSubscription = sent.findLast((entry) => entry.environmentId === "b" && entry.frame.tag === "orchestration.subscribeThread")!.frame.id;
   const codeSnapshot = async (body: string, streaming = false) => {
     chunk("b", bSubscription, { kind: "snapshot", projection: { messages: [{ id: "code-message", role: "assistant", text: body, streaming }] } });
     return (await load()).threads.find(({ id }) => id === "b:t")!;
@@ -200,7 +244,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     expect((await load(selected)).threads.map(({ id }) => id)).toEqual(["a:t", "b:t"]);
     expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(initialGenerations);
   }
-  expect(sent.filter(({ frame }) => frame.tag === "orchestration.subscribeThread").length).toBe(1);
+  expect(sent.filter(({ frame }) => frame.tag === "orchestration.subscribeThread").length).toBe(3);
 
   activeThread = "a:t";
   const beforeSwitch = sent.length;

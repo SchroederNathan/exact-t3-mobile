@@ -6,11 +6,13 @@ import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft } from "./drafts";
 import { ComposerSettings } from "./composer-settings";
 import { loadModelDrafts, saveModelDrafts } from "./model-drafts";
+import { controlKey } from "./thread-controls";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
   object,
   pair,
+  readJson,
   socketUrl,
   scopedThreadId,
   string,
@@ -308,6 +310,32 @@ const sources: Sources = {
     }
   },
   loadEnvironmentRecords: (_args, _store, storage) => loadEnvironments(storage),
+  loadControlAccess: async ([environmentId, key, _retry], store) => {
+    if (!environmentId || !key) return { key, allowed: false, error: "" };
+    try {
+      const session = sessionFor(environmentId);
+      const token = credentials(store)[environmentId];
+      if (!token || key !== session.controlAccessKey()) return { key, allowed: false, error: "Reconnect to respond." };
+      session.installControlAccess(key, {});
+      const response = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+      const allowed = session.installControlAccess(key, response);
+      return { key, allowed, error: allowed ? "" : "This connection does not have permission to control turns." };
+    } catch (error) {
+      return { key, allowed: false, error: error instanceof Error ? error.message : "Could not check your permission." };
+    }
+  },
+  submitControl: async ([threadId, accessKey, kind, targetId, key, value, drafts], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(threadId);
+      if (kind !== "stop" && key !== controlKey(identity.environmentId, identity.threadId, targetId)) throw new Error("This request belongs to a different thread.");
+      const reply = await awaitReply(sessionFor(identity.environmentId).control(identity.threadId, accessKey, kind, targetId, value, drafts, crypto.randomUUID()), native);
+      return { ...reply, key, threadId, drafts };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The response could not be sent.", key, threadId, drafts };
+    }
+  },
+  stopControl: ([threadId, accessKey, runId, key], store, storage, native) =>
+    sources.submitControl([threadId, accessKey, "stop", runId, key, "", []], store, storage, native),
   loadCatalog: async ([selected, activeThreadId, environments, now], store, _storage, native) => {
     const catalog = await loadCatalog(selected, activeThreadId, environments, now, store, native);
     for (const { id } of composerSettings.snapshot()) {
