@@ -841,15 +841,15 @@ component T3Code
                                 match row.activity
                                   case some(tool)
                                     column padding-bottom=2 testId=`tool-${row.id}`
-                                      button press=toggleTool(e.params.id, row.id) contextmenu=copyMessage(toolCopyText(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id), tool.title)) appearance="none" display="flex" align-items="center" gap=5.25 min-height=28 width="100%" box-sizing="border-box" padding="0 1.75px" text-align="left" color="muted" aria-label=`${tool.title}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
-                                        row width=21 height=21 align-items="center" justify-content="center" flex-shrink=0
+                                      button press=toggleTool(e.params.id, row.id) contextmenu=copyMessage(toolCopyText(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id), tool.title)) appearance="none" display="flex" align-items="center" gap=6 min-height=32 width="100%" box-sizing="border-box" padding="0 2px" text-align="left" color="muted" aria-label=`${tool.title}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
+                                        row width=24 height=24 align-items="center" justify-content="center" flex-shrink=0
                                           image `symbol:sf/${tool.symbol}` width=14 height=14
                                         text tool.title flex=1 min-width=0 font-size=14 line-height="19px" line-clamp=1 text-overflow="ellipsis" testId=`tool-title-${row.id}`
                                         if tool.status != "completed"
                                           image toolStatusSymbol(tool.status) width=12 height=12 color=(tool.status == "error" ? "danger" : "muted")
                                         image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11
                                       if toolAttempt(expandedTools, e.params.id, row.id) >= 0
-                                        column padding-top=1.75 padding-bottom=3.5 gap=5.25 min-width=0
+                                        column padding-top=2 padding-bottom=4 gap=6 min-width=0
                                           if matchingToolPanels(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id)).length == 0
                                             if failed(toolPanels)
                                               text "Could not load this activity." color="danger" font-size=12 testId=`tool-error-${row.id}`
@@ -1161,13 +1161,13 @@ component ToolDetail
   view
     column gap=5.25 padding-right=8
       if panel.input != ""
-        text panel.input font-size=12 line-height="18px" color="foreground" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-input-${rowId}`
+        text panel.input font-family="Menlo" font-size=12 line-height="18px" color="foreground" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-input-${rowId}`
       if panel.output != ""
-        text panel.output font-size=12 line-height="18px" color="muted" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-output-${rowId}`
+        text panel.output font-family="Menlo" font-size=12 line-height="18px" color="muted" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-output-${rowId}`
       else
-        text (tool.status == "running" or tool.status == "pending" ? "No output yet." : "No output.") font-size=12 color="muted" testId=`tool-empty-${rowId}`
+        text (tool.status == "running" or tool.status == "pending" ? "No output yet." : "No output.") font-family="Menlo" font-size=12 line-height="18px" color="muted" testId=`tool-empty-${rowId}`
       if tool.exitLabel != ""
-        text tool.exitLabel font-size=12 line-height="18px" color="danger" testId=`tool-exit-${rowId}`
+        text tool.exitLabel font-family="Menlo" font-size=12 line-height="18px" color="danger" testId=`tool-exit-${rowId}`
 
 component ThreadList
   props
