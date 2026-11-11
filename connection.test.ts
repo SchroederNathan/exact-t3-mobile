@@ -199,6 +199,21 @@ describe("long thread history", () => {
     expect(completed.rows[1]!.message!.id).toBe(codeMessage.id);
     expect(completed.markdownRevision).toBeGreaterThan(before.markdownRevision);
     expect(f.session.markdownBlocks("thread", "stale", [{ messageId: codeMessage.id, blockId: codeMessage.blocks[0]!.id }], "code")).toEqual([]);
+    const image = { type: "image", id: "pending-image", name: "photo.png", mimeType: "image/png", sizeBytes: 50, width: 12, height: 15 };
+    const attachmentRow = historyRow("photo-message", 4, { type: "user_message", text: "", attachments: [image] });
+    const inheritedAttachment = { ...inherited, item: { ...inherited.item, attachments: [{ type: "future", id: "unknown", name: "Future item" }] } };
+    f.snapshot({ projection: { visibleTurnItems: [inheritedAttachment, attachmentRow] } });
+    const attached = f.session.threads(0)[0]!;
+    expect(attached.rows[0]!.message!.attachments).toEqual([{ type: "unknown", id: "unknown", name: "Future item", mimeType: "application/octet-stream", sizeBytes: 0, width: 0, height: 0 }]);
+    expect(attached.rows[1]!.message).toMatchObject({ body: "", attachments: [image] });
+    f.event(22, "turn-item.updated", { ...attachmentRow.item, attachments: [{ ...image, id: "final-image" }] });
+    const promoted = f.session.threads(0)[0]!;
+    expect(promoted.rows[0]!.message).toBe(attached.rows[0]!.message);
+    expect(promoted.rows[1]!.message).not.toBe(attached.rows[1]!.message);
+    expect(promoted.rows[1]!.message!.attachments[0]!.id).toBe("final-image");
+    f.snapshot({ projection: { messages: [{ ...raw, text: "", attachments: [image] }] } });
+    expect(f.session.threads(0)[0]!.rows[0]!.message).toMatchObject({ body: "", attachments: [image] });
+
   });
 
   test("prepends older pages without replacing live rows or the resume cursor", async () => {
@@ -949,7 +964,7 @@ describe("direct T3 connection", () => {
         exit: { _tag: "Success", value: { sequence: 2 } },
       }),
     );
-    await expect(reply).resolves.toEqual({ ok: true, error: "" });
+    await expect(reply).resolves.toEqual({ ok: true, error: "", state: "accepted" });
     session.receive(
       JSON.stringify({
         _tag: "Chunk",
@@ -1161,7 +1176,7 @@ describe("direct T3 connection", () => {
         exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Access denied" } }] },
       }),
     );
-    await expect(denied).resolves.toEqual({ ok: false, error: "Access denied" });
+    await expect(denied).resolves.toEqual({ ok: false, error: "Access denied", state: "rejected" });
     const interrupted = session.send("thread", "Again", "c3", "m3");
     session.receive(
       JSON.stringify({
@@ -1179,12 +1194,13 @@ describe("direct T3 connection", () => {
     const interruptedFiles = session.inspect("thread", "files", "");
     expect(JSON.parse(sent.at(-1)!).payload).toEqual({ cwd: "/project", directoryPath: "" });
     const remainingQueries = Promise.allSettled(
-      Array.from({ length: 31 }, () => session.inspect("thread", "files", "")),
+      Array.from({ length: 30 }, () => session.inspect("thread", "files", "")),
     );
     await expect(session.inspect("thread", "files", "")).rejects.toThrow("Too many requests");
+    const interruptedRead = interruptedFiles.catch((error: unknown) => error);
     session.disconnected("Connection lost");
-    await expect(interrupted).resolves.toEqual({ ok: false, error: "Connection lost" });
-    await expect(interruptedFiles).rejects.toThrow("Connection lost");
+    await expect(interrupted).resolves.toEqual({ ok: false, error: "Connection lost", state: "unknown" });
+    expect(await interruptedRead).toMatchObject({ message: "Connection lost" });
     expect((await remainingQueries).every((result) => result.status === "rejected")).toBe(true);
     expect(session.threads()[0]?.rows).toEqual([]);
   });
@@ -1479,7 +1495,7 @@ describe("direct thread settings", () => {
     });
     expect(commands()[0]?.payload).not.toHaveProperty("runtimeMode");
     accept(commands()[0]!);
-    await expect(reply).resolves.toEqual({ ok: true, error: "" });
+    await expect(reply).resolves.toEqual({ ok: true, error: "", state: "accepted" });
   });
 
   test("refuses missing threads and stale model settings before dispatch", async () => {
@@ -1490,7 +1506,7 @@ describe("direct thread settings", () => {
     const model = session.stageSettings("thread", undefined, { type: "model", id: "codex:gpt-6-mini" });
     updateProviders([{ ...provider, models: [provider.models[0]] }]);
     await expect(session.send("thread", "Hi", "command", "message", model.selection)).resolves.toEqual({
-      ok: false, error: "This model is no longer available.",
+      ok: false, error: "This model is no longer available.", state: "rejected",
     });
     expect(commands()).toEqual([]);
   });
@@ -1506,7 +1522,7 @@ describe("direct thread settings", () => {
       _tag: "Exit", requestId: commands()[0]!.id,
       exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Runtime change denied" } }] },
     }));
-    await expect(reply).resolves.toEqual({ ok: false, error: "Runtime change denied" });
+    await expect(reply).resolves.toEqual({ ok: false, error: "Runtime change denied", state: "rejected" });
     expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set"]);
   });
 
@@ -1523,7 +1539,7 @@ describe("direct thread settings", () => {
     });
     expect(message.payload).not.toHaveProperty("runtimeMode");
     accept(message);
-    await expect(reply).resolves.toEqual({ ok: true, error: "" });
+    await expect(reply).resolves.toEqual({ ok: true, error: "", state: "accepted" });
   });
 
   test("rechecks settings changed while waiting for runtime acceptance", async () => {
@@ -1533,7 +1549,7 @@ describe("direct thread settings", () => {
     const reply = session.send("thread", "Hi", "command", "message", settings.selection);
     updateProviders([{ ...provider, enabled: false }]);
     accept(commands()[0]!);
-    await expect(reply).resolves.toEqual({ ok: false, error: "Model turned off for this project." });
+    await expect(reply).resolves.toEqual({ ok: false, error: "Model turned off for this project.", state: "rejected" });
     expect(commands().map((request) => request.payload.type)).toEqual(["thread.runtime-mode.set"]);
   });
 });

@@ -1,3 +1,4 @@
+use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments from "./attachments.contract"
 use Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage from "./markdown.contract"
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
@@ -200,10 +201,6 @@ shape Reply
   ok: bool
   error: string
 
-shape ThreadDraft
-  id: string
-  text: string
-  revision: number
 
 shape InspectionItem
   id: string
@@ -234,7 +231,7 @@ fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match fi
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
-fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0) } }
+
 
 fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
 fn modelGroupCollapsed(group: ProviderGroup, overrides: string[], selectedId: string, narrowed: bool): bool = not narrowed and ((["codex", "claudeAgent", "antigravity"].includes(group.provider) or group.models.filter(model => model.id == selectedId).length > 0) ? overrides.includes(group.id) : not overrides.includes(group.id))
@@ -244,6 +241,7 @@ fn optionValue(options: ModelOption[], id: string): string = match first(options
 
 component T3Code
   members "./controls-state.contract"
+  members "./attachment-state.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -254,7 +252,6 @@ component T3Code
   state selectedEnvironment = ""
   state selectedProject = ""
   state draftEdits: ThreadDraft[] = []
-  state submission = ThreadDraft(id="", text="", revision=0)
   state address = ""
   state code = ""
   state expandedEnvironment = ""
@@ -275,7 +272,7 @@ component T3Code
   resource linkedFile = loadLinkedFile(threadRoute.name == "linkedFile" ? activeThreadId : "", threadRoute.name == "linkedFile" ? threadRoute.params.file : "", threadRoute.name == "linkedFile" ? threadRoute.params.line : "0", threadRoute.name == "linkedFile" ? threadRoute.params.column : "0") as shape FilePreview else empty()
   derive markdownLinkError = failed(markdownLink) ? "This link could not be opened." : match markdownLink { case some(link) => link.originRoute == `${threadRoute.id}` ? link.error : "", case none => "" }
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
-  mutation savedDraft as shape Reply queue
+  mutation savedDraft as shape DraftReceipt queue then afterDraftSave
   resource restoredModelSettings = restoreModelSettings() as shape Reply else empty()
   mutation persistedModelSettings as shape Reply queue
   derive modelDraftsReady = not pending(restoredModelSettings) and not failed(restoredModelSettings)
@@ -297,7 +294,7 @@ component T3Code
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentRecords) with time.epochAtZero as shape Catalog else empty()
   mutation regrouped as shape NavigationChange then afterRegroup
   mutation changed as shape Reply refreshes environmentRecords, catalog
-  mutation sent as shape Reply then afterSend
+  mutation sent as shape SendReply then afterSend
   mutation created as shape CreatedThread then afterCreate
   mutation paired as shape Reply refreshes environmentRecords, catalog then afterPair
   mutation savedEnvironment as shape Reply refreshes environmentRecords, catalog then afterEnvironmentSave
@@ -334,8 +331,8 @@ component T3Code
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
-  derive composerError = submission.id == activeThreadId and submission.revision == threadDraft(savedDrafts, draftEdits, activeThreadId).revision and not pending(sent) ? sendError : ""
-  derive canSend = draftsReady and modelDraftsReady and composer.trim() != "" and not pending(sent)
+  derive composerError = match sent { case some(reply) => reply.id == activeThreadId and not pending(sent) ? reply.error : "", case none => "" }
+  derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend)
 
   task visitObservation key=`${activeThreadId}:${visitShell.ready}:${visitShell.supported}:${visitShell.at}:${visitShell.watermark}:${visitShell.seen}:${visitShell.urgent}`
     after(1, observeVisit)
@@ -619,9 +616,7 @@ component T3Code
   action editComposer(value: string)
     if draftsReady and activeThreadId != ""
       let previous = threadDraft(savedDrafts, draftEdits, activeThreadId)
-      let edited = ThreadDraft(id=activeThreadId, text=value, revision=previous.revision + 1)
-      draftEdits = draftEdits.filter(draft => draft.id != edited.id).concat([edited])
-      send savedDraft = saveDraft(edited.id, edited.text, edited.revision)
+      persistDraft(ThreadDraft(previous, text=value, revision=previous.revision + 1))
 
   action copyMessage(body: string)
     copyText(body)
@@ -639,21 +634,48 @@ component T3Code
 
   action sendMessage
     if canSend and activeThreadId != ""
-      submission = threadDraft(savedDrafts, draftEdits, activeThreadId)
-      send sent = command("send", activeThreadId, composer.trim())
+      attachmentError = ""
+      send preparedSend = prepareSend(activeDraft)
 
   action afterSend
     match sent
       case some(reply)
-        if reply.ok and threadDraft(savedDrafts, draftEdits, submission.id).revision == submission.revision
-          let cleared = ThreadDraft(id=submission.id, text="", revision=submission.revision + 1)
-          draftEdits = draftEdits.filter(draft => draft.id != cleared.id).concat([cleared])
-          send savedDraft = saveDraft(cleared.id, cleared.text, cleared.revision)
+        let draft = threadDraft(savedDrafts, draftEdits, reply.id)
+        match draft.pendingSend
+          case some(message)
+            if message.commandId == reply.commandId
+              let same = draft.revision == message.revision
+              let revision = draft.revision + 1
+              let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
+              persistDraft(updated)
+              if reply.state != "unknown"
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0).map(path => CleanupAttachment(threadId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
+          case none
+            draftEdits = draftEdits
       case none
         draftEdits = draftEdits
 
   view
     main interactive-widget="resizes-content" testId="root" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow width="100%" height="100%" display="flex" flex-direction="column" font-family="DM Sans" font-size=16 color="foreground" background-color="screen"
+      input type="file" id="attachment-photos" accept="image/*" multiple=true display="none" change=pickedAttachments cancel=cancelledAttachments testId="attachment-photos"
+      input type="file" id="attachment-files" multiple=true display="none" change=pickedAttachments cancel=cancelledAttachments testId="attachment-files"
+      column id="attachment-menu" popover="auto" role="menu" aria-label="Add attachment"
+        button press=pickAttachments(true) role="menuitem" testId="choose-photos"
+          image "symbol:sf/photo.on.rectangle"
+          text "Photo Library"
+        if attachmentAccess.maxFileBytes > 0
+          button press=pickAttachments(false) role="menuitem" testId="choose-files"
+            image "symbol:sf/folder"
+            text "Choose Files"
+      match attachmentViewer
+        case some(viewer)
+          if viewer.state != "presented"
+            column position="absolute" inset=0 z-index=10 align-items="center" justify-content="center" background-color="screen" gap=12 padding=24
+              text (viewer.error != "" ? viewer.error : "Opening attachment…") color=(viewer.error != "" ? "danger" : "muted") font-size=16
+              button press=closeAttachmentViewer buttonStyle="bordered" testId="cancel-attachment-preview"
+                text "Close"
+        case none
+          view display="none"
       column flex=1 min-height=0 position="relative"
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -814,7 +836,7 @@ component T3Code
                           case some(row)
                             match row.message
                               case some(message)
-                                MarkdownMessage(message=message, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage)
+                                MarkdownMessage(message=message, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage, attachments=attachmentPreviews, seenAttachment=observeAttachment, openAttachment=openAttachment, retryAttachment=retryAttachmentPreview, thumbnailFailures=thumbnailFailures, imageFailed=attachmentImageFailed, imageLoaded=attachmentImageLoaded)
                               case none
                                 match row.activity
                                   case some(tool)
@@ -890,10 +912,20 @@ component T3Code
                     if stopBusy or threadControls.stop.state == "unresponsive"
                       text (threadControls.stop.state == "unresponsive" ? "The turn is not responding to Stop. Check the provider on your computer." : "Stopping…") padding="4px 16px" color="muted" font-size=13 line-height="18px" testId="stop-state"
                   if not hasQuestion
+                    if composerAttachments.length > 0
+                      ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                    if attachmentError != "" or attachmentStatus != ""
+                      text (attachmentError != "" ? attachmentError : attachmentStatus) padding="4px 16px" font-size=13 color=(attachmentError != "" or composerAttachments.filter(item => item.state == "failed").length > 0 ? "danger" : "muted") testId="attachment-status"
+                    if draftError != ""
+                      button press=retryDraftSave appearance="none" color="danger" min-height=32 testId="retry-draft-save"
+                        text "Retry saving draft" font-size=13
+                    if pendingDelivery
+                      button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
+                        text (pending(sent) ? "Sending…" : "Retry message delivery")
                     row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
                       row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
                         workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
-                        button appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44
+                        button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44 testId="add-attachment"
                           image "symbol:sf/plus" width=20 height=20
                         textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
                           ::placeholder
@@ -902,7 +934,7 @@ component T3Code
                           row align-items="center" gap=7
                             ProviderIcon(provider=(match first(selectedThread(catalog, e.params.id)) { case some(thread) => thread.provider, case none => "" }), size=16)
                             image "symbol:sf/chevron.down" font-size=10
-                        if threadControls.stop.runId != "" and composer.trim() == ""
+                        if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
                           button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
                             row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
                               image "symbol:sf/stop.fill" font-size=12

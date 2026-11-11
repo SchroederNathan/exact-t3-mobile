@@ -12,3 +12,4 @@
 /native/highlight/build/
 /native/highlight/__pycache__/
 /modules/apple/T3Highlight.xcframework/
+release/.env.eas-simulator

@@ -182,8 +182,15 @@ final class T3NativeModule: ExactModule {
   }
 
   override func call(_ request: [String: Any]) throws -> [String: Any] {
-    if request["op"] as? String == "attachments.dismiss" {
-      return try MainActor.assumeIsolated { try attachmentPreview.dismiss(request) }
+    if let operation = request["op"] as? String, operation.hasPrefix("attachments.") {
+      return try MainActor.assumeIsolated {
+        switch operation {
+        case "attachments.dismiss": return try attachmentPreview.dismiss(request)
+        case "attachments.update": return try attachmentPreview.update(request)
+        case "attachments.selection": return try attachmentPreview.selection(request)
+        default: throw ExactNativeRefusal("Unknown attachment preview operation.")
+        }
+      }
     }
     if (request["op"] as? String)?.hasPrefix("connections.") == true {
       return try connections.call(request)

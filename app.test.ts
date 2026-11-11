@@ -1,3 +1,4 @@
+import { emptyDraft } from "./drafts";
 import { expect, spyOn, test } from "bun:test";
 import { answer as sourceAnswer } from "./app";
 import type { Answer, NativeModule, Storage, Store } from "./app.contract.d.ts";
@@ -132,7 +133,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
       projects: [{ id: "p", title: `Project ${id}`, workspaceRoot: `/${id}` }],
       threads: [{ id: "t", title: `Thread ${id}`, projectId: "p", updatedAt: "2026-11-10T00:00:00Z" }],
     } });
-    chunk(id, "2", { type: "snapshot", config: { settings: { favorites: [] }, providers: [{
+    chunk(id, "2", { type: "snapshot", config: { environment: { capabilities: { attachmentUploads: true, fileAttachments: { maxUploadBytes: 52428800 } } }, settings: { favorites: [] }, providers: [{
       instanceId: "provider", enabled: true, installed: true, models: [{ slug: "model" }],
     }] } });
   }
@@ -195,6 +196,46 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   activeThread = "b:t";
   await load();
   bSubscription = sent.findLast((entry) => entry.environmentId === "b" && entry.frame.tag === "orchestration.subscribeThread")!.frame.id;
+  const attachmentAccess = await answer("loadAttachmentAccess", ["b:t", controls.accessKey, true], store, storage, native);
+  expect(attachmentAccess).toMatchObject({ threadId: "b:t", allowed: true, uploads: true, maxFileBytes: 52428800, origin: "http://b.example" });
+  const picked = { type: "file", id: "", name: "notes.txt", mimeType: "text/plain", sizeBytes: 12, width: 0, height: 0,
+    localId: "notes", path: "app:/data/composer-attachments/notes/content.txt", state: "local", attempt: 1, error: "", insertionRevision: 1 };
+  const slot = { index: 0, state: "minting", threadId: "b:t", localId: picked.localId, attempt: 1, accessKey: attachmentAccess.accessKey,
+    origin: attachmentAccess.origin, item: picked, attachmentId: "", url: "", revision: 0 };
+  const mint = answer("mintAttachment", [slot], store, storage, native);
+  const mintRequest = sent.at(-1)!;
+  expect(mintRequest).toMatchObject({ environmentId: "b", frame: { tag: "attachments.createUploadUrl", payload: { type: "file", name: "notes.txt", mimeType: "text/plain", sizeBytes: 12 } } });
+  reply("b", mintRequest.frame.id, { attachmentId: "pending-notes", relativeUrl: "/api/attachments/upload/signed-ticket", expiresAt: "2026-11-11T01:00:00Z" });
+  await load();
+  const minted = await mint;
+  expect(minted.error).toBe("");
+  expect(minted.slot).toMatchObject({ origin: "http://b.example", attachmentId: "pending-notes", url: "http://b.example/api/attachments/upload/signed-ticket" });
+  expect(receipts.size).toBe(0);
+  const transferFetches = _fetch.mock.calls.length;
+  for (const changed of [{ accessKey: "previous-session" }, { origin: "http://a.example" }]) {
+    expect(await answer("uploadAttachment", [{ ...minted.slot, ...changed, state: "uploading" }], store, storage, native)).toMatchObject({ state: "failed", error: "Reconnect and check your attachment upload permission." });
+  }
+  expect(_fetch.mock.calls.length).toBe(transferFetches);
+  _fetch.mockImplementationOnce(async (url, init) => {
+    expect(readingStore).toBe(true);
+    expect(String(url)).toBe("http://b.example/api/attachments/upload/signed-ticket");
+    expect(init).toMatchObject({ method: "POST", headers: { "content-type": "text/plain" }, exactBodyFrom: picked.path, exactUploadProgress: true });
+    expect(init?.headers).not.toHaveProperty("authorization");
+    return init!.exactStream!({ type: "load", status: 204, data: "", lastEventId: "", coalesced: 0 }) as never;
+  });
+  expect(await answer("uploadAttachment", [{ ...minted.slot, state: "uploading" }], store, storage, native)).toEqual({ threadId: "b:t", localId: "notes", attempt: 1, state: "uploaded", progress: 100, error: "" });
+  const verification = answer("verifyAttachment", ["b:t", attachmentAccess.accessKey, { ...picked, id: "pending-notes", state: "uploaded" }], store, storage, native);
+  const verificationRequest = sent.at(-1)!;
+  expect(verificationRequest).toMatchObject({ environmentId: "b", frame: { tag: "assets.createUrl", payload: { resource: { _tag: "attachment", attachmentId: "pending-notes", fileName: "notes.txt", mimeType: "text/plain", disposition: "inline" } } } });
+  emit("b", "message", JSON.stringify({ _tag: "Exit", requestId: verificationRequest.frame.id, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { _tag: "AssetAttachmentNotFoundError", message: "Gone" } }] } }));
+  await load();
+  expect(await verification).toMatchObject({ state: "missing", error: "Gone", attachmentId: "pending-notes" });
+  const removing = answer("cleanupAttachment", [{ threadId: "b:t", accessKey: attachmentAccess.accessKey, attachmentId: "pending-notes", path: "", revision: 1 }], store, storage, native);
+  const removeRequest = sent.at(-1)!;
+  expect(removeRequest).toMatchObject({ environmentId: "b", frame: { tag: "attachments.delete", payload: { attachmentId: "pending-notes" } } });
+  reply("b", removeRequest.frame.id, {}); await load();
+  expect(await removing).toEqual({ ok: true, error: "" });
+  expect(receipts.size).toBe(0);
   const codeSnapshot = async (body: string, streaming = false) => {
     chunk("b", bSubscription, { kind: "snapshot", projection: { messages: [{ id: "code-message", role: "assistant", text: body, streaming }] } });
     return (await load()).threads.find(({ id }) => id === "b:t")!;
@@ -340,7 +381,9 @@ test("native environments aggregate colliding IDs and keep commands and connecti
 
   expect(await answer("command", ["open", "b:t", ""], store, storage, native)).toEqual({ ok: true, error: "" });
   expect(sent.at(-1)).toMatchObject({ environmentId: "b", frame: { tag: "orchestration.subscribeThread", payload: { threadId: "t" } } });
-  const sending = answer("command", ["send", "a:t", "hello a"], store, storage, native);
+  const prepared = await answer("prepareSend", [{ ...emptyDraft("a:t"), text: "hello a" }], store, storage, native);
+  expect(prepared.pending).not.toBeNull();
+  const sending = answer("sendDraft", ["a:t", prepared.pending!], store, storage, native);
   let sendState = "pending";
   void Promise.resolve(sending).then(() => { sendState = "accepted"; });
   const send = sent.at(-1)!;
@@ -350,16 +393,17 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   expect(receipts.size).toBe(1);
   reply("a", String(send.frame.id), { sequence: 1 });
   await load();
-  expect(await sending).toEqual({ ok: true, error: "" });
+  expect(await sending).toEqual({ id: "a:t", commandId: prepared.pending!.commandId, state: "accepted", ok: true, error: "" });
   expect(receipts.size).toBe(0);
 
-  const rejected = answer("command", ["send", "a:t", "refused"], store, storage, native);
+  const rejectedDraft = await answer("prepareSend", [{ ...emptyDraft("a:t"), text: "refused" }], store, storage, native);
+  const rejected = answer("sendDraft", ["a:t", rejectedDraft.pending!], store, storage, native);
   const rejection = sent.at(-1)!;
   emit("a", "message", JSON.stringify({ _tag: "Exit", requestId: rejection.frame.id,
     exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "Fixture rejected the message." } }] },
   }));
   await load();
-  expect(await rejected).toEqual({ ok: false, error: "Fixture rejected the message." });
+  expect(await rejected).toEqual({ id: "a:t", commandId: rejectedDraft.pending!.commandId, state: "rejected", ok: false, error: "Fixture rejected the message." });
   expect(receipts.size).toBe(0);
 
   delayRegistration = true;
@@ -404,7 +448,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const disabled = await load();
   expect(disabled.threads.map(({ id }) => id)).toEqual(["b:t"]);
   expect(connections.map(({ id, generation }) => ({ id, generation }))).toEqual(initialGenerations.filter(({ id }) => id === "b"));
-  expect(await answer("command", ["send", "a:t", "must not send"], store, storage, native)).toEqual({ ok: false, error: "This environment is disconnected." });
+  expect(await answer("prepareSend", [{ ...emptyDraft("a:t"), text: "must not send" }], store, storage, native)).toEqual({ id: "a:t", revision: 0, pending: null, error: "This environment is disconnected." });
 
   await answer("command", ["toggle", "a", "true"], store, storage, native);
   await load();
@@ -431,10 +475,11 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   _fetch.mockResolvedValueOnce(Response.json({ items: [historyRow("earlier-b", 1)], nextCursor: null, hasMoreHistory: false }));
   expect(await answer("loadEarlierThread", ["b:t"], store, storage, native)).toEqual({ ok: true, error: "" });
   _fetch.mockClear();
-  const interrupted = answer("command", ["send", "b:t", "pending message"], store, storage, native);
+  const interruptedDraft = await answer("prepareSend", [{ ...emptyDraft("b:t"), text: "pending message" }], store, storage, native);
+  const interrupted = answer("sendDraft", ["b:t", interruptedDraft.pending!], store, storage, native);
   emit("b", "close", "", "Connection lost");
   const disconnected = await load();
-  expect(await interrupted).toEqual({ ok: false, error: "Connection lost" });
+  expect(await interrupted).toEqual({ id: "b:t", commandId: interruptedDraft.pending!.commandId, state: "unknown", ok: false, error: "Connection lost" });
   expect(receipts.size).toBe(0);
   expect(disconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connection lost");
   const reconnecting = connections.find(({ id }) => id === "b")!.generation;
@@ -514,4 +559,17 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   const environments = await answer("loadEnvironmentRecords", [], store, storage, native);
   const fallback = await answer("loadCatalog", ["b", "b:t", environments, 0], store, storage, null);
   expect(fallback.environments.map(({ id, status }) => ({ id, status }))).toEqual([{ id: "b", status: "Use the native transport" }]);
+});
+
+test("cleaning a preview file also removes its empty presentation directory", async () => {
+  const removed: string[] = [];
+  const storage = { fs: {
+    async rm(path: string) { removed.push(path); },
+    async readdir(path: string) { return path.endsWith("gallery") ? [] : ["gallery"]; },
+  } } as unknown as Storage;
+  expect(await sourceAnswer("cleanupAttachment", [{ threadId: "a:t", accessKey: "", attachmentId: "", path: "app:/cache/attachment-previews/gallery/attachment-0.png", revision: -1 }], {} as Store, storage, null)).toEqual({ ok: true, error: "" });
+  expect(removed).toEqual([
+    "app:/cache/attachment-previews/gallery/attachment-0.png",
+    "app:/cache/attachment-previews/gallery",
+  ]);
 });

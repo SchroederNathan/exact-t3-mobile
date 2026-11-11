@@ -1,3 +1,5 @@
+import { AttachmentSession, RpcFailure } from "./attachment-session";
+import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
@@ -432,6 +434,30 @@ export class DirectSession {
     string,
     { resolve: (value: ObjectValue) => void; reject: (error: Error) => void }
   >();
+
+  readonly attachments = new AttachmentSession({
+    metadata: () => {
+      const capabilities = object(object(this.config.environment).capabilities);
+      const files = object(capabilities.fileAttachments);
+      return { accessKey: this.controlAccessKey(), origin: this.environment.url, allowed: this.hasControlAccess(),
+        uploads: capabilities.attachmentUploads === true, maxFileBytes: typeof files.maxUploadBytes === "number" ? Math.min(FILE_LIMIT, files.maxUploadBytes) : 0 };
+    },
+    query: (tag, payload) => {
+      if (this.queries.size >= 32) throw new Error("Too many requests are pending. Wait for them to finish.");
+      const id = this.request(tag, payload);
+      const promise = new Promise<ObjectValue>((resolve, reject) => this.queries.set(id, { resolve, reject }));
+      return { id, promise };
+    },
+    cancel: (id) => {
+      if (this.socket?.readyState === 1) this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: id }));
+      this.queries.get(id)?.reject(new Error("This attachment request was cancelled."));
+      this.queries.delete(id);
+    },
+    resolve: (threadId, viewKey, demand) => {
+      if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return;
+      return this.transcripts.get(threadId)?.feed().find((row) => row.message?.id === demand.messageId)?.message?.attachments.find((item) => item.id === demand.attachmentId);
+    },
+  });
 
   constructor(environment: Environment) {
     this.environment = {
@@ -944,42 +970,35 @@ export class DirectSession {
     commandId: string,
     messageId: string,
     staged?: ThreadSettingsSelection | null,
-  ): Promise<Reply> {
-    const dispatch = (modelSelection?: ModelSelection): Promise<Reply> => {
+    attachments: StoredAttachment[] = [],
+    replayUnknown = false,
+  ): Promise<{ ok: boolean; error: string; state: string }> {
+    const refused = (error: string) => ({ ok: false, error, state: replayUnknown ? "unknown" : "rejected" });
+    try { validateAttachments(attachments, this.attachments.metadata().maxFileBytes, true); }
+    catch (error) { return Promise.resolve(refused(error instanceof Error ? error.message : "Invalid attachments.")); }
+    const dispatch = (modelSelection?: ModelSelection) => {
       const shell = this.shells.get(threadId);
-      const id = this.request("orchestration.dispatchCommand", {
-        type: "message.dispatch",
-        commandId,
-        threadId,
-        messageId,
-        text,
-        attachments: [],
-        createdBy: "user",
-        creationSource: "mobile",
+      return this.query("orchestration.dispatchCommand", {
+        type: "message.dispatch", commandId, threadId, messageId, text, attachments,
+        createdBy: "user", creationSource: "mobile",
         dispatchMode: { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
         ...(modelSelection ? { modelSelection } : {}),
-      });
-      return new Promise((resolve) => this.replies.set(id, resolve));
+      }).then(() => ({ ok: true, error: "", state: "accepted" }), (error: unknown) => ({
+        ok: false, error: error instanceof Error ? error.message : "Delivery could not be confirmed.", state: !replayUnknown && error instanceof RpcFailure ? "rejected" : "unknown",
+      }));
     };
     if (!staged) return dispatch();
     const validated = this.validateSettings(threadId, staged);
-    if (!validated.ok || !validated.selection)
-      return Promise.resolve({ ok: false, error: validated.error });
+    if (!validated.ok || !validated.selection) return Promise.resolve(refused(validated.error));
     const selection = validated.selection;
-    if (selection.runtimeMode === this.shells.get(threadId)?.runtimeMode)
-      return dispatch(selection.modelSelection);
-    const id = this.request("orchestration.dispatchCommand", {
-      type: "thread.runtime-mode.set",
-      commandId: `${commandId}:runtime-mode`,
-      threadId,
-      runtimeMode: selection.runtimeMode,
-    });
-    return new Promise<Reply>((resolve) => this.replies.set(id, resolve)).then((reply) => {
-      if (!reply.ok) return reply;
+    if (selection.runtimeMode === this.shells.get(threadId)?.runtimeMode) return dispatch(selection.modelSelection);
+    return this.query("orchestration.dispatchCommand", {
+      type: "thread.runtime-mode.set", commandId: `${commandId}:runtime-mode`, threadId, runtimeMode: selection.runtimeMode,
+    }).then(() => {
       const latest = this.validateSettings(threadId, selection);
-      if (!latest.ok || !latest.selection) return { ok: false, error: latest.error };
+      if (!latest.ok || !latest.selection) return refused(latest.error);
       return dispatch(latest.selection.modelSelection);
-    });
+    }, (error: unknown) => refused(error instanceof Error ? error.message : "The runtime mode could not be changed."));
   }
 
   create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
@@ -1045,6 +1064,7 @@ export class DirectSession {
     this.controlEpoch++;
     this.controlGrant = false;
     this.clearToolPanels();
+    this.attachments.clear();
     this.shellLive = false;
     this.shellRequest = "";
     this.switching = undefined;
@@ -1099,7 +1119,7 @@ export class DirectSession {
         }
         const query = this.queries.get(id);
         this.queries.delete(id);
-        if (error) query?.reject(new Error(error));
+        if (error) query?.reject(new RpcFailure(error, string(object(records(exit.cause)[0]?.error)._tag)));
         else query?.resolve(object(exit.value));
         const projectId = this.faviconRequests.get(id);
         if (projectId) {

@@ -1,0 +1,450 @@
+use ThreadDraft, threadDraft, AttachmentReply, Attachment, DraftAttachment, StoredAttachment, PendingSend, DraftReceipt, PersistedDraft, PickerIntent, StagedAttachments, AttachmentAccess, AttachmentSlot, MintedAttachment, UploadProgress, PreparedSend, SendReply, AttachmentDemand, AttachmentBatch, AttachmentViewer, ViewerReply, GalleryCandidate, GalleryItem, GalleryWork, GalleryWorkReply, GallerySelection, ThumbnailFailure, isAttachmentImage, attachmentSourceId, VerifiedAttachment, AttachmentConnection, CleanupAttachment, draftReceiptRevision, uploadedVerified, slotIdentity, attachmentIdentity from "./attachments.contract"
+
+members T3Code
+  state persistedDrafts: PersistedDraft[] = []
+  state pickerSerial = 0
+  state pickerIntent = PickerIntent(threadId="", routeId="", serial=0, photos=true)
+  state attachmentError = ""
+  state transferSlots: AttachmentSlot[] = []
+  state attachmentCleanup: CleanupAttachment[] = []
+  state verifiedAttachments: VerifiedAttachment[] = []
+  state verificationKey = ""
+  state attachmentDemands: AttachmentDemand[] = []
+  state attachmentRetry = 0
+  state previewClock = 0
+  state previewNow = 0
+  state previewFileLeases: string[] = []
+  state attachmentViewer: option<AttachmentViewer> = none
+  state galleryWork: option<GalleryWork> = none
+  state galleryAttempt = 0
+  state thumbnailFailures: ThumbnailFailure[] = []
+  resource attachmentAccess = loadAttachmentAccess(activeThreadId, threadControls.accessKey, controlAccess.allowed) as shape AttachmentAccess else empty()
+  resource slotConnections = attachmentConnections(transferSlots, catalog) as shape AttachmentConnection[] else empty()
+  mutation stagedAttachments as shape StagedAttachments then afterStagingAttachments
+  mutation mintedAttachment as shape MintedAttachment queue then afterMintedAttachment
+  mutation verifiedAttachment as shape VerifiedAttachment queue then afterVerifiedAttachment
+  mutation cleanedAttachment as shape AttachmentReply queue
+  mutation preparedSend as shape PreparedSend then afterPreparedSend
+  mutation viewerPrepared as shape ViewerReply then afterViewerPrepared
+  mutation viewerUrl as shape GalleryWorkReply then afterViewerUrl
+  mutation viewerDownloaded as shape GalleryWorkReply then afterViewerDownloaded
+  mutation viewerPresented as shape ViewerReply then afterViewerPresented
+  mutation viewerDismissed as shape AttachmentReply
+  mutation galleryCancelled as shape AttachmentReply queue
+  mutation galleryUpdated as shape GalleryWorkReply queue then afterGalleryUpdated
+  resource gallerySelection = loadGallerySelection(attachmentViewer) as shape GallerySelection else empty()
+  resource attachmentUpload0 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 0 and slot.state == "uploading"))) as shape UploadProgress else empty()
+  resource attachmentUpload1 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 1 and slot.state == "uploading"))) as shape UploadProgress else empty()
+  resource attachmentUpload2 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 2 and slot.state == "uploading"))) as shape UploadProgress else empty()
+  resource attachmentPreviews = loadAttachmentPreviews(activeToolThreadId, toolViewKey, attachmentDemands.filter(demand => demand.threadId == activeToolThreadId and demand.viewKey == toolViewKey), previewClock) with time.epochAtZero + previewNow as shape AttachmentBatch else empty()
+  derive activeDraft = threadDraft(savedDrafts, draftEdits, activeThreadId)
+  derive composerAttachments = activeDraft.attachments
+  derive uploadProgresses = [attachmentUpload0, attachmentUpload1, attachmentUpload2]
+  derive attachmentSendReady = composerAttachments.filter(item => item.state != "uploaded" or not uploadedVerified(verifiedAttachments, activeThreadId, item, attachmentAccess.accessKey)).length == 0
+  derive pendingMessage = activeDraft.pendingSend
+  derive attachmentStatus = composerAttachments.filter(item => item.state == "failed").length > 0 ? composerAttachments.filter(item => item.state == "failed").map(item => `${item.name}: ${item.error}`).join("\n") : composerAttachments.filter(item => item.state == "local" or item.state == "uploading").length > 0 ? "Uploading attachments…" : not attachmentSendReady ? "Checking attachments…" : ""
+  derive galleryNext = match attachmentViewer { case some(viewer) => first(sortBy(viewer.items.filter(item => item.state == "loading"), item => max(item.index - (gallerySelection.presentationId == viewer.presentationId ? gallerySelection.selectedIndex : viewer.selectedIndex), (gallerySelection.presentationId == viewer.presentationId ? gallerySelection.selectedIndex : viewer.selectedIndex) - item.index))), case none => none }
+  derive pendingDelivery = match pendingMessage { case some(message) => message.state == "unknown", case none => false }
+
+
+  task expireAttachmentPreviews when attachmentPreviews.previews.length > 0 key=`${attachmentPreviews.previews.map(preview => preview.expiresAt).join(",")}:${previewClock}`
+    after(60000, refreshAttachmentPreviews)
+  task attachmentNavigation key=`${threadRoute.id}:${activeThreadId}`
+    after(1, attachmentNavigated)
+  task admitAttachment when draftsReady key=`${activeThreadId}:${activeDraft.revision}:${persistedDrafts.map(receipt => `${receipt.id}:${receipt.revision}`).join("|")}:${attachmentAccess.accessKey}:${attachmentAccess.allowed}:${transferSlots.map(slot => `${slot.index}:${slotIdentity(slot)}:${slot.state}`).join("|")}:${verifiedAttachments.map(entry => `${entry.localId}:${entry.accessKey}:${entry.state}`).join("|")}:${verificationKey}`
+    after(1, advanceAttachments)
+  task finishAttachment0 key=`${attachmentUpload0.localId}:${attachmentUpload0.attempt}:${attachmentUpload0.state}:${failed(attachmentUpload0)}`
+    after(1, finishUpload0)
+  task finishAttachment1 key=`${attachmentUpload1.localId}:${attachmentUpload1.attempt}:${attachmentUpload1.state}:${failed(attachmentUpload1)}`
+    after(1, finishUpload1)
+  task finishAttachment2 key=`${attachmentUpload2.localId}:${attachmentUpload2.attempt}:${attachmentUpload2.state}:${failed(attachmentUpload2)}`
+    after(1, finishUpload2)
+  task invalidateAttachments key=slotConnections.map(connection => `${connection.key}:${connection.valid}`).join("|")
+    after(1, invalidateAttachmentConnection)
+
+  action persistDraft(draft: ThreadDraft)
+    draftEdits = draftEdits.filter(entry => entry.id != draft.id).concat([draft])
+    send savedDraft = saveDraft(draft)
+
+  action afterDraftSave
+    match savedDraft
+      case some(receipt)
+        if receipt.ok
+          persistedDrafts = persistedDrafts.filter(entry => entry.id != receipt.id).concat([PersistedDraft(id=receipt.id, revision=receipt.revision, commandId=receipt.commandId)])
+      case none
+        persistedDrafts = persistedDrafts
+
+  task cleanAttachments when attachmentCleanup.length > 0 key=`${previewFileLeases.join("|")}:${match attachmentViewer { case some(viewer) => viewer.items.map(item => item.path).join("|"), case none => "" }}:${attachmentCleanup.map(item => item.path).join("|")}:${persistedDrafts.map(receipt => `${receipt.id}:${receipt.revision}`).join("|")}`
+    after(1, cleanNextAttachment)
+
+  action cleanNextAttachment
+    match first(attachmentCleanup.filter(item => (item.revision < 0 or item.revision <= draftReceiptRevision(persistedDrafts, item.threadId)) and not previewFileLeases.includes(item.path) and (match attachmentViewer { case some(viewer) => viewer.items.filter(entry => entry.path == item.path).length == 0, case none => true })))
+      case some(item)
+        attachmentCleanup = attachmentCleanup.filter(entry => entry.path != item.path)
+        send cleanedAttachment = cleanupAttachment(item)
+      case none
+        attachmentCleanup = attachmentCleanup
+
+  task dispatchPreparedMessage when not pending(sent) key=`${pending(sent)}:${draftEdits.map(draft => match draft.pendingSend { case some(message) => `${draft.id}:${message.commandId}:${message.state}`, case none => "" }).join("|")}:${persistedDrafts.map(receipt => `${receipt.id}:${receipt.commandId}`).join("|")}`
+    after(1, dispatchNextMessage)
+
+  action dispatchNextMessage
+    if not pending(sent)
+      match first(draftEdits.filter(draft => match draft.pendingSend { case some(message) => message.state == "prepared" and persistedDrafts.filter(receipt => receipt.id == draft.id and receipt.commandId == message.commandId).length > 0, case none => false }))
+        case some(draft)
+          match draft.pendingSend
+            case some(message)
+              send sent = sendDraft(draft.id, message)
+            case none
+              attachmentError = attachmentError
+        case none
+          attachmentError = attachmentError
+
+  action retryDraftSave
+    persistDraft(activeDraft)
+
+  action pickAttachments(photos: bool)
+    if draftsReady and attachmentAccess.allowed and attachmentAccess.uploads and not pending(stagedAttachments)
+      let serial = pickerSerial + 1
+      pickerSerial = serial
+      pickerIntent = PickerIntent(threadId=activeThreadId, routeId=`${threadRoute.id}`, serial=serial, photos=photos)
+      attachmentError = ""
+      showPicker(photos ? "attachment-photos" : "attachment-files")
+    else
+      attachmentError = attachmentAccess.uploads ? "Check your connection and attachment permission." : "This environment does not support attachment uploads."
+
+  action pickedAttachments(files: Picked[])
+    if pickerIntent.threadId == activeThreadId and pickerIntent.routeId == `${threadRoute.id}` and files.length > 0
+      send stagedAttachments = stagePickedAttachments(pickerIntent, files, composerAttachments, activeDraft.revision + 1, attachmentAccess.maxFileBytes)
+
+  action cancelledAttachments
+    pickerIntent = PickerIntent(threadId="", routeId="", serial=pickerSerial, photos=true)
+
+  action afterStagingAttachments
+    match stagedAttachments
+      case some(reply)
+        if reply.intent.serial == pickerIntent.serial and reply.intent.threadId == activeThreadId and reply.intent.routeId == `${threadRoute.id}`
+          let draft = threadDraft(savedDrafts, draftEdits, reply.intent.threadId)
+          let revision = draft.revision + 1
+          let items = reply.attachments.map(item => DraftAttachment(item, insertionRevision=revision))
+          persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.concat(items)))
+          attachmentError = reply.error
+        else
+          send cleanedAttachment = cleanupStagedAttachments(reply.attachments)
+      case none
+        attachmentError = "Attachments could not be prepared."
+
+  action advanceAttachments
+    match first(transferSlots.filter(slot => slot.state == "saving" and draftReceiptRevision(persistedDrafts, slot.threadId) >= slot.revision))
+      case some(slot)
+        transferSlots = transferSlots.map(entry => entry.index == slot.index ? AttachmentSlot(entry, state="uploading") : entry)
+      case none
+        match first(transferSlots.filter(slot => slot.state == "finished" and draftReceiptRevision(persistedDrafts, slot.threadId) >= slot.revision))
+          case some(slot)
+            transferSlots = transferSlots.filter(entry => entry.index != slot.index)
+          case none
+            if attachmentAccess.allowed and attachmentAccess.uploads and activeThreadId != "" and transferSlots.length < 3
+              match first(composerAttachments.filter(item => item.state == "local" and item.insertionRevision <= max(draftReceiptRevision(persistedDrafts, activeThreadId), threadDraft(savedDrafts, [], activeThreadId).revision) and transferSlots.filter(slot => slot.threadId == activeThreadId and slot.localId == item.localId).length == 0))
+                case some(item)
+                  let index = transferSlots.filter(slot => slot.index == 0).length == 0 ? 0 : transferSlots.filter(slot => slot.index == 1).length == 0 ? 1 : 2
+                  let slot = AttachmentSlot(index=index, state="minting", threadId=activeThreadId, localId=item.localId, attempt=item.attempt, accessKey=attachmentAccess.accessKey, origin=attachmentAccess.origin, item=item, attachmentId="", url="", revision=0)
+                  transferSlots = transferSlots.concat([slot])
+                  send mintedAttachment = mintAttachment(slot)
+                case none
+                  verifyNextAttachment()
+            else
+              verifyNextAttachment()
+
+  action afterMintedAttachment
+    match mintedAttachment
+      case some(reply)
+        let slot = reply.slot
+        let draft = threadDraft(savedDrafts, draftEdits, slot.threadId)
+        match first(draft.attachments.filter(item => item.localId == slot.localId and item.attempt == slot.attempt))
+          case some(item)
+            if transferSlots.filter(entry => slotIdentity(entry) == slotIdentity(slot)).length > 0
+              let revision = draft.revision + 1
+              let updated = DraftAttachment(item, id=slot.attachmentId, state=(reply.error == "" ? "uploading" : "failed"), error=reply.error)
+              persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.map(entry => entry.localId == item.localId ? updated : entry)))
+              transferSlots = transferSlots.map(entry => entry.index == slot.index ? AttachmentSlot(slot, state=(reply.error == "" ? "saving" : "finished"), revision=revision) : entry)
+          case none
+            if slot.attachmentId != ""
+              send cleanedAttachment = cleanupAttachment(CleanupAttachment(threadId=slot.threadId, accessKey=slot.accessKey, attachmentId=slot.attachmentId, path="", revision=0))
+      case none
+        attachmentError = "The attachment upload could not be started."
+
+  action finishUpload0
+    finishAttachmentUpload(0, attachmentUpload0, failed(attachmentUpload0))
+  action finishUpload1
+    finishAttachmentUpload(1, attachmentUpload1, failed(attachmentUpload1))
+  action finishUpload2
+    finishAttachmentUpload(2, attachmentUpload2, failed(attachmentUpload2))
+
+  action finishAttachmentUpload(index: number, progress: UploadProgress, failed: bool)
+    match first(transferSlots.filter(slot => slot.index == index and slot.state == "uploading"))
+      case some(slot)
+        if failed or (progress.localId == slot.localId and progress.attempt == slot.attempt and (progress.state == "uploaded" or progress.state == "failed"))
+          let draft = threadDraft(savedDrafts, draftEdits, slot.threadId)
+          match first(draft.attachments.filter(item => item.localId == slot.localId and item.attempt == slot.attempt))
+            case some(item)
+              let revision = draft.revision + 1
+              let updated = DraftAttachment(item, state=(failed ? "failed" : progress.state), error=(failed ? "Upload interrupted. Retry or remove this attachment." : progress.error))
+              persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.map(entry => entry.localId == item.localId ? updated : entry)))
+              transferSlots = transferSlots.map(entry => entry.index == index ? AttachmentSlot(entry, state="finished", revision=revision) : entry)
+              if not failed and progress.state == "uploaded"
+                verifiedAttachments = verifiedAttachments.filter(entry => entry.threadId != slot.threadId or entry.localId != slot.localId).concat([VerifiedAttachment(threadId=slot.threadId, localId=slot.localId, attachmentId=slot.attachmentId, attempt=slot.attempt, accessKey=slot.accessKey, state="ready", error="")])
+            case none
+              transferSlots = transferSlots.filter(entry => entry.index != index)
+      case none
+        transferSlots = transferSlots
+
+  action invalidateAttachmentConnection
+    match first(transferSlots.filter(slot => slotConnections.filter(connection => connection.key == slotIdentity(slot) and not connection.valid).length > 0))
+      case some(slot)
+        let draft = threadDraft(savedDrafts, draftEdits, slot.threadId)
+        let revision = draft.revision + 1
+        persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.map(item => item.localId == slot.localId and item.attempt == slot.attempt ? DraftAttachment(item, state="failed", error="The connection changed. Retry this upload.") : item)))
+        transferSlots = transferSlots.filter(entry => entry.index != slot.index)
+      case none
+        transferSlots = transferSlots
+
+  action removeAttachment(localId: string)
+    match first(composerAttachments.filter(item => item.localId == localId))
+      case some(item)
+        let revision = activeDraft.revision + 1
+        persistDraft(ThreadDraft(activeDraft, revision=revision, attachments=composerAttachments.filter(entry => entry.localId != localId)))
+        transferSlots = transferSlots.filter(slot => slot.threadId != activeThreadId or slot.localId != localId)
+        if activeDraft.pendingSend == none
+          attachmentCleanup = attachmentCleanup.concat([CleanupAttachment(threadId=activeThreadId, accessKey=attachmentAccess.accessKey, attachmentId=item.id, path=item.path, revision=revision)])
+      case none
+        attachmentError = attachmentError
+
+  action retryAttachment(localId: string)
+    let revision = activeDraft.revision + 1
+    persistDraft(ThreadDraft(activeDraft, revision=revision, attachments=composerAttachments.map(item => item.localId == localId ? DraftAttachment(item, id="", state="local", attempt=item.attempt + 1, error="", insertionRevision=revision) : item)))
+    transferSlots = transferSlots.filter(slot => slot.threadId != activeThreadId or slot.localId != localId)
+
+  action verifyNextAttachment
+    if verificationKey == "" and attachmentAccess.allowed
+      match first(composerAttachments.filter(item => item.state == "uploaded" and not uploadedVerified(verifiedAttachments, activeThreadId, item, attachmentAccess.accessKey)))
+        case some(item)
+          verificationKey = attachmentIdentity(activeThreadId, item.localId, item.attempt)
+          send verifiedAttachment = verifyAttachment(activeThreadId, attachmentAccess.accessKey, item)
+        case none
+          verificationKey = ""
+
+  action afterVerifiedAttachment
+    verificationKey = ""
+    match verifiedAttachment
+      case some(reply)
+        if reply.accessKey == attachmentAccess.accessKey
+          let draft = threadDraft(savedDrafts, draftEdits, reply.threadId)
+          match first(draft.attachments.filter(item => item.localId == reply.localId and item.attempt == reply.attempt and item.id == reply.attachmentId))
+            case some(item)
+              if reply.state == "ready"
+                verifiedAttachments = verifiedAttachments.filter(entry => entry.threadId != reply.threadId or entry.localId != reply.localId).concat([reply])
+              else
+                let revision = draft.revision + 1
+                let updated = DraftAttachment(item, state=(reply.state == "missing" ? "local" : "failed"), id=(reply.state == "missing" ? "" : item.id), attempt=(reply.state == "missing" ? item.attempt + 1 : item.attempt), error=reply.error, insertionRevision=revision)
+                persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.map(entry => entry.localId == item.localId ? updated : entry)))
+            case none
+              verifiedAttachments = verifiedAttachments
+      case none
+        attachmentError = "The uploaded attachment could not be checked."
+
+  action afterPreparedSend
+    match preparedSend
+      case some(reply)
+        match reply.pending
+          case some(message)
+            let draft = threadDraft(savedDrafts, draftEdits, reply.id)
+            persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=some(message)))
+          case none
+            attachmentError = reply.error
+      case none
+        attachmentError = "The message could not be prepared."
+
+  action retryPendingSend
+    match pendingMessage
+      case some(message)
+        if not pending(sent)
+          send sent = sendDraft(activeThreadId, message)
+      case none
+        attachmentError = attachmentError
+
+  action observeAttachment(threadId: string, viewKey: string, messageId: string, attachmentId: string, entry: IntersectionObserverEntry)
+    if threadId == activeToolThreadId and viewKey == toolViewKey
+      let remaining = attachmentDemands.filter(demand => demand.threadId == threadId and demand.viewKey == viewKey and (demand.messageId != messageId or demand.attachmentId != attachmentId))
+      let prior = first(attachmentDemands.filter(demand => demand.threadId == threadId and demand.viewKey == viewKey and demand.messageId == messageId and demand.attachmentId == attachmentId))
+      let demands = entry.isIntersecting ? remaining.slice(-11).concat([AttachmentDemand(threadId=threadId, viewKey=viewKey, messageId=messageId, attachmentId=attachmentId, attempt=(match prior { case some(demand) => demand.attempt, case none => attachmentRetry }))]) : remaining
+      attachmentDemands = demands
+      thumbnailFailures = thumbnailFailures.filter(failure => demands.filter(demand => demand.threadId == failure.threadId and demand.viewKey == failure.viewKey and demand.messageId == failure.messageId and demand.attachmentId == failure.attachmentId).length > 0)
+
+  action retryAttachmentPreview(threadId: string, viewKey: string, messageId: string, attachmentId: string)
+    let attempt = attachmentRetry + 1
+    attachmentRetry = attempt
+    thumbnailFailures = thumbnailFailures.filter(failure => failure.threadId != threadId or failure.viewKey != viewKey or failure.messageId != messageId or failure.attachmentId != attachmentId)
+    attachmentDemands = attachmentDemands.filter(demand => demand.messageId != messageId or demand.attachmentId != attachmentId).slice(-11).concat([AttachmentDemand(threadId=threadId, viewKey=viewKey, messageId=messageId, attachmentId=attachmentId, attempt=attempt)])
+
+  action attachmentImageFailed(threadId: string, viewKey: string, messageId: string, attachmentId: string, attempt: number, message: string)
+    if threadId == activeToolThreadId and viewKey == toolViewKey and attachmentDemands.filter(demand => demand.messageId == messageId and demand.attachmentId == attachmentId and demand.attempt == attempt).length > 0
+      let prior = thumbnailFailures.filter(failure => failure.threadId == threadId and failure.viewKey == viewKey and failure.messageId == messageId and failure.attachmentId == attachmentId)
+      let remaining = thumbnailFailures.filter(failure => failure.threadId != threadId or failure.viewKey != viewKey or failure.messageId != messageId or failure.attachmentId != attachmentId)
+      if prior.length == 0
+        let next = attachmentRetry + 1
+        attachmentRetry = next
+        thumbnailFailures = remaining.concat([ThumbnailFailure(threadId=threadId, viewKey=viewKey, messageId=messageId, attachmentId=attachmentId, attempt=next, error="")])
+        attachmentDemands = attachmentDemands.map(demand => demand.messageId == messageId and demand.attachmentId == attachmentId ? AttachmentDemand(demand, attempt=next) : demand)
+      else
+        thumbnailFailures = remaining.concat([ThumbnailFailure(threadId=threadId, viewKey=viewKey, messageId=messageId, attachmentId=attachmentId, attempt=attempt, error=message)])
+
+  action attachmentImageLoaded(threadId: string, viewKey: string, messageId: string, attachmentId: string, attempt: number)
+    thumbnailFailures = thumbnailFailures.filter(failure => failure.threadId != threadId or failure.viewKey != viewKey or failure.messageId != messageId or failure.attachmentId != attachmentId or failure.attempt != attempt)
+
+  action refreshAttachmentPreviews
+    previewClock = previewClock + 1
+    previewNow = performanceNow()
+
+  action openAttachment(threadId: string, messageId: string, item: Attachment, items: Attachment[])
+    if not pending(viewerPresented) and not pending(viewerPrepared)
+      closeAttachmentViewer()
+      let selected = GalleryCandidate(item=item, localPath="", sourceId=attachmentSourceId(threadId, messageId, item.id))
+      send viewerPrepared = prepareAttachmentViewer(threadId, `${threadRoute.id}`, selected, items.map(entry => GalleryCandidate(item=entry, localPath="", sourceId=attachmentSourceId(threadId, messageId, entry.id))))
+
+  action previewDraftAttachment(item: DraftAttachment)
+    if not pending(viewerPresented) and not pending(viewerPrepared)
+      closeAttachmentViewer()
+      let selected = GalleryCandidate(item=Attachment(type=item.type, id=item.id, name=item.name, mimeType=item.mimeType, sizeBytes=item.sizeBytes, width=item.width, height=item.height), localPath=item.path, sourceId=`draft-image-${item.localId}`)
+      send viewerPrepared = prepareAttachmentViewer(activeThreadId, `${threadRoute.id}`, selected, composerAttachments.map(entry => GalleryCandidate(item=Attachment(type=entry.type, id=entry.id, name=entry.name, mimeType=entry.mimeType, sizeBytes=entry.sizeBytes, width=entry.width, height=entry.height), localPath=entry.path, sourceId=`draft-image-${entry.localId}`)))
+
+  action afterViewerPrepared
+    match viewerPrepared
+      case some(reply)
+        if reply.viewer.routeId == `${threadRoute.id}` and reply.viewer.threadId == activeThreadId
+          let present = reply.viewer.imageGallery or reply.viewer.items.filter(item => item.state != "ready").length == 0
+          attachmentViewer = some(AttachmentViewer(reply.viewer, state=(present ? "presented" : "loading")))
+          if present
+            previewFileLeases = previewFileLeases.concat(reply.viewer.items.map(item => item.path))
+            send viewerPresented = presentAttachment(reply.viewer)
+      case none
+        attachmentError = "This attachment could not be opened."
+
+  task advanceGallery key=`${match attachmentViewer { case some(viewer) => viewer.presentationId, case none => "" }}:${match galleryNext { case some(item) => item.index, case none => -1 }}:${match galleryWork { case some(work) => work.index, case none => -1 }}:${gallerySelection.valid}`
+    after(1, downloadNextGalleryItem)
+
+  action downloadNextGalleryItem
+    match attachmentViewer
+      case some(viewer)
+        if gallerySelection.presentationId == viewer.presentationId and not gallerySelection.valid
+          closeAttachmentViewer()
+        else
+          match galleryNext
+            case some(item)
+              if match galleryWork { case some(work) => work.presentationId != viewer.presentationId or work.index != item.index, case none => true }
+                match galleryWork
+                  case some(work)
+                    send galleryCancelled = cancelGalleryWork(work)
+                  case none
+                    attachmentError = attachmentError
+                viewerUrl = none
+                viewerDownloaded = none
+                let attempt = galleryAttempt + 1
+                let work = GalleryWork(presentationId=viewer.presentationId, threadId=viewer.threadId, accessKey=viewer.accessKey, origin=viewer.origin, index=item.index, attempt=attempt, item=item)
+                galleryAttempt = attempt
+                galleryWork = some(work)
+                send viewerUrl = attachmentViewerUrl(work)
+            case none
+              galleryWork = none
+      case none
+        galleryWork = none
+
+  action afterViewerUrl
+    match viewerUrl
+      case some(reply)
+        if match galleryWork { case some(work) => work.presentationId == reply.work.presentationId and work.index == reply.work.index and work.attempt == reply.work.attempt, case none => false }
+          if reply.work.item.error == ""
+            send viewerDownloaded = downloadAttachment(reply.work)
+          else
+            finishGalleryItem(reply.work)
+      case none
+        attachmentError = "This attachment could not be opened."
+
+  action afterViewerDownloaded
+    match viewerDownloaded
+      case some(reply)
+        if match galleryWork { case some(work) => work.presentationId == reply.work.presentationId and work.index == reply.work.index and work.attempt == reply.work.attempt, case none => false }
+          finishGalleryItem(reply.work)
+      case none
+        attachmentError = "This attachment could not be downloaded."
+
+  action finishGalleryItem(work: GalleryWork)
+    match attachmentViewer
+      case some(viewer)
+        if viewer.presentationId == work.presentationId
+          let updated = AttachmentViewer(viewer, items=viewer.items.map(item => item.index == work.index ? work.item : item), error=(viewer.imageGallery ? "" : work.item.error), state=(viewer.imageGallery ? viewer.state : work.item.state == "ready" ? "presented" : "error"))
+          attachmentViewer = some(updated)
+          galleryWork = none
+          if viewer.imageGallery
+            send galleryUpdated = updateGalleryItem(work)
+          else if work.item.state == "ready"
+            previewFileLeases = previewFileLeases.concat(updated.items.map(item => item.path))
+            send viewerPresented = presentAttachment(updated)
+      case none
+        attachmentError = attachmentError
+
+  action afterGalleryUpdated
+    match galleryUpdated
+      case some(reply)
+        match attachmentViewer
+          case some(viewer)
+            if viewer.presentationId == reply.work.presentationId and reply.work.item.state == "error"
+              attachmentViewer = some(AttachmentViewer(viewer, items=viewer.items.map(item => item.index == reply.work.index ? reply.work.item : item)))
+          case none
+            attachmentError = attachmentError
+      case none
+        attachmentError = "This attachment could not be previewed."
+
+  action afterViewerPresented
+    match viewerPresented
+      case some(reply)
+        let paths = reply.viewer.items.map(item => item.path)
+        previewFileLeases = previewFileLeases.filter(path => not paths.includes(path))
+        match attachmentViewer
+          case some(viewer)
+            if viewer.presentationId == reply.viewer.presentationId
+              closeAttachmentViewer()
+              if reply.viewer.error != ""
+                attachmentError = reply.viewer.error
+            else
+              attachmentCleanup = attachmentCleanup.concat(reply.viewer.items.filter(item => item.localPath == "" and attachmentCleanup.filter(entry => entry.path == item.path).length == 0).map(item => CleanupAttachment(threadId=reply.viewer.threadId, accessKey="", attachmentId="", path=item.path, revision=-1)))
+          case none
+            attachmentCleanup = attachmentCleanup.concat(reply.viewer.items.filter(item => item.localPath == "" and attachmentCleanup.filter(entry => entry.path == item.path).length == 0).map(item => CleanupAttachment(threadId=reply.viewer.threadId, accessKey="", attachmentId="", path=item.path, revision=-1)))
+      case none
+        attachmentError = "This file could not be previewed."
+
+  action closeAttachmentViewer
+    match attachmentViewer
+      case some(viewer)
+        send viewerDismissed = dismissAttachment(viewer.presentationId)
+        attachmentCleanup = attachmentCleanup.concat(viewer.items.filter(item => item.localPath == "" and attachmentCleanup.filter(entry => entry.path == item.path).length == 0).map(item => CleanupAttachment(threadId=viewer.threadId, accessKey="", attachmentId="", path=item.path, revision=-1)))
+      case none
+        attachmentError = attachmentError
+    match galleryWork
+      case some(work)
+        send galleryCancelled = cancelGalleryWork(work)
+      case none
+        attachmentError = attachmentError
+    attachmentViewer = none
+    galleryWork = none
+    viewerDownloaded = none
+    viewerUrl = none
+
+  action attachmentNavigated
+    if pickerIntent.routeId != `${threadRoute.id}` or pickerIntent.threadId != activeThreadId
+      pickerIntent = PickerIntent(threadId="", routeId="", serial=pickerSerial, photos=true)
+    match attachmentViewer
+      case some(viewer)
+        if viewer.routeId != `${threadRoute.id}` or viewer.threadId != activeThreadId
+          closeAttachmentViewer()
+      case none
+        attachmentViewer = none

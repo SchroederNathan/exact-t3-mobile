@@ -1,3 +1,4 @@
+import { displayAttachments, type DisplayAttachment } from "./attachments";
 import { markdownBlocks } from "./markdown";
 import { toolSummary, type ToolSummary } from "./tool-activity";
 import { projectControls } from "./thread-controls";
@@ -42,10 +43,10 @@ function timelineRows(value: unknown): TimelineRow[] {
   });
 }
 
-function displayMessage(id: string, role: string, body: string, createdAt: string, pending: boolean) {
+function displayMessage(id: string, role: string, body: string, createdAt: string, pending: boolean, attachments: DisplayAttachment[]) {
   const date = new Date(createdAt);
   return {
-    id, role, body, createdAt, pending,
+    id, role, body, createdAt, pending, attachments,
     timeLabel: Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
     blocks: markdownBlocks(body, id, role === "user", pending),
   };
@@ -318,11 +319,12 @@ export class ThreadHistory {
     if (this.rendered) return this.rendered;
     const rows: FeedRow[] = [];
     const messages = new Map<string, DisplayMessage>();
-    const append = (id: string, role: string, body: string, createdAt: string, pending: boolean) => {
+    const append = (id: string, role: string, body: string, createdAt: string, pending: boolean, rawAttachments: unknown = []) => {
       if (!id || !["user", "assistant", "system"].includes(role)) return;
+      const attachments = displayAttachments(rawAttachments);
       const cached = this.messageCache.get(id);
-      const message = cached?.body === body && cached.role === role && cached.createdAt === createdAt && cached.pending === pending
-        ? cached : displayMessage(id, role, body, createdAt, pending);
+      const message = cached?.body === body && cached.role === role && cached.createdAt === createdAt && cached.pending === pending && JSON.stringify(cached.attachments) === JSON.stringify(attachments)
+        ? cached : displayMessage(id, role, body, createdAt, pending, attachments);
       messages.set(id, message);
       rows.push({ id, message, activity: null });
     };
@@ -343,10 +345,10 @@ export class ThreadHistory {
           continue;
         }
         if (item.type === "user_message" && item.inputIntent === "queued_turn" && item.status === "pending") continue;
-        append(key(row), item.type === "user_message" ? "user" : "assistant", text(item.text), text(item.startedAt) || text(item.updatedAt), item.streaming === true);
+        append(key(row), item.type === "user_message" ? "user" : "assistant", text(item.text), text(item.startedAt) || text(item.updatedAt), item.streaming === true, item.attachments);
       }
     } else {
-      for (const item of this.rawMessages.values()) append(text(item.id), text(item.role), text(item.text), text(item.createdAt), item.streaming === true);
+      for (const item of this.rawMessages.values()) append(text(item.id), text(item.role), text(item.text), text(item.createdAt), item.streaming === true, item.attachments);
     }
     if (messages.size !== this.messageCache.size || [...messages].some(([id, message]) => this.messageCache.get(id) !== message)) this.markdownRevision++;
     this.messageCache = messages;

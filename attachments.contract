@@ -1,0 +1,301 @@
+shape ThreadDraft
+  id: string
+  text: string
+  revision: number
+  attachments: DraftAttachment[]
+  pendingSend: option<PendingSend>
+
+
+shape AttachmentReply
+  ok: bool
+  error: string
+
+shape Attachment
+  type: string
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+  width: number
+  height: number
+
+shape StoredAttachment
+  type: string
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+
+shape DraftAttachment
+  type: string
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+  width: number
+  height: number
+  localId: string
+  path: string
+  state: string
+  attempt: number
+  error: string
+  insertionRevision: number
+
+shape PendingSend
+  commandId: string
+  messageId: string
+  revision: number
+  text: string
+  attachments: StoredAttachment[]
+  paths: string[]
+  selection: string
+  state: string
+
+shape DraftReceipt
+  id: string
+  revision: number
+  commandId: string
+  ok: bool
+  error: string
+
+shape PersistedDraft
+  id: string
+  revision: number
+  commandId: string
+
+shape PickerIntent
+  threadId: string
+  routeId: string
+  serial: number
+  photos: bool
+
+shape StagedAttachments
+  intent: PickerIntent
+  attachments: DraftAttachment[]
+  error: string
+
+shape AttachmentAccess
+  threadId: string
+  accessKey: string
+  origin: string
+  allowed: bool
+  uploads: bool
+  maxFileBytes: number
+
+shape AttachmentSlot
+  index: number
+  state: string
+  threadId: string
+  localId: string
+  attempt: number
+  accessKey: string
+  origin: string
+  item: DraftAttachment
+  attachmentId: string
+  url: string
+  revision: number
+
+shape MintedAttachment
+  slot: AttachmentSlot
+  error: string
+
+shape UploadProgress
+  threadId: string
+  localId: string
+  attempt: number
+  state: string
+  progress: number
+  error: string
+
+shape PreparedSend
+  id: string
+  revision: number
+  pending: option<PendingSend>
+  error: string
+
+shape SendReply
+  id: string
+  commandId: string
+  state: string
+  ok: bool
+  error: string
+
+shape AttachmentDemand
+  threadId: string
+  viewKey: string
+  messageId: string
+  attachmentId: string
+  attempt: number
+
+shape AttachmentPreview
+  width: number
+  height: number
+  attachmentId: string
+  attempt: number
+  url: string
+  expiresAt: number
+  state: string
+  error: string
+
+shape AttachmentBatch
+  threadId: string
+  viewKey: string
+  previews: AttachmentPreview[]
+
+shape GalleryCandidate
+  item: Attachment
+  localPath: string
+  sourceId: string
+
+shape GalleryItem
+  item: Attachment
+  localPath: string
+  sourceId: string
+  index: number
+  path: string
+  url: string
+  state: string
+  error: string
+
+shape AttachmentViewer
+  presentationId: string
+  routeId: string
+  threadId: string
+  accessKey: string
+  origin: string
+  items: GalleryItem[]
+  selectedIndex: number
+  imageGallery: bool
+  state: string
+  error: string
+
+shape GalleryWork
+  presentationId: string
+  threadId: string
+  accessKey: string
+  origin: string
+  index: number
+  attempt: number
+  item: GalleryItem
+
+shape GalleryWorkReply
+  work: GalleryWork
+
+shape GallerySelection
+  presentationId: string
+  selectedIndex: number
+  valid: bool
+
+shape ThumbnailFailure
+  threadId: string
+  viewKey: string
+  messageId: string
+  attachmentId: string
+  attempt: number
+  error: string
+
+shape ViewerReply
+  viewer: AttachmentViewer
+
+fn draftReceiptRevision(receipts: PersistedDraft[], id: string): number = match first(receipts.filter(receipt => receipt.id == id)) { case some(receipt) => receipt.revision, case none => -1 }
+fn attachmentProgress(uploads: UploadProgress[], localId: string, attempt: number): number = match first(uploads.filter(upload => upload.localId == localId and upload.attempt == attempt)) { case some(upload) => upload.progress, case none => 0 }
+fn attachmentSize(bytes: number): string = bytes >= 1048576 ? `${round(bytes / 104857.6) / 10} MB` : bytes >= 1024 ? `${round(bytes / 1024)} KB` : `${bytes} B`
+fn attachmentPreviews(batch: AttachmentBatch, threadId: string, viewKey: string, id: string): AttachmentPreview[] = batch.threadId == threadId and batch.viewKey == viewKey ? batch.previews.filter(preview => preview.attachmentId == id) : []
+
+component ComposerAttachments
+  props
+    items: DraftAttachment[]
+    uploads: UploadProgress[]
+    remove: action
+    retry: action
+    preview: action
+  view
+    scroll overflow-x="auto" overflow-y="hidden" width="100%" min-width=0 height=88 testId="composer-attachments"
+      row gap=10 padding="8px 12px" align-items="center"
+        for item in items key=item.localId
+          column position="relative" width=((item.type == "image" or ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(item.mimeType)) ? 72 : 180) height=72 flex-shrink=0
+            button press=preview(item) appearance="none" width="100%" height=72 border-radius=16 background-color="bubble" overflow="hidden" aria-label=`Preview ${item.name}` testId=`preview-draft-${item.localId}`
+              if (item.type == "image" or ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(item.mimeType))
+                image item.path width=72 height=72 object-fit="cover" testId=`draft-image-${item.localId}`
+              else
+                row padding=10 gap=8 align-items="center"
+                  image "symbol:sf/doc" width=22 height=22 color="muted"
+                  column flex=1 min-width=0 gap=2
+                    text item.name font-size=12 line-clamp=2 text-overflow="ellipsis"
+                    text attachmentSize(item.sizeBytes) font-size=10 color="muted"
+            button press=remove(item.localId) appearance="none" aria-label=`Remove ${item.name}` width=34 height=34 position="absolute" right=-2 top=-2 display="flex" align-items="center" justify-content="center" testId=`remove-attachment-${item.localId}`
+              row width=22 height=22 align-items="center" justify-content="center" border-radius=11 background-color="rgba(0, 0, 0, 0.55)"
+                image "symbol:sf/xmark" width=9 height=9 color="white"
+            if item.state == "failed"
+              button press=retry(item.localId) appearance="none" aria-label=`Retry ${item.name}: ${item.error}` position="absolute" left=4 bottom=4 background-color="rgba(0, 0, 0, 0.7)" border-radius=8 padding="4px 6px" min-height=28 testId=`retry-attachment-${item.localId}`
+                text "Retry" font-size=11 color="white"
+            else if item.state != "uploaded"
+              text (item.state == "uploading" ? `${attachmentProgress(uploads, item.localId, item.attempt)}%` : "Waiting") position="absolute" left=4 bottom=4 padding="3px 5px" border-radius=6 background-color="rgba(0, 0, 0, 0.7)" font-size=10 color="white" font-variant-numeric="tabular-nums"
+
+fn isAttachmentImage(item: Attachment): bool = item.type == "image" or ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(item.mimeType)
+fn attachmentSourceId(threadId: string, messageId: string, id: string): string = `attachment-image-${threadId}-${messageId}-${id}`
+fn imageRatio(item: Attachment, previews: AttachmentPreview[]): number = match first(previews.filter(preview => preview.width > 0 and preview.height > 0)) { case some(preview) => preview.width / preview.height, case none => item.width > 0 and item.height > 0 ? item.width / item.height : 1.3 }
+
+component MessageAttachments
+  props
+    items: Attachment[]
+    threadId: string
+    messageId: string
+    viewKey: string
+    batch: AttachmentBatch
+    failures: ThumbnailFailure[]
+    seen: action
+    open: action
+    retry: action
+    imageFailed: action
+    imageLoaded: action
+  derive images = items.filter(item => isAttachmentImage(item))
+  view
+    column width="100%" max-width=320 gap=8 margin-bottom=8 align-self="flex-end" testId=`attachments-${messageId}`
+      view display="grid" grid-template-columns=(images.length == 3 ? "3fr 2fr" : images.length > 1 ? "1fr 1fr" : "1fr") gap=0.5 border-radius=20 overflow="hidden"
+        for item, index in images key=item.id
+          column intersect=seen(threadId, viewKey, messageId, item.id) intersect-margin="160px" min-width=0 grid-column=(images.length > 3 and index == images.length - 1 and images.length % 2 == 1 ? "1 / span 2" : "auto") grid-row=(images.length == 3 and index == 0 ? "1 / span 2" : "auto")
+            button press=open(threadId, messageId, item, items) appearance="none" width="100%" height=(images.length == 1 ? "auto" : images.length == 2 or (images.length == 3 and index == 0) ? "192px" : images.length == 3 ? "95.75px" : "96px") aspect-ratio=(images.length == 1 ? `${imageRatio(item, attachmentPreviews(batch, threadId, viewKey, item.id))}` : "auto") max-height=(images.length == 1 ? "480px" : "none") background-color="bubble" aria-label=`Open ${item.name}` testId=`attachment-${messageId}-${item.id}`
+              if attachmentPreviews(batch, threadId, viewKey, item.id).filter(preview => preview.state == "ready").length > 0 and failures.filter(failure => failure.threadId == threadId and failure.viewKey == viewKey and failure.messageId == messageId and failure.attachmentId == item.id and failure.error != "").length == 0
+                for preview in attachmentPreviews(batch, threadId, viewKey, item.id) key=preview.attachmentId
+                  image `${preview.url}#attachment-${preview.attempt}` width="100%" height="100%" object-fit=(images.length == 1 ? "contain" : "cover") error=imageFailed(threadId, viewKey, messageId, item.id, preview.attempt) load=imageLoaded(threadId, viewKey, messageId, item.id, preview.attempt) testId=attachmentSourceId(threadId, messageId, item.id)
+              else
+                column align-items="center" justify-content="center" gap=6 height="100%" padding=12 box-sizing="border-box"
+                  image "symbol:sf/photo" width=28 height=28 color="muted"
+                  text item.name font-size=12 color="muted" line-clamp=2
+            if attachmentPreviews(batch, threadId, viewKey, item.id).filter(preview => preview.state == "error" or preview.state == "missing").length > 0 or failures.filter(failure => failure.threadId == threadId and failure.viewKey == viewKey and failure.messageId == messageId and failure.attachmentId == item.id and failure.error != "").length > 0
+              button press=retry(threadId, viewKey, messageId, item.id) appearance="none" color="danger" min-height=32 aria-label=`Retry preview for ${item.name}`
+                text "Retry preview" font-size=12
+      for item in items.filter(item => not isAttachmentImage(item)) key=item.id
+        button press=open(threadId, messageId, item, items) disabled=(item.type == "unknown") appearance="none" display="flex" align-items="center" gap=10 min-height=56 padding=12 width="100%" max-width=280 box-sizing="border-box" border-radius=12 border="1px solid var(--edge)" background-color="card" text-align="left" aria-label=`Open ${item.name}` testId=`attachment-${messageId}-${item.id}`
+          image "symbol:sf/doc" width=24 height=24 color="muted"
+          column flex=1 min-width=0 gap=3
+            text item.name font-size=14 line-clamp=2 text-overflow="ellipsis"
+            text (item.type == "unknown" ? "Unsupported attachment" : `${item.mimeType} · ${attachmentSize(item.sizeBytes)}`) font-size=12 color="muted"
+          image "symbol:sf/chevron.right" width=12 height=12 color="muted"
+
+shape VerifiedAttachment
+  threadId: string
+  localId: string
+  attachmentId: string
+  attempt: number
+  accessKey: string
+  state: string
+  error: string
+
+shape AttachmentConnection
+  key: string
+  valid: bool
+
+shape CleanupAttachment
+  threadId: string
+  accessKey: string
+  attachmentId: string
+  path: string
+  revision: number
+
+fn attachmentIdentity(threadId: string, localId: string, attempt: number): string = `${threadId}:${localId}:${attempt}`
+fn slotIdentity(slot: AttachmentSlot): string = attachmentIdentity(slot.threadId, slot.localId, slot.attempt)
+fn uploadedVerified(verified: VerifiedAttachment[], threadId: string, item: DraftAttachment, accessKey: string): bool = verified.filter(entry => entry.threadId == threadId and entry.localId == item.localId and entry.attachmentId == item.id and entry.attempt == item.attempt and entry.accessKey == accessKey and entry.state == "ready").length > 0
+
+fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0, attachments=[], pendingSend=none) } }

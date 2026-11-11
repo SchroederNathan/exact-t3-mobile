@@ -1,3 +1,5 @@
+use Attachment, AttachmentBatch, ThumbnailFailure, MessageAttachments from "./attachments.contract"
+
 shape InlineRun
   id: string
   text: string
@@ -41,6 +43,7 @@ shape Message
   timeLabel: string
   pending: bool
   blocks: MarkdownBlock[]
+  attachments: Attachment[]
 
 shape BlockRef
   threadId: string
@@ -125,12 +128,22 @@ component MarkdownMessage
     toggleWrap: action
     followLink: action
     copy: action
+    attachments: AttachmentBatch
+    seenAttachment: action
+    openAttachment: action
+    retryAttachment: action
+    thumbnailFailures: ThumbnailFailure[]
+    imageFailed: action
+    imageLoaded: action
   derive palette = markdownPalette(message.role == "user")
   view
     column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
-      column max-width=(message.role == "user" ? "85%" : "100%") width=(message.role == "user" ? "auto" : "100%") min-width=0 box-sizing="border-box" padding=(message.role == "user" ? "8.75px 12.25px" : "0 4px") border-radius=(message.role == "user" ? 20 : 0) background-color=(message.role == "user" ? "bubble" : "transparent") testId=`message-${message.id}`
-        for block in message.blocks key=block.id
-          MarkdownBlockView(block=block, palette=palette, threadId=threadId, messageId=message.id, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy)
+      if message.attachments.length > 0
+        MessageAttachments(items=message.attachments, threadId=threadId, messageId=message.id, viewKey=viewKey, batch=attachments, seen=seenAttachment, open=openAttachment, retry=retryAttachment, failures=thumbnailFailures, imageFailed=imageFailed, imageLoaded=imageLoaded)
+      if message.body != ""
+        column max-width=(message.role == "user" ? "85%" : "100%") width=(message.role == "user" ? "auto" : "100%") min-width=0 box-sizing="border-box" padding=(message.role == "user" ? "8.75px 12.25px" : "0 4px") border-radius=(message.role == "user" ? 20 : 0) background-color=(message.role == "user" ? "bubble" : "transparent") testId=`message-${message.id}`
+          for block in message.blocks key=block.id
+            MarkdownBlockView(block=block, palette=palette, threadId=threadId, messageId=message.id, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy)
       if message.role == "user"
         row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
           text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"

@@ -1,22 +1,72 @@
 import QuickLook
 import UIKit
 
-private final class AttachmentPreviewItem: NSObject, QLPreviewItem {
-  let previewItemURL: URL?
-  let previewItemTitle: String?
+private enum AttachmentPreviewState: String { case loading, ready, error }
 
-  init(url: URL, title: String) {
+private final class AttachmentPreviewItem: NSObject, QLPreviewItem {
+  var previewItemURL: URL?
+  let previewItemTitle: String?
+  let sourceId: String
+  var state: AttachmentPreviewState
+
+  init(url: URL?, title: String, sourceId: String, state: AttachmentPreviewState) {
     previewItemURL = url
     previewItemTitle = title
+    self.sourceId = sourceId
+    self.state = state
   }
 }
 
 private final class AttachmentPreviewController: QLPreviewController {
+  var onAppear: (() -> Void)?
   var onDismiss: (() -> Void)?
+  private let spinner = UIActivityIndicatorView(style: .large)
+  private let failure = UILabel()
+  var state = AttachmentPreviewState.ready {
+    didSet { if isViewLoaded { showState() } }
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    spinner.accessibilityLabel = "Loading image"
+    failure.text = "This image could not be loaded."
+    failure.textColor = .secondaryLabel
+    failure.textAlignment = .center
+    failure.numberOfLines = 0
+    failure.font = .preferredFont(forTextStyle: .body)
+    failure.adjustsFontForContentSizeCategory = true
+    for status in [spinner, failure] as [UIView] {
+      status.isUserInteractionEnabled = false
+      status.translatesAutoresizingMaskIntoConstraints = false
+      view.addSubview(status)
+      NSLayoutConstraint.activate([
+        status.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        status.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 64),
+        status.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+      ])
+    }
+    showState()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    view.bringSubviewToFront(spinner)
+    view.bringSubviewToFront(failure)
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    onAppear?()
+  }
 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
     if isBeingDismissed || presentingViewController == nil { onDismiss?() }
+  }
+
+  private func showState() {
+    if state == .loading { spinner.startAnimating() } else { spinner.stopAnimating() }
+    failure.isHidden = state != .error
   }
 }
 
@@ -25,17 +75,24 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
   QLPreviewControllerDelegate, UIAdaptivePresentationControllerDelegate {
   @MainActor private final class Presentation {
     let id: String
-    let item: AttachmentPreviewItem
+    let items: [AttachmentPreviewItem]
+    let imageGallery: Bool
     let controller = AttachmentPreviewController()
+    var selectedIndex: Int
+    var staleIndices = Set<Int>()
+    var selectionObservation: NSKeyValueObservation?
     var reply: ExactReply?
     var appeared = false
     var dismissRequested = false
     var dismissing = false
+    var endRequested = false
     var animated = true
 
-    init(id: String, item: AttachmentPreviewItem, reply: ExactReply) {
+    init(id: String, items: [AttachmentPreviewItem], selectedIndex: Int, imageGallery: Bool, reply: ExactReply) {
       self.id = id
-      self.item = item
+      self.items = items
+      self.selectedIndex = selectedIndex
+      self.imageGallery = imageGallery
       self.reply = reply
     }
   }
@@ -51,21 +108,39 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
     do {
       let id = try identity(request)
       guard active == nil else { throw ExactNativeRefusal("Close the current preview before opening another file.") }
-      guard let path = request["path"] as? String else { throw ExactNativeRefusal("An attachment file is required.") }
-      let url = try file(path)
-      let title = (request["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-      let item = AttachmentPreviewItem(url: url, title: title.isEmpty ? url.lastPathComponent : String(title.prefix(255)))
-      guard QLPreviewController.canPreview(item) else {
-        throw ExactNativeRefusal("This file type cannot be previewed on this device.")
+      guard let entries = request["items"] as? [[String: Any]], !entries.isEmpty, entries.count <= 100,
+            let selectedIndex = request["selectedIndex"] as? Int, entries.indices.contains(selectedIndex),
+            let imageGallery = request["imageGallery"] as? Bool,
+            imageGallery || entries.count == 1 else {
+        throw ExactNativeRefusal("A preview requires its files and a selected page.")
+      }
+      let items = try entries.map { entry in
+        let (url, state) = try content(entry, imageGallery: imageGallery)
+        let title = (entry["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return AttachmentPreviewItem(url: url, title: title.isEmpty ? (url?.lastPathComponent ?? "Preview") : String(title.prefix(255)),
+                                     sourceId: entry["sourceId"] as? String ?? "", state: state)
       }
       guard let host = context.sessionView as? UIView, let presenter = presenter(for: host) else {
         throw ExactNativeRefusal("The attachment preview needs an active app window.")
       }
-      let presentation = Presentation(id: id, item: item, reply: reply)
+      let presentation = Presentation(id: id, items: items, selectedIndex: selectedIndex, imageGallery: imageGallery, reply: reply)
       let controller = presentation.controller
       active = presentation
       controller.dataSource = self
       controller.delegate = self
+      controller.currentPreviewItemIndex = selectedIndex
+      controller.state = items[selectedIndex].state
+      presentation.selectionObservation = controller.observe(\.currentPreviewItemIndex) { [weak self, weak controller] _, _ in
+        DispatchQueue.main.async {
+          if let controller { self?.selectionChanged(controller) }
+        }
+      }
+      controller.onAppear = { [weak self, weak presentation] in
+        if let presentation {
+          presentation.appeared = true
+          self?.resumeDismissal(presentation)
+        }
+      }
       controller.onDismiss = { [weak self, weak controller] in
         if let controller { self?.finish(controller) }
       }
@@ -73,14 +148,41 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
         guard active === presentation else { return }
         presentation.appeared = true
         controller.presentationController?.delegate = self
-        if presentation.dismissRequested { dismiss(presentation) }
+        resumeDismissal(presentation)
       }
       controller.presentationController?.delegate = self
+      context.changed("attachment-preview")
     } catch let error as ExactNativeRefusal {
       reply.fail(error.description)
     } catch {
       reply.fail("The attachment file is unavailable.")
     }
+  }
+
+  func update(_ request: [String: Any]) throws -> [String: Any] {
+    let id = try identity(request)
+    guard let active, active.id == id, !active.dismissRequested else { return ["updated": false] }
+    guard let index = request["index"] as? Int, active.items.indices.contains(index) else {
+      throw ExactNativeRefusal("The attachment preview page is invalid.")
+    }
+    let (url, state) = try content(request, imageGallery: active.imageGallery)
+    let item = active.items[index]
+    guard item.previewItemURL != url || item.state != state else { return ["updated": true] }
+    item.previewItemURL = url
+    item.state = state
+    if active.controller.currentPreviewItemIndex == index {
+      active.controller.refreshCurrentPreviewItem()
+      active.controller.state = state
+    } else {
+      active.staleIndices.insert(index)
+    }
+    return ["updated": true]
+  }
+
+  func selection(_ request: [String: Any]) throws -> [String: Any] {
+    let id = try identity(request)
+    guard let active, active.id == id, !active.dismissRequested else { return ["selectedIndex": -1] }
+    return ["selectedIndex": active.controller.currentPreviewItemIndex]
   }
 
   func dismiss(_ request: [String: Any]) throws -> [String: Any] {
@@ -92,18 +194,37 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
 
   func end() {
     guard let active else { return }
-    active.reply?.fail("The attachment preview window closed.")
-    active.reply = nil
+    active.endRequested = true
     active.animated = false
     dismiss(active)
   }
 
   private func dismiss(_ presentation: Presentation) {
     presentation.dismissRequested = true
-    guard presentation.appeared, !presentation.dismissing else { return }
+    guard presentation.appeared, !presentation.dismissing,
+          !presentation.controller.isBeingPresented, !presentation.controller.isBeingDismissed else { return }
     presentation.dismissing = true
     presentation.controller.dismiss(animated: presentation.animated && !UIAccessibility.isReduceMotionEnabled) { [self] in
       finish(presentation.controller)
+    }
+  }
+
+  private func resumeDismissal(_ presentation: Presentation) {
+    DispatchQueue.main.async { [weak self, weak presentation] in
+      guard let self, let presentation, self.active === presentation, presentation.dismissRequested else { return }
+      self.dismiss(presentation)
+    }
+  }
+
+  private func selectionChanged(_ controller: AttachmentPreviewController) {
+    guard let active, active.controller === controller, !active.dismissRequested,
+          active.items.indices.contains(controller.currentPreviewItemIndex) else { return }
+    let index = controller.currentPreviewItemIndex
+    if active.staleIndices.remove(index) != nil { controller.refreshCurrentPreviewItem() }
+    controller.state = active.items[index].state
+    if active.selectedIndex != index {
+      active.selectedIndex = index
+      context.changed("attachment-preview")
     }
   }
 
@@ -112,18 +233,40 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
     controller.dataSource = nil
     controller.delegate = nil
     controller.presentationController?.delegate = nil
+    presentation.selectionObservation?.invalidate()
+    presentation.selectionObservation = nil
+    presentation.controller.onAppear = nil
     presentation.controller.onDismiss = nil
     active = nil
-    presentation.reply?.send(["presentationId": presentation.id, "status": "dismissed"])
+    let reply = presentation.reply
     presentation.reply = nil
+    if presentation.endRequested {
+      reply?.fail("The attachment preview window closed.")
+    } else {
+      reply?.send(["presentationId": presentation.id, "status": "dismissed"])
+    }
+    context.changed("attachment-preview")
   }
 
   func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
-    active?.controller === controller ? 1 : 0
+    active?.controller === controller ? active!.items.count : 0
   }
 
   func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-    active!.item
+    active!.items[index]
+  }
+
+  nonisolated func previewController(_ controller: QLPreviewController, transitionViewFor item: QLPreviewItem) -> UIView? {
+    MainActor.assumeIsolated { sourceView(for: item, controller: controller) }
+  }
+
+  nonisolated func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
+                                    inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
+    MainActor.assumeIsolated {
+      guard let source = sourceView(for: item, controller: controller) else { return .zero }
+      view.pointee = source
+      return source.bounds
+    }
   }
 
   nonisolated func previewControllerDidDismiss(_ controller: QLPreviewController) {
@@ -139,6 +282,41 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
       throw ExactNativeRefusal("An attachment presentation identity is required.")
     }
     return id
+  }
+
+  private func content(_ request: [String: Any], imageGallery: Bool) throws -> (URL?, AttachmentPreviewState) {
+    guard let value = request["state"] as? String, let state = AttachmentPreviewState(rawValue: value),
+          let path = request["path"] as? String, state == .ready || (imageGallery && path.isEmpty) else {
+      throw ExactNativeRefusal("A preview page requires a local file or an image loading state.")
+    }
+    guard state == .ready else { return (nil, state) }
+    let url = try file(path)
+    guard QLPreviewController.canPreview(url as NSURL) else {
+      throw ExactNativeRefusal("This file type cannot be previewed on this device.")
+    }
+    return (url, state)
+  }
+
+  private func sourceView(for item: QLPreviewItem, controller: QLPreviewController) -> UIView? {
+    guard !UIAccessibility.isReduceMotionEnabled, let active, active.controller === controller,
+          let sourceId = active.items.first(where: { $0 === item })?.sourceId, !sourceId.isEmpty,
+          let host = context.sessionView as? UIView, let window = host.window else { return nil }
+    var candidates = [host]
+    while let candidate = candidates.popLast() {
+      guard !candidate.isHidden, candidate.alpha > 0.01 else { continue }
+      if candidate.accessibilityIdentifier == sourceId {
+        var visible = candidate.convert(candidate.bounds, to: window).intersection(window.bounds)
+        var ancestor: UIView? = candidate
+        while let view = ancestor {
+          if view.isHidden || view.alpha <= 0.01 { visible = .null; break }
+          if view.clipsToBounds { visible = visible.intersection(view.convert(view.bounds, to: window)) }
+          ancestor = view.superview
+        }
+        if !visible.isEmpty { return candidate }
+      }
+      candidates.append(contentsOf: candidate.subviews.reversed())
+    }
+    return nil
   }
 
   private func file(_ path: String) throws -> URL {

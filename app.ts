@@ -3,7 +3,10 @@ import { TableLayouts } from "./table-layout";
 import { CodeHighlights } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
-import { loadDrafts, saveDraft } from "./drafts";
+import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection } from "./drafts";
+import { RpcFailure } from "./attachment-session";
+import { freezeGallery, galleryWorkKey, GalleryDownloads } from "./attachment-gallery";
+import { FILE_LIMIT, PREVIEW_DIRECTORY, ATTACHMENT_DIRECTORY, ownedAttachmentPath, ownedPreviewPath, parseDraftAttachment, stageAttachments, storedReference, uploadEvent, validateAttachments } from "./attachments";
 import { ComposerSettings } from "./composer-settings";
 import { loadModelDrafts, saveModelDrafts } from "./model-drafts";
 import { controlKey } from "./thread-controls";
@@ -23,15 +26,17 @@ import {
 } from "./connection";
 
 export const grants =
-  "fs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "fs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
 const composerSettings = new ComposerSettings();
 const codeHighlights = new CodeHighlights();
 const tableLayouts = new TableLayouts();
+const galleryDownloads = new GalleryDownloads();
 let modelDraftRevision = 0;
 let current: DirectSession | undefined;
+let attachmentFilesCleaned = false;
 let savedEnvironments: Promise<Environment[]> | undefined;
 let nextGeneration = 0;
 const connections = new Map<string, {
@@ -41,6 +46,32 @@ const connections = new Map<string, {
   session: DirectSession;
   open: boolean;
 }>();
+
+async function removeOwnedAttachmentFile(storage: Storage, path: string) {
+  if (!ownedAttachmentPath(path) && !ownedPreviewPath(path)) return;
+  await storage.fs.rm(path).catch(() => {});
+  if (!ownedPreviewPath(path)) return;
+  const directory = path.slice(0, path.lastIndexOf("/"));
+  try {
+    if ((await storage.fs.readdir(directory)).length === 0) await storage.fs.rm(directory);
+  } catch {}
+}
+
+async function cleanPreviewDirectories(storage: Storage) {
+  try {
+    for (const directory of await storage.fs.readdir(PREVIEW_DIRECTORY)) {
+      if (!/^[A-Za-z0-9_-]+$/.test(directory)) continue;
+      const path = `${PREVIEW_DIRECTORY}${directory}`;
+      for (const name of await storage.fs.readdir(path)) {
+        const file = `${path}/${name}`;
+        if (ownedPreviewPath(file)) await storage.fs.rm(file).catch(() => {});
+      }
+      try {
+        if ((await storage.fs.readdir(path)).length === 0) await storage.fs.rm(path);
+      } catch {}
+    }
+  } catch {}
+}
 
 function credentials(store: Store): Record<string, string> {
   const saved: unknown = JSON.parse(store.get(SECRET) || "{}");
@@ -294,9 +325,186 @@ const sources: Sources = {
     const identity = threadIdentity(id);
     return composerSettings.close(id, identity.threadId, sessionFor(identity.environmentId), save);
   },
-  loadDrafts: (_args, _store, storage) => loadDrafts(storage),
-  saveDraft: async ([id, text, revision], _store, storage) => {
-    await saveDraft(storage, id, text, revision);
+  loadDrafts: async (_args, _store, storage) => {
+    const drafts = await loadDrafts(storage);
+    const referenced = new Set(drafts.flatMap((draft) => [...draft.attachments.map((item) => item.path), ...(draft.pendingSend?.paths ?? [])]));
+    try {
+      if (attachmentFilesCleaned) return restoreDrafts(drafts);
+      attachmentFilesCleaned = true;
+      await cleanPreviewDirectories(storage);
+      const directories = await storage.fs.readdir(ATTACHMENT_DIRECTORY);
+      for (const directory of directories) {
+        if (!/^[A-Za-z0-9_-]+$/.test(directory)) continue;
+        for (const name of await storage.fs.readdir(`${ATTACHMENT_DIRECTORY}${directory}`)) {
+          const path = `${ATTACHMENT_DIRECTORY}${directory}/${name}`;
+          if (ownedAttachmentPath(path) && !referenced.has(path)) await storage.fs.rm(path).catch(() => {});
+        }
+      }
+    } catch {}
+    return restoreDrafts(drafts);
+  },
+  saveDraft: async ([draft], _store, storage) => {
+    const result = { id: draft.id, revision: draft.revision, commandId: draft.pendingSend?.commandId ?? "" };
+    try { const saved = await saveDraft(storage, draft); return { id: saved.id, revision: saved.revision, commandId: saved.pendingSend?.commandId ?? "", ok: true, error: "" }; }
+    catch (error) { return { ...result, ok: false, error: error instanceof Error ? error.message : "The draft could not be saved." }; }
+  },
+  loadAttachmentAccess: ([threadId], _store, _storage, native) => {
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
+    try { return { threadId, ...sessionFor(threadIdentity(threadId).environmentId).attachments.metadata() }; }
+    catch { return { threadId, accessKey: "", origin: "", allowed: false, uploads: false, maxFileBytes: 0 }; }
+  },
+  attachmentConnections: ([slots], _store, _storage, native) => {
+    native?.watch("connections");
+    return slots.map((slot) => {
+      let valid = false;
+      try { sessionFor(threadIdentity(slot.threadId).environmentId).attachments.assertAccess(slot.accessKey, slot.origin); valid = true; } catch {}
+      return { key: `${slot.threadId}:${slot.localId}:${slot.attempt}`, valid };
+    });
+  },
+  stagePickedAttachments: async ([intent, files, existing, revision, maxFileBytes], _store, storage) => ({
+    intent, ...await stageAttachments(storage, files, intent.photos, maxFileBytes, existing.map(parseDraftAttachment), revision),
+  }),
+  mintAttachment: async ([slot], _store, _storage, native) => {
+    try {
+      const session = sessionFor(threadIdentity(slot.threadId).environmentId);
+      const ticket = await awaitReply(session.attachments.createUpload(slot.accessKey, parseDraftAttachment(slot.item)), native);
+      return { slot: { ...slot, ...ticket }, error: "" };
+    } catch (error) { return { slot, error: error instanceof Error ? error.message : "The upload could not be started." }; }
+  },
+  uploadAttachment: ([slot]) => {
+    const idle = { threadId: "", localId: "", attempt: 0, state: "idle", progress: 0, error: "" };
+    if (!slot) return idle;
+    try {
+      sessionFor(threadIdentity(slot.threadId).environmentId).attachments.assertAccess(slot.accessKey, slot.origin);
+      const ticket = { ...slot, path: slot.item.path, mimeType: slot.item.mimeType };
+      if (!ownedAttachmentPath(ticket.path)) throw new Error("This attachment file is no longer available.");
+      return fetch(slot.url, { method: "POST", headers: { "content-type": slot.item.mimeType }, exactBodyFrom: slot.item.path,
+        exactUploadProgress: true, exactTimeout: 300000, exactStream: (event) => uploadEvent(ticket, event) });
+    } catch (error) { return { ...idle, threadId: slot.threadId, localId: slot.localId, attempt: slot.attempt, state: "failed", error: error instanceof Error ? error.message : "Upload failed." }; }
+  },
+  verifyAttachment: async ([threadId, accessKey, item], _store, _storage, native) => {
+    const result = { threadId, localId: item.localId, attachmentId: item.id, attempt: item.attempt, accessKey };
+    try {
+      const session = sessionFor(threadIdentity(threadId).environmentId);
+      session.attachments.assertAccess(accessKey);
+      await awaitReply(session.attachments.read(item), native);
+      return { ...result, state: "ready", error: "" };
+    } catch (error) { return { ...result, state: error instanceof RpcFailure && error.tag === "AssetAttachmentNotFoundError" ? "missing" : "error", error: error instanceof Error ? error.message : "This attachment could not be checked." }; }
+  },
+  cleanupAttachment: async ([item], _store, storage, native) => {
+    let deletion: Promise<unknown> | undefined;
+    try {
+      if (item.attachmentId) deletion = awaitReply(sessionFor(threadIdentity(item.threadId).environmentId).attachments.remove(item.accessKey, item.attachmentId), native);
+    } catch {}
+    if (deletion) await deletion.catch(() => {});
+    await removeOwnedAttachmentFile(storage, item.path);
+    return { ok: true, error: "" };
+  },
+  cleanupStagedAttachments: async ([items], _store, storage) => {
+    for (const item of items) await removeOwnedAttachmentFile(storage, item.path);
+    return { ok: true, error: "" };
+  },
+  prepareSend: ([draft]) => {
+    try {
+      const identity = threadIdentity(draft.id);
+      const session = sessionFor(identity.environmentId);
+      const items = draft.attachments.map(parseDraftAttachment);
+      if (!draft.text.trim() && !items.length) throw new Error("Write a message or add an attachment first.");
+      if (items.some((item) => item.state !== "uploaded")) throw new Error("Wait for attachments to upload, or retry or remove failed attachments.");
+      validateAttachments(items, session.attachments.metadata().maxFileBytes, true);
+      const selection = composerSettings.resolve(draft.id, identity.threadId, session);
+      return { id: draft.id, revision: draft.revision, pending: { commandId: crypto.randomUUID(), messageId: crypto.randomUUID(),
+        revision: draft.revision + 1, text: draft.text.trim(), attachments: items.map(storedReference), paths: items.map((item) => item.path), selection: selection ? JSON.stringify(selection) : "", state: "prepared" }, error: "" };
+    } catch (error) { return { id: draft.id, revision: draft.revision, pending: null, error: error instanceof Error ? error.message : "The message could not be prepared." }; }
+  },
+  sendDraft: async ([id, snapshot], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      const selection = parseSendSelection(snapshot.selection);
+      if (snapshot.selection && !selection) throw new Error("The saved message settings are invalid.");
+      const reply = await awaitReply(sessionFor(identity.environmentId).send(identity.threadId, snapshot.text, snapshot.commandId, snapshot.messageId, selection, snapshot.attachments, snapshot.state === "unknown"), native);
+      return { id, commandId: snapshot.commandId, ...reply };
+    } catch (error) { return { id, commandId: snapshot.commandId, state: "unknown", ok: false, error: error instanceof Error ? error.message : "Delivery could not be confirmed. Retry this message." }; }
+  },
+  loadAttachmentPreviews: async ([id, viewKey, refs, _retry, now], _store, _storage, native) => {
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
+    if (!id) {
+      for (const connection of connections.values()) connection.session.attachments.clear();
+      current?.attachments.clear();
+      return { threadId: id, viewKey, previews: [] };
+    }
+    try {
+      const identity = threadIdentity(id);
+      const batch = await awaitReply(sessionFor(identity.environmentId).attachments.previews(identity.threadId, viewKey, refs.filter((ref) => ref.threadId === id && ref.viewKey === viewKey), now), native);
+      return { ...batch, threadId: id };
+    } catch { return { threadId: id, viewKey, previews: [] }; }
+  },
+  prepareAttachmentViewer: async ([threadId, routeId, selected, candidates], _store, storage) => {
+    const presentationId = crypto.randomUUID();
+    const gallery = freezeGallery(presentationId, selected, candidates);
+    const remote = gallery.items.some((item) => !item.localPath);
+    const metadata = remote ? sessionFor(threadIdentity(threadId).environmentId).attachments.metadata() : { accessKey: "", origin: "" };
+    if (remote && !metadata.accessKey) throw new Error("This environment is disconnected.");
+    if (remote) await storage.fs.mkdir(`${PREVIEW_DIRECTORY}${presentationId}`);
+    return { viewer: { presentationId, threadId, routeId, accessKey: metadata.accessKey, origin: metadata.origin, ...gallery, state: "loading", error: "" } };
+  },
+  loadGallerySelection: ([viewer], _store, _storage, native) => {
+    if (!viewer) return { presentationId: "", selectedIndex: -1, valid: true };
+    native?.watch("attachment-preview");
+    native?.watch("connections");
+    let valid = true;
+    if (viewer.accessKey) {
+      try {
+        const metadata = sessionFor(threadIdentity(viewer.threadId).environmentId).attachments.metadata();
+        valid = metadata.accessKey === viewer.accessKey && metadata.origin === viewer.origin;
+      } catch { valid = false; }
+    }
+    const selection = native?.available ? object(native.call({ op: "attachments.selection", presentationId: viewer.presentationId })) : {};
+    const index = selection.selectedIndex;
+    return { presentationId: viewer.presentationId, selectedIndex: typeof index === "number" && Number.isInteger(index) && index >= 0 && index < viewer.items.length ? index : viewer.selectedIndex, valid };
+  },
+  attachmentViewerUrl: async ([work], _store, _storage, native) => {
+    try {
+      const session = sessionFor(threadIdentity(work.threadId).environmentId);
+      const metadata = session.attachments.metadata();
+      if (metadata.accessKey !== work.accessKey || metadata.origin !== work.origin) throw new Error("The attachment connection changed.");
+      const result = await awaitReply(session.attachments.read(work.item.item, galleryWorkKey(work)), native);
+      return { work: { ...work, item: { ...work.item, url: result.url } } };
+    } catch (error) { return { work: { ...work, item: { ...work.item, state: "error", error: error instanceof Error ? error.message : "This attachment could not be opened." } } }; }
+  },
+  downloadAttachment: ([work]) => {
+    try {
+      const metadata = sessionFor(threadIdentity(work.threadId).environmentId).attachments.metadata();
+      if (metadata.accessKey !== work.accessKey || metadata.origin !== work.origin) throw new Error("The attachment connection changed.");
+      return galleryDownloads.download(work);
+    } catch (error) { return { work: { ...work, item: { ...work.item, state: "error", error: error instanceof Error ? error.message : "This attachment could not be downloaded." } } }; }
+  },
+  cancelGalleryWork: ([work]) => {
+    galleryDownloads.cancel(galleryWorkKey(work));
+    try { sessionFor(threadIdentity(work.threadId).environmentId).attachments.cancelRead(galleryWorkKey(work)); } catch {}
+    return { ok: true, error: "" };
+  },
+  updateGalleryItem: ([work], _store, _storage, native) => {
+    try {
+      native?.call({ op: "attachments.update", presentationId: work.presentationId, index: work.index, path: work.item.state === "ready" ? work.item.path : "", state: work.item.state });
+      return { work };
+    } catch (error) {
+      try { native?.call({ op: "attachments.update", presentationId: work.presentationId, index: work.index, path: "", state: "error" }); } catch {}
+      return { work: { ...work, item: { ...work.item, state: "error", error: error instanceof Error ? error.message : "This file could not be previewed." } } };
+    }
+  },
+  presentAttachment: ([viewer], _store, _storage, native) => {
+    if (!native?.available) return { viewer: { ...viewer, state: "error", error: "Native file preview is unavailable." } };
+    return native.later({ op: "attachments.preview", presentationId: viewer.presentationId,
+      items: viewer.items.map((item) => ({ path: item.state === "ready" ? item.path : "", name: item.item.name, state: item.state, sourceId: item.sourceId })),
+      selectedIndex: viewer.selectedIndex, imageGallery: viewer.imageGallery })
+      .then(() => ({ viewer: { ...viewer, state: "dismissed" } }))
+      .catch((error: unknown) => ({ viewer: { ...viewer, state: "error", error: error instanceof Error ? error.message : "This file could not be previewed." } }));
+  },
+  dismissAttachment: ([presentationId], _store, _storage, native) => {
+    native?.call({ op: "attachments.dismiss", presentationId });
     return { ok: true, error: "" };
   },
   regroupNavigation: ([nav, split]) => regroupNavigation(nav, split),
@@ -494,17 +702,6 @@ const sources: Sources = {
         const identity = threadIdentity(threadId);
         sessionFor(identity.environmentId).select(identity.threadId);
         return { ok: true, error: "" };
-      }
-      if (operation === "send") {
-        const identity = threadIdentity(id);
-        if (!value.trim()) return { ok: false, error: "Write a message first." };
-        return await awaitReply(sessionFor(identity.environmentId).send(
-          identity.threadId,
-          value.trim(),
-          crypto.randomUUID(),
-          crypto.randomUUID(),
-          composerSettings.resolve(id, identity.threadId, sessionFor(identity.environmentId)),
-        ), native);
       }
       const tokens = operation === "pair" || operation === "remove" ? credentials(store) : {};
       if (operation === "remove") {
