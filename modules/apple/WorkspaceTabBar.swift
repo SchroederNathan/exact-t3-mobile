@@ -176,11 +176,15 @@ final class T3NativeModule: ExactModule {
   private var probe: DeviceProbe?
   private var device = DeviceTraits(kind: "phone", rail: false, split: false)
   private weak var container: WorkspaceContainer?
+  private lazy var attachmentPreview = MainActor.assumeIsolated { AttachmentPreview(context: context) }
   private lazy var connections = WorkspaceConnections { [weak self] in
     self?.context.changed("connections")
   }
 
   override func call(_ request: [String: Any]) throws -> [String: Any] {
+    if request["op"] as? String == "attachments.dismiss" {
+      return try MainActor.assumeIsolated { try attachmentPreview.dismiss(request) }
+    }
     if (request["op"] as? String)?.hasPrefix("connections.") == true {
       return try connections.call(request)
     }
@@ -189,11 +193,14 @@ final class T3NativeModule: ExactModule {
   }
 
   override func destroy() {
+    MainActor.assumeIsolated { attachmentPreview.end() }
     connections.destroy()
   }
 
   override func later(_ request: [String: Any], reply: ExactReply) {
-    if let op = request["op"] as? String, op == "markdown.highlight" || op == "markdown.measureTable" {
+    if request["op"] as? String == "attachments.preview" {
+      MainActor.assumeIsolated { attachmentPreview.present(request, reply: reply) }
+    } else if let op = request["op"] as? String, op == "markdown.highlight" || op == "markdown.measureTable" {
       MarkdownHighlight.later(request, reply: reply)
     } else {
       connections.later(request, reply: reply)
@@ -236,6 +243,7 @@ final class T3NativeModule: ExactModule {
 
   override func windowEnded(_ window: ExactWindow) {
     MainActor.assumeIsolated {
+      attachmentPreview.end()
       probe?.removeFromSuperview()
       probe = nil
     }
