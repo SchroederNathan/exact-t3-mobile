@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { ActivityFixture } from "./activity-fixture";
+import { AttachmentFixture } from "./attachment-fixture";
 import { ControlsFixture } from "./controls-fixture";
 import { MarkdownFixture } from "./markdown-fixture";
 
 const app = resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
 const activityMode = process.argv.includes("--activities");
+const attachmentMode = process.argv.includes("--attachments");
 const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
 const thirdEnvironment = process.argv.includes("--third-environment");
@@ -16,14 +18,14 @@ const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
 for (let index = 2; index < process.argv.length; index++) {
   const argument = process.argv[index]!;
-  if (["--activities", "--no-command-stream", "--markdown", "--controls", "--third-environment"].includes(argument)) continue;
+  if (["--activities", "--no-command-stream", "--markdown", "--controls", "--attachments", "--third-environment"].includes(argument)) continue;
   const match = /^(--(?:port|secondary-port|third-port))(?:=(.*))?$/.exec(argument);
   if (!match) { exactArguments.push(argument); continue; }
   const value = match[2] ?? process.argv[++index] ?? "";
   if (!/^\d+$/.test(value) || Number(value) > 65535) throw new Error(`${match[1]} requires a port from 0 to 65535.`);
   fixturePorts.set(match[1]!, Number(value));
 }
-if (thirdEnvironment && !markdownMode && !controlsMode) throw new Error("--third-environment requires --markdown or --controls.");
+if (thirdEnvironment && !markdownMode && !controlsMode && !attachmentMode) throw new Error("--third-environment requires --markdown, --controls, or --attachments.");
 if (fixturePorts.has("--third-port") && !thirdEnvironment) throw new Error("--third-port requires --third-environment.");
 const fixedPorts = [...fixturePorts.values()].filter((port) => port !== 0);
 if (new Set(fixedPorts).size !== fixedPorts.length) throw new Error("Each fixture environment needs a different port.");
@@ -33,7 +35,7 @@ const headers = {
   "access-control-allow-headers": "authorization, content-type",
 };
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers });
-type SocketState = { serial: number; shell: boolean; config: boolean; shellRequest?: string };
+type SocketState = { serial: number; shell: boolean; config: boolean; shellRequest?: string; configRequest?: string };
 type Socket = ServerWebSocket<SocketState>;
 const chunk = (socket: Socket, requestId: string, value: unknown) =>
   socket.send(JSON.stringify({ _tag: "Chunk", requestId, values: [value] }));
@@ -84,7 +86,59 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     for (const socket of sockets) socket.close(1012, "Fixture connection reset");
     return count;
   }) : undefined;
+  const attachments = attachmentMode ? new AttachmentFixture(id, secondary ? "remote" : "active", {
+    threadChanged(thread, sequence) {
+      for (const socket of sockets) if (socket.data.shellRequest) {
+        chunk(socket, socket.data.shellRequest, { kind: "thread.updated", sequence, location: "active", thread });
+      }
+    },
+    disconnect() {
+      const count = sockets.size;
+      for (const socket of sockets) socket.close(1012, "Fixture connection reset");
+      return count;
+    },
+    configChanged() {
+      for (const socket of sockets) if (socket.data.configRequest) {
+        chunk(socket, socket.data.configRequest, { type: "snapshot", config: serverConfig() });
+      }
+    },
+    ...(controls ? { authorization: {
+      get() {
+        const auth = controls.state().auth;
+        return auth.authenticated && (auth.permissions ?? auth.scopes).includes("orchestration:operate");
+      },
+      async set(allowed: boolean) {
+        await controls.http(new Request("http://fixture/fixture/controls/auth", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: { authenticated: true, scopes: ["orchestration:read", "orchestration:operate"], permissions: ["orchestration:read", ...(allowed ? ["orchestration:operate"] : [])] } }) }));
+      },
+    } } : {}),
+  }) : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
+  const serverConfig = () => ({
+    settings: { favorites: modelFavorites },
+    environment: {
+      platform: { machine: secondary ? "laptop" : "mac-mini" },
+      ...(activities || attachments ? { capabilities: { ...activities?.config, ...attachments?.config } } : {}),
+    },
+    ...(activities || markdown || controls || attachments ? { threadResumeCompletionMarker: true } : {}),
+    ...(controls || attachments ? { threadSnapshotPagination: true } : {}),
+    providers: [{
+      instanceId: "fixture-provider",
+      driver: "codex",
+      installed: true,
+      enabled: true,
+      auth: { status: "authenticated" },
+      models: ["fixture-model", "fixture-fast"].map((slug) => ({
+        slug,
+        name: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
+        shortName: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
+        capabilities: { optionDescriptors: [{
+          id: "effort", label: "Reasoning", type: "select",
+          options: [{ id: "medium", label: "Medium", isDefault: true }, { id: "high", label: "High" }],
+        }] },
+      })),
+    }],
+  });
   const held: { socket: Socket; requestId: string }[] = [];
   const projects = (secondary
     ? [{ id: "remote", title: "Remote project" }]
@@ -107,6 +161,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     async fetch(request, server) {
       const path = new URL(request.url).pathname;
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      const attachmentResponse = await attachments?.http(request);
+      if (attachmentResponse) return attachmentResponse;
       const controlsResponse = await controls?.http(request);
       if (controlsResponse) return controlsResponse;
       const markdownResponse = await markdown?.http(request);
@@ -170,7 +226,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           changed();
           return;
         }
-        if (controls?.receive(socket, frame) || markdown?.receive(socket, frame) || activities?.receive(socket, frame)) {
+        if (attachments?.receive(socket, frame) || controls?.receive(socket, frame) || markdown?.receive(socket, frame) || activities?.receive(socket, frame)) {
           changed();
           return;
         }
@@ -178,37 +234,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         if (frame.tag === "orchestration.subscribeShell") {
           socket.data.shell = true;
           socket.data.shellRequest = frame.id;
-          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads: [...threads, ...(markdown?.threads ?? []), ...(controls?.threads ?? [])] } });
+          chunk(socket, frame.id, { kind: "snapshot", snapshot: { projects, threads: [...threads, ...(markdown?.threads ?? []), ...(controls?.threads ?? []), ...(attachments?.threads ?? [])] } });
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;
-          chunk(socket, frame.id, {
-            type: "snapshot",
-            config: {
-              settings: { favorites: modelFavorites },
-              environment: {
-                platform: { machine: secondary ? "laptop" : "mac-mini" },
-                ...(activities ? { capabilities: activities.config } : {}),
-              },
-              ...(activities || markdown || controls ? { threadResumeCompletionMarker: true } : {}),
-              ...(controls ? { threadSnapshotPagination: true } : {}),
-              providers: [{
-                instanceId: "fixture-provider",
-                driver: "codex",
-                installed: true,
-                enabled: true,
-                auth: { status: "authenticated" },
-                models: ["fixture-model", "fixture-fast"].map((slug) => ({
-                  slug,
-                  name: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
-                  shortName: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
-                  capabilities: { optionDescriptors: [{
-                    id: "effort", label: "Reasoning", type: "select",
-                    options: [{ id: "medium", label: "Medium", isDefault: true }, { id: "high", label: "High" }],
-                  }] },
-                })),
-              }],
-            },
-          });
+          socket.data.configRequest = frame.id;
+          chunk(socket, frame.id, { type: "snapshot", config: serverConfig() });
         } else if (frame.tag === "server.updateSettings") {
           for (const favorite of frame.payload.patch.setModelFavorites ?? []) {
             modelFavorites = modelFavorites.filter((entry) => entry.provider !== favorite.provider || entry.model !== favorite.model);
@@ -230,7 +260,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               }],
             },
           });
-          if (activities || markdown || controls) chunk(socket, frame.id, { kind: "synchronized" });
+          if (activities || markdown || controls || attachments) chunk(socket, frame.id, { kind: "synchronized" });
         } else if (frame.tag === "orchestration.dispatchCommand" && (
           frame.payload.type === "thread.runtime-mode.set" || frame.payload.text === "Send chosen settings"
         )) {
@@ -264,6 +294,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         markdown?.close(socket);
         activities?.close(socket);
         controls?.close(socket);
+        attachments?.close(socket);
         for (let i = held.length - 1; i >= 0; i--) {
           if (held[i]?.socket === socket) held.splice(i, 1);
         }
