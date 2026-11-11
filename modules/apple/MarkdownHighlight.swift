@@ -10,12 +10,12 @@ enum MarkdownHighlight {
 
   private enum Output: Sendable {
     case tokens([Token])
-    case widths([Double])
+    case table(MarkdownTable.Measurement)
 
     var payload: [String: Any] {
       switch self {
       case let .tokens(tokens): return ["tokens": tokens.map { ["start": $0.start, "end": $0.end, "kind": $0.kind] }]
-      case let .widths(widths): return ["widths": widths]
+      case let .table(table): return table.payload
       }
     }
   }
@@ -26,7 +26,7 @@ enum MarkdownHighlight {
 
     func run() -> Output {
       switch self {
-      case let .table(table): return .widths(table.widths())
+      case let .table(table): return .table(table.measure())
       case let .highlight(code, language):
         let tokens: [Token] = code.utf8CString.withUnsafeBufferPointer { source in
           language.utf8CString.withUnsafeBufferPointer { name in

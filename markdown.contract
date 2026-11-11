@@ -1,3 +1,4 @@
+use MediaBatch, MediaImage from "./media-image.contract"
 use Attachment, AttachmentBatch, ThumbnailFailure, MessageAttachments from "./attachments.contract"
 
 shape InlineRun
@@ -16,11 +17,21 @@ shape TableCell
   header: bool
   align: string
   runs: InlineRun[]
+  parts: TableCellPart[]
+
+shape TableCellPart
+  id: string
+  runs: InlineRun[]
+  imageSource: string
+  imageAlt: string
+  inlineImage: bool
 
 shape MarkdownBlock
   id: string
   kind: string
   body: string
+  imageSource: string
+  imageAlt: string
   marker: string
   gutter: number
   depth: number
@@ -35,13 +46,27 @@ shape MarkdownBlock
   tableSignature: string
   pending: bool
 
+shape TurnChanges
+  threadId: string
+  checkpointId: string
+  turnCount: number
+  fileCount: number
+  additions: number
+  deletions: number
+  additionsLabel: string
+  deletionsLabel: string
+
 shape Message
   id: string
   role: string
   body: string
   createdAt: string
+  updatedAt: string
   timeLabel: string
   pending: bool
+  showAssistantMeta: bool
+  canFork: bool
+  spacingAfter: number
   blocks: MarkdownBlock[]
   attachments: Attachment[]
 
@@ -71,6 +96,18 @@ shape TableLayout
   blockId: string
   signature: string
   widths: number[]
+  height: number
+  payload: string
+  images: TableImageLayout[]
+
+shape TableImageLayout
+  blockId: string
+  alt: string
+  inlineImage: bool
+  x: number
+  y: number
+  width: number
+  height: number
 
 shape TableBatch
   threadId: string
@@ -119,6 +156,11 @@ fn headingSize(level: number): number = level == 1 ? 21 : level == 2 ? 19 : leve
 component MarkdownMessage
   props
     message: Message
+    changes: option<TurnChanges>
+    openChanges: action
+    fork: action
+    forkBusy: bool
+    forkDisabled: bool
     threadId: string
     viewKey: string
     highlights: CodeBatch
@@ -128,6 +170,10 @@ component MarkdownMessage
     toggleWrap: action
     followLink: action
     copy: action
+    media: MediaBatch
+    seenMedia: action
+    retryMedia: action
+    openMedia: action
     attachments: AttachmentBatch
     seenAttachment: action
     openAttachment: action
@@ -137,22 +183,51 @@ component MarkdownMessage
     imageLoaded: action
   derive palette = markdownPalette(message.role == "user")
   view
-    column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=(message.role == "user" ? 17.5 : 0) width="100%" box-sizing="border-box"
+    column align-items=(message.role == "user" ? "flex-end" : "stretch") padding-bottom=message.spacingAfter width="100%" box-sizing="border-box"
       if message.attachments.length > 0
         MessageAttachments(items=message.attachments, threadId=threadId, messageId=message.id, viewKey=viewKey, batch=attachments, seen=seenAttachment, open=openAttachment, retry=retryAttachment, failures=thumbnailFailures, imageFailed=imageFailed, imageLoaded=imageLoaded)
       if message.body != ""
-        column max-width=(message.role == "user" ? "85%" : "100%") width=(message.role == "user" ? "auto" : "100%") min-width=0 box-sizing="border-box" padding=(message.role == "user" ? "8.75px 12.25px" : "0 4px") border-radius=(message.role == "user" ? 20 : 0) background-color=(message.role == "user" ? "bubble" : "transparent") testId=`message-${message.id}`
-          for block in message.blocks key=block.id
-            MarkdownBlockView(block=block, palette=palette, threadId=threadId, messageId=message.id, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy)
+        column max-width=(message.role == "user" ? "85%" : "100%") width=(message.role == "user" ? "auto" : "100%") min-width=0 box-sizing="border-box" padding=(message.role == "user" ? "8.75px 12.25px" : "0 3.5px") border-radius=(message.role == "user" ? 20 : 0) background-color=(message.role == "user" ? "bubble" : "transparent") testId=`message-${message.id}`
+          for block, index in message.blocks key=block.id
+            MarkdownBlockView(block=block, isLast=(index == message.blocks.length - 1), palette=palette, threadId=threadId, messageId=message.id, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy, media=media, seenMedia=seenMedia, retryMedia=retryMedia, openMedia=openMedia)
       if message.role == "user"
         row align-items="center" gap=3.5 margin-top=3.5 padding-right=1.75
-          text message.timeLabel font-size=12.25 line-height="17.5px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
-          button press=copy(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
-            image "symbol:sf/document.on.document" width=13 height=13
+          text message.timeLabel font-size=13 line-height="17px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+          if message.body != ""
+            button press=copy(message.body) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+              image "symbol:sf/doc.on.doc" width=13 height=13
+      else if message.showAssistantMeta
+        match changes
+          case some(summary)
+            TurnChangeStat(changes=summary, threadId=threadId, open=openChanges)
+          case none
+            view
+        row align-items="center" gap=3.5 margin-top=3.5 padding="0 3.5px"
+          button press=copy(message.body) disabled=(message.body == "") appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Copy message" color="muted"
+            image "symbol:sf/doc.on.doc" width=13 height=13
+          if message.canFork
+            button press=fork(threadId, message.id) disabled=(forkDisabled or forkBusy) appearance="none" display="flex" align-items="center" justify-content="center" width=28 height=28 aria-label="Fork from this response" color="muted" testId=`fork-${message.id}`
+              if forkBusy
+                progress width=17 height=17 aria-label="Forking response"
+              else
+                image "symbol:sf/arrow.triangle.branch" width=13 height=13
+          text message.timeLabel font-size=13 line-height="17px" font-weight=500 color="muted" font-variant-numeric="tabular-nums"
+
+component TurnChangeStat
+  props
+    changes: TurnChanges
+    threadId: string
+    open: action
+  view
+    button press=open(threadId, changes.turnCount) appearance="none" display="flex" align-items="center" gap=7 min-height=38.5 flex-shrink=0 padding="0 7px" aria-label=`Review ${changes.fileCount} ${changes.fileCount == 1 ? "file" : "files"} changed, ${changes.additions} additions, ${changes.deletions} deletions` testId=`review-turn-${changes.turnCount}`
+      text `+${changes.additionsLabel}` color="light-dark(#047857, #6ee7b7)" font-size=13 font-weight=500 line-height="17px" font-variant-numeric="tabular-nums"
+      text `−${changes.deletionsLabel}` color="light-dark(#be123c, #fda4af)" font-size=13 font-weight=500 line-height="17px" font-variant-numeric="tabular-nums"
+      image "symbol:sf/chevron.right" width=12 height=12 color="muted"
 
 component MarkdownBlockView
   props
     block: MarkdownBlock
+    isLast: bool
     palette: MarkdownPalette
     threadId: string
     messageId: string
@@ -164,12 +239,16 @@ component MarkdownBlockView
     toggleWrap: action
     followLink: action
     copy: action
+    media: MediaBatch
+    seenMedia: action
+    retryMedia: action
+    openMedia: action
   derive size = block.kind == "heading" ? headingSize(block.headingLevel) : 16
   derive line = block.kind == "heading" ? size * 1.35 : 23
   derive weight = block.kind == "heading" ? 700 : 400
   derive ink = palette.body
   view
-    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=block.spacingAfter border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color=palette.edge padding-left=(block.quoteDepth > 0 ? 12 : 0)
+    row align-items="flex-start" min-width=0 margin-left=(block.depth > 0 ? (block.depth - 1) * 16 : 0) margin-bottom=(isLast ? 0 : block.spacingAfter) border-left-width=(block.quoteDepth > 0 ? 2 : 0) border-left-style="solid" border-left-color=palette.edge padding-left=(block.quoteDepth > 0 ? 12 : 0)
       if block.gutter > 0
         if block.marker == "•"
           column width=block.gutter flex-shrink=0 height=23 justify-content="center"
@@ -178,10 +257,12 @@ component MarkdownBlockView
           text block.marker width=block.gutter flex-shrink=0 font-family="DM Sans" font-size=16 line-height="23px" color=palette.body
       if block.kind == "thematic-break"
         view height=1 flex=1 margin="8px 0" background-color=palette.edge
+      else if block.kind == "image"
+        MediaImage(batch=media, threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=block.id, alt=block.imageAlt, tableImage=false, inlineImage=false, seen=seenMedia, retry=retryMedia, open=openMedia)
       else if block.kind == "code"
         MarkdownCode(block=block, palette=palette, threadId=threadId, messageId=messageId, viewKey=viewKey, highlights=highlights, wrapped=(matchingCode(wrapped, threadId, viewKey, messageId, block.id).length > 0), seenBlock=seenBlock, toggleWrap=toggleWrap, copy=copy)
       else if block.kind == "table"
-        MarkdownTable(block=block, palette=palette, threadId=threadId, messageId=messageId, viewKey=viewKey, layouts=layouts, seenBlock=seenBlock, followLink=followLink)
+        MarkdownTable(block=block, palette=palette, threadId=threadId, messageId=messageId, viewKey=viewKey, layouts=layouts, seenBlock=seenBlock, followLink=followLink, copy=copy, media=media, seenMedia=seenMedia, retryMedia=retryMedia, openMedia=openMedia)
       else if block.kind == "heading"
         text role="heading" aria-level=block.headingLevel user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 font-family="DM Sans" font-size=size line-height=`${line}px` font-weight=weight color=ink margin-top=8
           MarkdownRuns(runs=block.runs, size=size, line=line, weight=weight, ink=ink, palette=palette, threadId=threadId, followLink=followLink)
@@ -238,9 +319,10 @@ component MarkdownCode
           image "symbol:sf/doc.on.doc" width=10.368 height=10.368
       view position="absolute" left=0 right=0 top=33.167 height=1 z-index=1 background-color=palette.body opacity=0.2 pointer-events="none"
       scroll width="100%" min-width=0 overflow-x=(wrapped ? "hidden" : "auto") overflow-y="hidden" testId=`code-scroll-${block.id}`
-        text user-select="text" white-space=(wrapped ? "pre-wrap" : "pre") overflow-wrap=(wrapped ? "break-word" : "normal") width=(wrapped ? "100%" : "auto") box-sizing="border-box" padding="12.333px 12px 12px" font-family="Menlo" font-size=14.4 line-height="23px"
-          for run in codeRunsFor(highlights, block, viewKey) key=run.id
-            text run.text color=syntaxColor(run.kind, palette.body) white-space=(wrapped ? "pre-wrap" : "pre") font-family="Menlo" font-size=14.4 line-height="23px"
+        row min-width="100%"
+          text user-select="text" white-space=(wrapped ? "pre-wrap" : "pre") overflow-wrap=(wrapped ? "break-word" : "normal") width=(wrapped ? "100%" : "auto") flex-shrink=0 box-sizing="border-box" padding="12.333px 12px 12px" font-family="Menlo" font-size=14.4 line-height="23px"
+            for run in codeRunsFor(highlights, block, viewKey) key=run.id
+              text run.text color=syntaxColor(run.kind, palette.body) white-space=(wrapped ? "pre-wrap" : "pre") font-family="Menlo" font-size=14.4 line-height="23px"
 
 component MarkdownTable
   props
@@ -252,16 +334,46 @@ component MarkdownTable
     layouts: TableBatch
     seenBlock: action
     followLink: action
+    copy: action
+    media: MediaBatch
+    seenMedia: action
+    retryMedia: action
+    openMedia: action
   derive widths = tableWidths(layouts, block, viewKey)
+  derive nativeLayouts = layouts.layouts.filter(layout => layouts.viewKey == viewKey and layout.blockId == block.id and layout.signature == block.tableSignature and layout.payload != "")
+
+  action tableEvent(value: string)
+    if value == "copy-markdown"
+      copy(block.body)
+    else if value == "copy"
+      copy(block.cells.map(cell => cell.parts.map(part => part.imageSource != "" ? part.imageAlt : part.runs.map(run => run.text).join("")).join("") + (cell.column == block.columns - 1 ? "\n" : "\t")).join(""))
+    else if value.startsWith("link:")
+      followLink(threadId, value.slice(5))
+    else if value.startsWith("external:")
+      openURL(value.slice(9))
+
   view
     column intersect=seenBlock(threadId, viewKey, messageId, block.id, "table") intersect-margin="200px" flex=1 min-width=0 margin-top=4
       scroll min-width=0 width="100%" overflow-x="auto" overflow-y="hidden" border-width=0.333 border-style="solid" border-color=palette.edge border-radius=8 testId=`table-${block.id}`
-        view display="grid" flex-shrink=0 width=(widths.length > 0 ? `${sum(widths)}px` : "auto") grid-template-columns=(widths.length > 0 ? widths.map(width => `${width}px`).join(" ") : `repeat(${block.columns}, minmax(60px, max-content))`)
-          for cell in block.cells key=cell.id
-            column position="relative" padding="7px 10px" box-sizing="border-box" min-width=60 max-width=320 background-color=(cell.header ? palette.codeBackground : "transparent")
-              if cell.column > 0
-                view position="absolute" left=0 top=0 bottom=0 width=0.333 background-color=palette.edge
-              if not cell.header
-                view position="absolute" left=0 right=0 top=0 height=0.333 background-color=palette.edge
-              text user-select="text" font-family="DM Sans" font-size=16 line-height="23px" white-space="pre-wrap" text-align=cell.align overflow-wrap="break-word" max-width=300
-                MarkdownRuns(runs=cell.runs, size=16, line=23, weight=(cell.header ? 700 : 400), ink=palette.body, palette=palette, threadId=threadId, followLink=followLink)
+        if nativeLayouts.length > 0
+          for layout in nativeLayouts key=layout.blockId
+            view position="relative" flex-shrink=0 width=sum(layout.widths) height=layout.height
+              workspace-markdown-table table-payload=layout.payload user-message=(palette.link == "foreground" ? "true" : "false") message=tableEvent position="absolute" left=0 top=0 width="100%" height="100%" testId=`table-text-${block.id}`
+              for image in layout.images key=image.blockId
+                view position="absolute" left=image.x top=image.y width=image.width height=image.height
+                  MediaImage(batch=media, threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=image.blockId, alt=image.alt, tableImage=true, inlineImage=image.inlineImage, seen=seenMedia, retry=retryMedia, open=openMedia)
+        else
+          view display="grid" flex-shrink=0 width=(widths.length > 0 ? `${sum(widths)}px` : "auto") grid-template-columns=(widths.length > 0 ? widths.map(width => `${width}px`).join(" ") : `repeat(${block.columns}, minmax(60px, max-content))`)
+            for cell in block.cells key=cell.id
+              column position="relative" padding="7px 10px" box-sizing="border-box" min-width=60 max-width=320 background-color=(cell.header ? palette.codeBackground : "transparent")
+                if cell.column > 0
+                  view position="absolute" left=0 top=0 bottom=0 width=0.333 background-color=palette.edge
+                if not cell.header
+                  view position="absolute" left=0 right=0 top=0 height=0.333 background-color=palette.edge
+                row flex-wrap="wrap" align-items="center" justify-content=(cell.align == "right" ? "flex-end" : (cell.align == "center" ? "center" : "flex-start")) font-family="DM Sans" font-size=16 line-height="23px" white-space="pre-wrap" text-align=cell.align overflow-wrap="break-word" max-width=300
+                  for part in cell.parts key=part.id
+                    if part.imageSource != ""
+                      MediaImage(batch=media, threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=part.id, alt=part.imageAlt, tableImage=true, inlineImage=part.inlineImage, seen=seenMedia, retry=retryMedia, open=openMedia)
+                    else
+                      text user-select="text" min-width=0 max-width="100%" font-family="DM Sans" font-size=16 line-height="23px" white-space="pre-wrap"
+                        MarkdownRuns(runs=part.runs, size=16, line=23, weight=(cell.header ? 700 : 400), ink=palette.body, palette=palette, threadId=threadId, followLink=followLink)

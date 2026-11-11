@@ -1,48 +1,26 @@
 import UIKit
 
-final class ComposerGlassInstance: ExactNativeInstance {
-  private let glass = ComposerGlassView()
+final class ComposerMetricsInstance: ExactNativeInstance {
+  private let probe = ComposerMetricsView()
 
   init(props: [String: String], events: ExactNativeEvents) {
     super.init(events: events)
-    glass.onBottomOffsetChange = { events.message(String(Double($0))) }
-    apply(props)
+    probe.onBottomOffsetChange = { events.message(String(Double($0))) }
   }
 
-  override var view: ExactNativeView { glass }
-
-  override func setProps(_ props: [String: String]) throws {
-    apply(props)
-  }
-
-  private func apply(_ props: [String: String]) {
-    let radius = Double(props["radius"] ?? "27") ?? 27
-    glass.radius = radius.isFinite ? max(0, radius) : 27
-  }
+  override var view: ExactNativeView { probe }
 }
 
-private final class ComposerGlassView: UIView {
-  private let effectView = UIVisualEffectView()
+/// Reports how far the composer moves to meet a vertical bar's bottom edge. It draws nothing.
+private final class ComposerMetricsView: UIView {
   private var hasHinge = false
   private var bottomOffset: CGFloat?
   var onBottomOffsetChange: ((CGFloat) -> Void)?
-  var radius: CGFloat = 27 {
-    didSet { if radius != oldValue { setNeedsLayout() } }
-  }
 
   init() {
     super.init(frame: .zero)
     isUserInteractionEnabled = false
     isAccessibilityElement = false
-    clipsToBounds = true
-    layer.cornerCurve = .circular
-    effectView.isUserInteractionEnabled = false
-    effectView.layer.cornerCurve = .circular
-    addSubview(effectView)
-    updateFallback()
-    registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: ComposerGlassView, _: UITraitCollection) in
-      view.updateFallback()
-    }
     #if canImport(UIKit, _version: 9127.0.85)
     if #available(iOS 27.1, *) {
       addInteraction(UIHingeInteraction { [weak self] _, update in
@@ -50,7 +28,7 @@ private final class ComposerGlassView: UIView {
         self.hasHinge = true
         self.setNeedsLayout()
       })
-      registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (view: ComposerGlassView, _: UITraitCollection) in
+      registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (view: ComposerMetricsView, _: UITraitCollection) in
         view.setNeedsLayout()
       }
     }
@@ -71,17 +49,6 @@ private final class ComposerGlassView: UIView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    layer.cornerRadius = radius
-    effectView.frame = bounds
-    if #available(iOS 26.0, *) {
-      effectView.cornerConfiguration = .corners(radius: .fixed(Double(radius)))
-      if effectView.effect == nil, window != nil, bounds.width > 0, bounds.height > 0 {
-        let effect = UIGlassEffect(style: .regular)
-        effect.tintColor = .clear
-        effect.isInteractive = false
-        effectView.effect = effect
-      }
-    }
     reportBottomOffset()
   }
 
@@ -106,17 +73,5 @@ private final class ComposerGlassView: UIView {
     guard bottomOffset != offset else { return }
     bottomOffset = offset
     onBottomOffsetChange?(offset)
-  }
-
-  private func updateFallback() {
-    if #available(iOS 26.0, *) { return }
-    let dark = traitCollection.userInterfaceStyle == .dark
-    backgroundColor = dark
-      ? UIColor(red: 26 / 255, green: 27 / 255, blue: 27 / 255, alpha: 0.9)
-      : UIColor(red: 244 / 255, green: 244 / 255, blue: 245 / 255, alpha: 0.94)
-    layer.borderWidth = 1
-    layer.borderColor = (dark
-      ? UIColor(white: 25 / 255, alpha: 0.8)
-      : UIColor(red: 228 / 255, green: 228 / 255, blue: 231 / 255, alpha: 0.8)).cgColor
   }
 }

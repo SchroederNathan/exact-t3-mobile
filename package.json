@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "build": "bun exact.mjs web-build --out dist",
-    "start": "bun exact.mjs serve dist"
+    "start": "bun exact.mjs serve dist",
+    "test": "bun test tests"
   },
   "dependencies": {
     "entities": "9.0.0",

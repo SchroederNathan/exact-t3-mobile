@@ -19,8 +19,11 @@ export function visitMetadata(shell: Shell, wokeAt: string | null = null) {
     ready,
     supported: shell.lastVisitedAt !== undefined,
     at: ready ? String(wakeIsLatest ? wokeAt : shell.updatedAt) : "",
-    watermark: ready ? wakeIsLatest ? wake : updated : -1,
+    watermark: ready ? (wakeIsLatest ? wake : updated) : -1,
     seen: Number.isFinite(seen) ? seen : -1,
-    urgent: ready && (wakeIsLatest || (Number.isFinite(completed) && (!Number.isFinite(seen) || completed > seen))),
+    urgent:
+      ready &&
+      (wakeIsLatest ||
+        (Number.isFinite(completed) && (!Number.isFinite(seen) || completed > seen))),
   };
 }

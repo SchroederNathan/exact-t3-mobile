@@ -31,7 +31,12 @@ test "thread drafts survive switching conversations and relaunch"
   clock settle
   tap "thread-fixture:alpha"
   clock settle
+  type "composer" "A draft that is wider than the one-row composer leaves beside its controls"
+  clock +50
+  expect state composerExpanded == true
   type "composer" "Alpha draft"
+  clock +50
+  expect state composerExpanded == false
   back
   clock settle
   tap "thread-fixture:beta"
@@ -366,6 +371,7 @@ test "native model settings save and cancel through their own navigation stack" 
   clock data
   clock settle
   expect state current.name == "thread"
+  expect state composerModel.summary == "High"
   type "composer" "Send chosen settings"
   clock data
   reload

@@ -1,11 +1,39 @@
 import { AttachmentSession, RpcFailure } from "./attachment-session";
+import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./approval-send";
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
+import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
+import {
+  projectThreadStatus,
+  threadIsCompacting,
+  threadLifecycleStatus,
+  threadWorkStartedAt,
+} from "./thread-status";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
-import { answersFor, controlAccess, controlKey, emptyControls, type QuestionDraft } from "./thread-controls";
-import { summarized, toolBody, toolNeedsDetail, toolRevision, toolSummary, type ToolBatch, type ToolPanel, type ToolRequest } from "./tool-activity";
-import { appendTerminalOutput, EMPTY_TERMINAL_OUTPUT, terminalOutputPlainText, type TerminalOutputState } from "./terminal-output";
+import {
+  answersFor,
+  controlAccess,
+  controlKey,
+  emptyControls,
+  type QuestionDraft,
+} from "./thread-controls";
+import {
+  summarized,
+  toolBody,
+  toolNeedsDetail,
+  toolRevision,
+  toolSummary,
+  type ToolBatch,
+  type ToolPanel,
+  type ToolRequest,
+} from "./tool-activity";
+import {
+  appendTerminalOutput,
+  EMPTY_TERMINAL_OUTPUT,
+  terminalOutputPlainText,
+  type TerminalOutputState,
+} from "./terminal-output";
 import {
   decodeSelection,
   projectThreadSettings,
@@ -32,6 +60,7 @@ interface ExpandedTool {
   requestId: string;
   stream: boolean;
   terminal: TerminalOutputState;
+  imageLoad?: { images: ToolPanel["images"]; promise: Promise<void> };
   first: Promise<void>;
   resolve: () => void;
 }
@@ -41,6 +70,10 @@ export interface Inspection {
   title: string;
   body: string;
   items: { id: string; label: string; detail: string; kind: string }[];
+}
+export interface ForceStopResult {
+  outcome: "killed" | "released" | "releasing" | "shared";
+  sharedWithThreadIds: string[];
 }
 
 export function object(value: unknown): ObjectValue {
@@ -219,7 +252,12 @@ function errorDetails(thread: ObjectValue): { message: string; time: string } {
 
 function listedThread(thread: ObjectValue): boolean {
   const lineage = object(thread.lineage);
-  return !thread.deletedAt && !thread.archivedAt && lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+  return (
+    !thread.deletedAt &&
+    !thread.archivedAt &&
+    lineage.relationshipToParent !== "subagent" &&
+    lineage.sideChat !== true
+  );
 }
 
 function status(thread: ObjectValue): string {
@@ -227,8 +265,9 @@ function status(thread: ObjectValue): string {
   if (request === "user_input") return "Input";
   if (request && request !== "auth_refresh") return "Approval";
   if (Number(thread.pendingGuestMessageCount) > 0) return "Request";
-  const waiting = records(thread.pendingBackgroundTasks).some((task) =>
-    task.awaited === true || task.kind === "subagent" || task.kind === "background_task");
+  const waiting = records(thread.pendingBackgroundTasks).some(
+    (task) => task.awaited === true || task.kind === "subagent" || task.kind === "background_task",
+  );
   if (thread.status !== "failed" && waiting) return "Waiting";
   const state = string(thread.activityRunStatus) || string(thread.status);
   if (state === "running" && thread.blockedOnThreadWait === true) return "Waiting";
@@ -237,17 +276,51 @@ function status(thread: ObjectValue): string {
   if (state === "failed") return thread.lastErrorClass === "usage_limit" ? "Limited" : "Failed";
   if (state === "idle" && (thread.latestRunId || thread.activeProviderThreadId)) return "Waiting";
   const completed = thread.latestRunId
-    ? timestamp(thread.latestRunCompletedAt === undefined ? thread.updatedAt : thread.latestRunCompletedAt)
+    ? timestamp(
+        thread.latestRunCompletedAt === undefined ? thread.updatedAt : thread.latestRunCompletedAt,
+      )
     : 0;
-  return completed > 0 && Boolean(thread.lastVisitedAt) &&
-    (Number.isNaN(Date.parse(string(thread.lastVisitedAt))) || completed > timestamp(thread.lastVisitedAt))
-    ? "Done" : "";
+  return completed > 0 &&
+    Boolean(thread.lastVisitedAt) &&
+    (Number.isNaN(Date.parse(string(thread.lastVisitedAt))) ||
+      completed > timestamp(thread.lastVisitedAt))
+    ? "Done"
+    : "";
+}
+
+function working(thread: ObjectValue): boolean {
+  const request = string(object(thread.pendingRuntimeRequest).kind);
+  if ((request && request !== "auth_refresh") || thread.pendingSubagentRequest != null)
+    return false;
+  const background =
+    thread.status !== "failed" &&
+    records(thread.pendingBackgroundTasks).some(
+      (task) =>
+        task.awaited === true || task.kind === "subagent" || task.kind === "background_task",
+    );
+  if (!thread.latestRunId && !thread.activeProviderThreadId && !background) return false;
+  const active = ["preparing", "queued", "starting", "running", "waiting"];
+  const runtime = background ? "idle" : string(thread.activityRunStatus) || string(thread.status);
+  if (runtime !== "idle" && !active.includes(runtime)) return false;
+  const runSettled =
+    Boolean(thread.latestRunId) &&
+    !active.includes(string(thread.status)) &&
+    thread.activeRunId !== thread.latestRunId;
+  return !(
+    thread.interactionMode === "plan" &&
+    thread.hasActionableProposedPlan === true &&
+    runSettled
+  );
 }
 
 function failure(exit: ObjectValue): string {
   for (const cause of records(exit.cause)) {
     const detail = object(cause.error ?? cause.defect);
     if (string(detail.message)) return string(detail.message);
+    if (detail._tag === "OrchestrationV2ForceStopThreadError")
+      return detail.reason === "superseded"
+        ? "A new turn started, so nothing was force stopped."
+        : "Failed to force stop the agent.";
   }
   return "The server could not complete this request.";
 }
@@ -359,21 +432,29 @@ function switchingThread(value: ObjectValue) {
 }
 
 function switchingRun(value: ObjectValue) {
-  return { id: string(value.id), status: string(value.status), providerThreadId: string(value.providerThreadId) };
+  return {
+    id: string(value.id),
+    status: string(value.status),
+    providerThreadId: string(value.providerThreadId),
+  };
 }
 
 function switchingProviderThread(value: ObjectValue) {
   return {
-    id: string(value.id), appThreadId: string(value.appThreadId),
-    instanceId: string(value.providerInstanceId), sessionId: string(value.providerSessionId),
+    id: string(value.id),
+    appThreadId: string(value.appThreadId),
+    instanceId: string(value.providerInstanceId),
+    sessionId: string(value.providerSessionId),
     hasNativeThread: value.nativeThreadRef != null,
   };
 }
 
 function switchingSession(value: ObjectValue) {
   return {
-    id: string(value.id), status: string(value.status),
-    canHandoff: object(object(value.capabilities).sessions).supportsProviderSwitchingViaHandoff === true,
+    id: string(value.id),
+    status: string(value.status),
+    canHandoff:
+      object(object(value.capabilities).sessions).supportsProviderSwitchingViaHandoff === true,
   };
 }
 
@@ -387,23 +468,35 @@ function switchingProjection(value: ObjectValue) {
 }
 
 function supportsProviderHandoff(projection: ReturnType<typeof switchingProjection>): boolean {
-  const activeRun = projection.runs.findLast((run) => ["preparing", "starting", "running", "waiting"].includes(run.status));
+  const activeRun = projection.runs.findLast((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
+  );
   const providerThreadId = activeRun?.providerThreadId || projection.thread.activeProviderThreadId;
-  const attached = projection.providerThreads.find((thread) => thread.id === providerThreadId)
-    ?? projection.providerThreads.find((thread) => thread.appThreadId === projection.thread.id && thread.sessionId);
+  const attached =
+    projection.providerThreads.find((thread) => thread.id === providerThreadId) ??
+    projection.providerThreads.find(
+      (thread) => thread.appThreadId === projection.thread.id && thread.sessionId,
+    );
   const session = attached?.sessionId
     ? projection.providerSessions.find((session) => session.id === attached.sessionId)
-    : projection.providerSessions.findLast((session) => session.status !== "stopped" && session.status !== "error");
+    : projection.providerSessions.findLast(
+        (session) => session.status !== "stopped" && session.status !== "error",
+      );
   if (session) return session.canHandoff;
   if (activeRun) return false;
   if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
-  return projection.providerThreads.some((thread) => thread.id === projection.thread.activeProviderThreadId
-    && thread.appThreadId === projection.thread.id && thread.instanceId === projection.thread.instanceId && thread.hasNativeThread);
+  return projection.providerThreads.some(
+    (thread) =>
+      thread.id === projection.thread.activeProviderThreadId &&
+      thread.appThreadId === projection.thread.id &&
+      thread.instanceId === projection.thread.instanceId &&
+      thread.hasNativeThread,
+  );
 }
 
 function upsertSwitchingRecord<T extends { id: string }>(rows: T[], value: T): T[] {
   const index = rows.findIndex((row) => row.id === value.id);
-  return index < 0 ? [...rows, value] : rows.map((row, at) => at === index ? value : row);
+  return index < 0 ? [...rows, value] : rows.map((row, at) => (at === index ? value : row));
 }
 
 export class DirectSession {
@@ -411,7 +504,11 @@ export class DirectSession {
   private readonly serial = ++sessionSerial;
   private controlEpoch = 0;
   private controlGrant = false;
-  private controlOperations = new Map<string, { pending: boolean; error: string; threadId: string; runId: string; result: string }>();
+  private controlOperations = new Map<
+    string,
+    { pending: boolean; error: string; threadId: string; runId: string; result: string }
+  >();
+  private forceStops = new Map<string, { accessKey: string }>();
   private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
@@ -439,23 +536,37 @@ export class DirectSession {
     metadata: () => {
       const capabilities = object(object(this.config.environment).capabilities);
       const files = object(capabilities.fileAttachments);
-      return { accessKey: this.controlAccessKey(), origin: this.environment.url, allowed: this.hasControlAccess(),
-        uploads: capabilities.attachmentUploads === true, maxFileBytes: typeof files.maxUploadBytes === "number" ? Math.min(FILE_LIMIT, files.maxUploadBytes) : 0 };
+      return {
+        accessKey: this.controlAccessKey(),
+        origin: this.environment.url,
+        allowed: this.hasControlAccess(),
+        uploads: capabilities.attachmentUploads === true,
+        maxFileBytes:
+          typeof files.maxUploadBytes === "number" ? Math.min(FILE_LIMIT, files.maxUploadBytes) : 0,
+      };
     },
     query: (tag, payload) => {
-      if (this.queries.size >= 32) throw new Error("Too many requests are pending. Wait for them to finish.");
+      if (this.queries.size >= 32)
+        throw new Error("Too many requests are pending. Wait for them to finish.");
       const id = this.request(tag, payload);
-      const promise = new Promise<ObjectValue>((resolve, reject) => this.queries.set(id, { resolve, reject }));
+      const promise = new Promise<ObjectValue>((resolve, reject) =>
+        this.queries.set(id, { resolve, reject }),
+      );
       return { id, promise };
     },
     cancel: (id) => {
-      if (this.socket?.readyState === 1) this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: id }));
+      if (this.socket?.readyState === 1)
+        this.socket.send(JSON.stringify({ _tag: "Interrupt", requestId: id }));
       this.queries.get(id)?.reject(new Error("This attachment request was cancelled."));
       this.queries.delete(id);
     },
     resolve: (threadId, viewKey, demand) => {
       if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return;
-      return this.transcripts.get(threadId)?.feed().find((row) => row.message?.id === demand.messageId)?.message?.attachments.find((item) => item.id === demand.attachmentId);
+      return this.transcripts
+        .get(threadId)
+        ?.feed()
+        .find((row) => row.message?.id === demand.messageId)
+        ?.message?.attachments.find((item) => item.id === demand.attachmentId);
     },
   });
 
@@ -483,24 +594,36 @@ export class DirectSession {
   }
 
   threadRefs() {
-    return [...this.shells].filter(([, thread]) => !thread.deletedAt).map(([threadId]) => ({ environmentId: this.environment.id, threadId }));
+    return [...this.shells]
+      .filter(([, thread]) => !thread.deletedAt)
+      .map(([threadId]) => ({ environmentId: this.environment.id, threadId }));
   }
 
   async fileLinkPath(threadId: string, path: string): Promise<string> {
     const shell = this.shells.get(threadId);
     if (!shell) throw new Error("This thread is no longer available.");
-    const cwd = string(shell.worktreePath) || string(this.projects.get(string(shell.projectId))?.workspaceRoot);
+    const cwd =
+      string(shell.worktreePath) ||
+      string(this.projects.get(string(shell.projectId))?.workspaceRoot);
     if (!cwd) throw new Error("This thread has no available workspace.");
     if (path.startsWith("~/")) {
       const home = /^(\/Users\/[^/]+|\/home\/[^/]+)/.exec(cwd)?.[1];
       if (home) return `${home}/${path.slice(2)}`;
     }
     if (/[\\/]/.test(path)) return path;
-    const result = await this.query("projects.searchEntries", { cwd, query: path, limit: 100, kind: "file" });
-    const matches = records(result.entries).map((entry) => string(entry.path)).filter((entry) => entry.split("/").at(-1) === path);
+    const result = await this.query("projects.searchEntries", {
+      cwd,
+      query: path,
+      limit: 100,
+      kind: "file",
+    });
+    const matches = records(result.entries)
+      .map((entry) => string(entry.path))
+      .filter((entry) => entry.split("/").at(-1) === path);
     if (matches.includes(path)) return path;
     if (matches.length === 1 && result.truncated !== true) return matches[0]!;
-    if (matches.length > 1 || result.truncated === true) throw new Error("This file name is ambiguous. Open a link with its full path.");
+    if (matches.length > 1 || result.truncated === true)
+      throw new Error("This file name is ambiguous. Open a link with its full path.");
     return path;
   }
 
@@ -581,6 +704,19 @@ export class DirectSession {
     throw new Error("This inspector is not available.");
   }
 
+  async turnDiff(threadId: string, turnCount: number): Promise<string> {
+    if (!this.shells.has(threadId)) throw new Error("This thread is no longer available.");
+    if (!Number.isSafeInteger(turnCount) || turnCount < 1)
+      throw new Error("This checkpoint is unavailable.");
+    const result = await this.query("orchestration.getTurnDiff", {
+      threadId,
+      fromTurnCount: turnCount - 1,
+      toTurnCount: turnCount,
+      ignoreWhitespace: false,
+    });
+    return string(result.diff);
+  }
+
   open(socket: StreamSocket) {
     this.controlEpoch++;
     this.controlGrant = false;
@@ -612,7 +748,8 @@ export class DirectSession {
   }
 
   private subscribeSelected() {
-    if (!this.selected || this.threadRequest || !this.configReady || this.socket?.readyState !== 1) return;
+    if (!this.selected || this.threadRequest || !this.configReady || this.socket?.readyState !== 1)
+      return;
     let history = this.transcripts.get(this.selected);
     if (!history) {
       history = new ThreadHistory(this.selected);
@@ -623,43 +760,126 @@ export class DirectSession {
     history.subscribing(completion);
     this.threadRequest = this.request("orchestration.subscribeThread", {
       threadId: this.selected,
-      ...(completion && history.ready && history.sequence !== null ? { afterSequence: history.sequence } : {}),
+      ...(completion && history.ready && history.sequence !== null
+        ? { afterSequence: history.sequence }
+        : {}),
       ...(completion ? { requestCompletionMarker: true } : {}),
       ...(this.config.threadSnapshotPagination === true ? { acceptBoundedSnapshot: true } : {}),
     });
   }
 
   history(threadId: string): HistorySummary {
-    return this.transcripts.get(threadId)?.summary() ?? {
-      ready: false, synchronized: false, hasMore: false, loading: false, error: "",
-    };
+    return (
+      this.transcripts.get(threadId)?.summary() ?? {
+        ready: false,
+        synchronized: false,
+        hasMore: false,
+        loading: false,
+        error: "",
+      }
+    );
   }
 
   controlAccessKey() {
-    return this.socket?.readyState === 1 ? JSON.stringify([this.environment.id, this.serial, this.controlEpoch]) : "";
+    return this.socket?.readyState === 1
+      ? JSON.stringify([this.environment.id, this.serial, this.controlEpoch])
+      : "";
   }
 
   installControlAccess(key: string, session: unknown): boolean {
     if (!key || key !== this.controlAccessKey()) return false;
-    return this.controlGrant = controlAccess(session);
+    return (this.controlGrant = controlAccess(session));
   }
 
-  hasControlAccess() { return this.controlGrant && this.controlAccessKey() !== ""; }
+  hasControlAccess() {
+    return this.controlGrant && this.controlAccessKey() !== "";
+  }
+
+  canForceStop() {
+    return (
+      this.hasControlAccess() &&
+      this.configReady &&
+      object(object(this.config.environment).capabilities).threadForceStop === true
+    );
+  }
+
+  forceStopPending(threadId: string) {
+    return this.forceStops.get(threadId)?.accessKey === this.controlAccessKey();
+  }
+
+  async forceStop(threadId: string, accessKey: string, runId: string): Promise<ForceStopResult> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey())
+      throw new Error("Reconnect and check your permission before stopping this thread.");
+    if (!this.canForceStop()) throw new Error("This environment does not support force stop.");
+    const controls = this.controls(threadId);
+    if (threadId !== this.selected || !controls.ready)
+      throw new Error("Wait for this thread to finish reconnecting.");
+    if (!runId || controls.stop.runId !== runId) throw new Error("This turn is no longer running.");
+    if (controls.stop.state !== "unresponsive")
+      throw new Error("Force stop is only available for an unresponsive turn.");
+    if (this.forceStopPending(threadId))
+      throw new Error("This turn is already being force stopped.");
+    const operation = { accessKey };
+    this.forceStops.set(threadId, operation);
+    try {
+      const result = await this.query("orchestration.forceStopThread", { threadId, runId });
+      const { outcome, sharedWithThreadIds } = result;
+      if (
+        (outcome !== "killed" &&
+          outcome !== "released" &&
+          outcome !== "releasing" &&
+          outcome !== "shared") ||
+        !Array.isArray(sharedWithThreadIds) ||
+        !sharedWithThreadIds.every((id): id is string => typeof id === "string")
+      )
+        throw new Error("The server returned an invalid force-stop response.");
+      return { outcome, sharedWithThreadIds };
+    } catch (error) {
+      if (
+        accessKey === this.controlAccessKey() &&
+        error instanceof Error &&
+        /permission|forbidden|unauthorized|scope|not authorized/i.test(error.message)
+      ) {
+        this.controlGrant = false;
+        this.controlEpoch++;
+      }
+      throw error;
+    } finally {
+      if (this.forceStops.get(threadId) === operation) this.forceStops.delete(threadId);
+    }
+  }
 
   controls(threadId: string) {
-    const controls = this.transcripts.get(threadId)?.controls(this.environment.id) ?? emptyControls();
+    const controls =
+      this.transcripts.get(threadId)?.controls(this.environment.id) ?? emptyControls();
     controls.accessKey = this.controlAccessKey();
     for (const key of controls.resolvedKeys) this.controlOperations.delete(key);
     for (const [key, operation] of this.controlOperations) {
-      if (operation.threadId === threadId && !operation.runId && controls.ready && !controls.pendingKeys.includes(key)) this.controlOperations.delete(key);
-      if (operation.threadId === threadId && operation.runId &&
-        (operation.runId !== controls.stop.runId || this.transcripts.get(threadId)?.interruptResult(operation.runId) !== operation.result)) this.controlOperations.delete(key);
+      if (
+        operation.threadId === threadId &&
+        !operation.runId &&
+        controls.ready &&
+        !controls.pendingKeys.includes(key)
+      )
+        this.controlOperations.delete(key);
+      if (
+        operation.threadId === threadId &&
+        operation.runId &&
+        (operation.runId !== controls.stop.runId ||
+          this.transcripts.get(threadId)?.interruptResult(operation.runId) !== operation.result)
+      )
+        this.controlOperations.delete(key);
     }
     for (const request of controls.requests) {
       const operation = this.controlOperations.get(request.key);
-      if (operation) { request.pending = operation.pending; request.error = operation.error; }
+      if (operation) {
+        request.pending = operation.pending;
+        request.error = operation.error;
+      }
     }
-    const stopping = this.controlOperations.get(controlKey(this.environment.id, threadId, `stop:${controls.stop.runId}`));
+    const stopping = this.controlOperations.get(
+      controlKey(this.environment.id, threadId, `stop:${controls.stop.runId}`),
+    );
     if (stopping) {
       controls.stop.error = stopping.error;
       if (stopping.pending && controls.stop.state === "available") controls.stop.state = "stopping";
@@ -667,14 +887,26 @@ export class DirectSession {
     return controls;
   }
 
-  async control(threadId: string, accessKey: string, kind: string, targetId: string, decision: string, drafts: QuestionDraft[], commandId: string): Promise<Reply> {
-    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey()) throw new Error("Reconnect and check your permission before responding.");
+  async control(
+    threadId: string,
+    accessKey: string,
+    kind: string,
+    targetId: string,
+    decision: string,
+    drafts: QuestionDraft[],
+    commandId: string,
+    options: ControlOptions = {},
+  ): Promise<Reply> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey())
+      throw new Error("Reconnect and check your permission before responding.");
     const controls = this.controls(threadId);
-    if (threadId !== this.selected || !controls.ready) throw new Error("Wait for this thread to finish reconnecting.");
+    if (threadId !== this.selected || !controls.ready)
+      throw new Error("Wait for this thread to finish reconnecting.");
     let payload: ObjectValue;
     let key = controlKey(this.environment.id, threadId, targetId);
     if (kind === "stop") {
-      if (controls.stop.runId !== targetId || !targetId) throw new Error("This turn is no longer running.");
+      if (controls.stop.runId !== targetId || !targetId)
+        throw new Error("This turn is no longer running.");
       if (controls.stop.state !== "available") throw new Error("This turn is already stopping.");
       key = controlKey(this.environment.id, threadId, `stop:${targetId}`);
       payload = { type: "run.interrupt", commandId, threadId, runId: targetId, holdQueue: true };
@@ -682,19 +914,60 @@ export class DirectSession {
       const request = controls.requests.find((request) => request.id === targetId);
       if (!request) throw new Error("This request is no longer pending.");
       if (request.pending) throw new Error("A response is already being sent.");
-      if (request.unavailable && !(kind === "dismiss" && request.dismissible)) throw new Error(request.unavailable);
-      if (kind === "approve" && request.kind === "approval") {
-        if (!request.options.some((option) => option.decision === decision)) throw new Error("This approval option is no longer available.");
-        payload = { type: "runtime-request.respond", commandId, threadId, requestId: targetId, decision };
+      if (request.unavailable && !(kind === "dismiss" && request.dismissible))
+        throw new Error(request.unavailable);
+      if ((kind === "approve" || kind === "redirect") && request.kind === "approval") {
+        if (kind === "approve" && !request.options.some((option) => option.decision === decision))
+          throw new Error("This approval option is no longer available.");
+        if (request.capability !== "live" || (kind === "redirect" && decision !== "decline"))
+          throw new Error("This approval can no longer be answered.");
+        if (
+          options.feedback !== undefined &&
+          (!request.supportsFeedback || !options.feedback.trim() || decision !== "decline")
+        )
+          throw new Error("This request cannot receive approval feedback.");
+        payload = {
+          type: "runtime-request.respond",
+          commandId,
+          threadId,
+          requestId: targetId,
+          decision,
+          ...(options.feedback === undefined ? {} : { feedback: options.feedback.trim() }),
+        };
       } else if (kind === "answer" && request.kind === "question") {
-        const answers = answersFor(request.questions, drafts, key);
+        const attachmentsByQuestionId = options.attachmentsByQuestionId ?? {};
+        if (
+          Object.keys(attachmentsByQuestionId).some(
+            (id) => !request.questions.some((question) => question.id === id),
+          )
+        )
+          throw new Error("These attachments no longer belong to a pending question.");
+        validateAttachments(
+          Object.values(attachmentsByQuestionId).flat(),
+          this.attachments.metadata().maxFileBytes,
+          true,
+        );
+        const answers = answersFor(request.questions, drafts, key, attachmentsByQuestionId);
         if (!answers) throw new Error("Answer every question before submitting.");
-        payload = { type: "runtime-request.respond", commandId, threadId, requestId: targetId, answers };
+        payload = {
+          type: "runtime-request.respond",
+          commandId,
+          threadId,
+          requestId: targetId,
+          answers,
+          ...(Object.keys(attachmentsByQuestionId).length ? { attachmentsByQuestionId } : {}),
+        };
       } else if (kind === "dismiss" && request.dismissible) {
         payload = { type: "thread.user-input.dismiss", commandId, threadId, requestId: targetId };
       } else throw new Error("This response is not available.");
     }
-    const operation = { pending: true, error: "", threadId, runId: kind === "stop" ? targetId : "", result: this.transcripts.get(threadId)?.interruptResult(targetId) ?? "" };
+    const operation = {
+      pending: true,
+      error: "",
+      threadId,
+      runId: kind === "stop" ? targetId : "",
+      result: this.transcripts.get(threadId)?.interruptResult(targetId) ?? "",
+    };
     const id = this.request("orchestration.dispatchCommand", payload);
     this.controlOperations.set(key, operation);
     const reply = await new Promise<Reply>((resolve) => this.replies.set(id, resolve));
@@ -709,29 +982,179 @@ export class DirectSession {
     return reply;
   }
 
+  async lifecycle(
+    threadId: string,
+    accessKey: string,
+    action: string,
+    commandId: string,
+    nowMs: number,
+  ): Promise<Reply> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey())
+      throw new Error("Reconnect and check your permission before updating this thread.");
+    if (threadId !== this.selected || !this.history(threadId).ready)
+      throw new Error("Wait for this thread to finish reconnecting.");
+    const status = this.threadStatus(threadId, nowMs, false);
+    if (status?.kind !== "lifecycle" || status.action !== action)
+      throw new Error("This thread action is no longer available.");
+    const payload =
+      action === "dismiss"
+        ? { type: "thread.visit", commandId, threadId, visitedAt: status.actionTimestamp }
+        : {
+            type: action === "wake" ? "thread.unsnooze" : "thread.unsettle",
+            commandId,
+            threadId,
+            reason: "user",
+          };
+    const id = this.request("orchestration.dispatchCommand", payload);
+    const reply = await new Promise<Reply>((resolve) => this.replies.set(id, resolve));
+    if (!reply.ok && /permission|forbidden|unauthorized|scope|not authorized/i.test(reply.error)) {
+      this.controlGrant = false;
+      this.controlEpoch++;
+    }
+    return reply;
+  }
+
+  async fork(
+    threadId: string,
+    rowId: string,
+    accessKey: string,
+    commandId: string,
+    targetThreadId: string,
+  ): Promise<Reply> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey())
+      throw new Error("Reconnect and check your permission before forking this response.");
+    const history = this.transcripts.get(threadId);
+    if (threadId !== this.selected || !history?.ready || !history.synchronized)
+      throw new Error("Wait for this thread to finish reconnecting.");
+    const row = history.row(rowId);
+    const point = history.forkPoint(rowId, this.transcripts.get(row?.sourceThreadId ?? ""));
+    if (!point || !history.feed().find((entry) => entry.id === rowId)?.message?.canFork)
+      throw new Error("This response can no longer be forked.");
+    const id = this.request("orchestration.dispatchCommand", {
+      type: "thread.fork",
+      commandId,
+      createdBy: "user",
+      creationSource: "mobile",
+      sourceThreadId: point.sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: point.runId },
+      title: `${string(this.shells.get(threadId)?.title) || "Thread"} fork`,
+    });
+    const reply = await new Promise<Reply>((resolve) => this.replies.set(id, resolve));
+    if (!reply.ok && /permission|forbidden|unauthorized|scope|not authorized/i.test(reply.error)) {
+      this.controlGrant = false;
+      this.controlEpoch++;
+    }
+    return reply;
+  }
+
   timeline(threadId: string): readonly TimelineRow[] {
     return this.transcripts.get(threadId)?.visibleRows() ?? [];
   }
 
   private toolViewKey(threadId: string): string {
-    return JSON.stringify([this.environment.id, this.serial, threadId, this.transcripts.get(threadId)?.generation ?? -1]);
+    return JSON.stringify([
+      this.environment.id,
+      this.serial,
+      threadId,
+      this.transcripts.get(threadId)?.generation ?? -1,
+    ]);
   }
 
-  markdownBlocks(threadId: string, viewKey: string, refs: { messageId: string; blockId: string }[], kind: "code" | "table") {
+  markdownBlocks(
+    threadId: string,
+    viewKey: string,
+    refs: { messageId: string; blockId: string }[],
+    kind: "code" | "table",
+  ) {
     if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return [];
     const history = this.transcripts.get(threadId);
     if (!history || history.deleted) return [];
     return refs.slice(-64).flatMap((ref) => {
-      const block = history.block(ref.messageId, ref.blockId);
+      const expanded = this.tools.get(ref.messageId);
+      const block =
+        history.block(ref.messageId, ref.blockId) ??
+        (expanded?.panel.state === "ready" && this.currentTool(expanded)
+          ? expanded.panel.blocks.find((candidate) => candidate.id === ref.blockId)
+          : undefined);
       return block?.kind === kind ? [block] : [];
     });
   }
 
+  mediaTarget(threadId: string, viewKey: string, ref: MediaRef) {
+    if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return;
+    const history = this.transcripts.get(threadId);
+    if (!history || history.deleted) return;
+    const expanded = this.tools.get(ref.messageId);
+    const active =
+      expanded?.panel.state === "ready" && this.currentTool(expanded) ? expanded : undefined;
+    const parentBlockId = ref.blockId.replace(/:cell:\d+:\d+:image:\d+$/, "");
+    const block =
+      history.block(ref.messageId, parentBlockId) ??
+      active?.panel.blocks.find((candidate) => candidate.id === parentBlockId) ??
+      (ref.blockId === "viewed-image" && active
+        ? viewedImageBlock(active.source.viewedImagePath)
+        : undefined);
+    const image =
+      block?.kind === "image" && block.id === ref.blockId
+        ? block
+        : block?.kind === "table"
+          ? block.cells
+              .flatMap((cell) => cell.parts)
+              .find((part) => part.id === ref.blockId && part.imageSource)
+          : undefined;
+    if (!image) return;
+    const shell = this.shells.get(threadId);
+    const root =
+      string(shell?.worktreePath) ||
+      string(this.projects.get(string(shell?.projectId))?.workspaceRoot);
+    return resolveMediaTarget(
+      ref,
+      image.imageSource,
+      image.imageAlt,
+      threadId,
+      root || null,
+      ref.blockId === "viewed-image",
+    );
+  }
+
+  mediaTargets(threadId: string, viewKey: string, messageId: string) {
+    const history = this.transcripts.get(threadId);
+    const expanded = this.tools.get(messageId);
+    const blocks =
+      history?.feed().find((row) => row.message?.id === messageId)?.message?.blocks ??
+      expanded?.panel.blocks ??
+      [];
+    const refs = blocks.flatMap((block) =>
+      block.kind === "image"
+        ? [{ messageId, blockId: block.id }]
+        : block.kind === "table"
+          ? block.cells.flatMap((cell) =>
+              cell.parts
+                .filter((part) => part.imageSource)
+                .map((part) => ({ messageId, blockId: part.id })),
+            )
+          : [],
+    );
+    if (expanded && viewedImageBlock(expanded.source.viewedImagePath))
+      refs.unshift({ messageId, blockId: "viewed-image" });
+    return refs.slice(0, 100).flatMap((ref) => {
+      const target = this.mediaTarget(threadId, viewKey, ref);
+      return target ? [target] : [];
+    });
+  }
+
   private currentTool(entry: ExpandedTool): TimelineRow | undefined {
-    if (entry.threadId !== this.selected || entry.viewKey !== this.toolViewKey(entry.threadId)) return;
+    if (entry.threadId !== this.selected || entry.viewKey !== this.toolViewKey(entry.threadId))
+      return;
     const history = this.transcripts.get(entry.threadId);
     const row = history?.row(entry.request.rowId);
-    return !history?.deleted && row && toolSummary(row.item) && toolRevision(row.item) === entry.request.revision ? row : undefined;
+    return !history?.deleted &&
+      row &&
+      toolSummary(row.item) &&
+      toolRevision(row.item) === entry.request.revision
+      ? row
+      : undefined;
   }
 
   private removeTool(entry: ExpandedTool) {
@@ -741,6 +1164,86 @@ export class DirectSession {
     entry.resolve();
   }
 
+  private hydrateToolImages(entry: ExpandedTool, now: number): Promise<void> | undefined {
+    const row = this.currentTool(entry);
+    if (
+      !row ||
+      this.tools.get(entry.request.rowId) !== entry ||
+      entry.source.type !== "dynamic_tool" ||
+      entry.panel.state !== "ready"
+    )
+      return;
+    const images = entry.panel.images;
+    if (entry.imageLoad?.images === images) return entry.imageLoad.promise;
+    const pending = images
+      .map((image, index) => ({ image, index }))
+      .filter(
+        ({ image }) =>
+          !image.error &&
+          !image.url.startsWith("data:") &&
+          (!image.url || image.expiresAt <= now + 5 * 60_000),
+      );
+    if (pending.length === 0) return;
+    const promise = Promise.all(
+      pending.map(async ({ image, index }) => {
+        try {
+          const signed = await this.attachments.readToolImage({
+            threadId: row.sourceThreadId,
+            itemId: row.sourceItemId,
+            index,
+          });
+          if (!Number.isFinite(signed.expiresAt) || signed.expiresAt <= now)
+            throw new Error("The image URL has expired. Retry to load it.");
+          return {
+            image: { ...image, url: signed.url, expiresAt: signed.expiresAt, error: "" },
+            index,
+          };
+        } catch (error) {
+          return {
+            image: {
+              ...image,
+              url: "",
+              expiresAt: 0,
+              error: error instanceof Error ? error.message : "This image could not be loaded.",
+            },
+            index,
+          };
+        }
+      }),
+    )
+      .then((resolved) => {
+        if (
+          this.tools.get(entry.request.rowId) !== entry ||
+          !this.currentTool(entry) ||
+          entry.panel.images !== images
+        )
+          return;
+        entry.panel = {
+          ...entry.panel,
+          images: images.map(
+            (image, index) => resolved.find((item) => item.index === index)?.image ?? image,
+          ),
+        };
+      })
+      .finally(() => {
+        if (entry.imageLoad?.promise === promise) entry.imageLoad = undefined;
+      });
+    entry.imageLoad = { images, promise };
+    return promise;
+  }
+
+  toolImages(threadId: string, rowId: string) {
+    const entry = this.tools.get(rowId);
+    if (!entry || entry.threadId !== threadId || entry.panel.state !== "ready") return;
+    const row = this.currentTool(entry);
+    if (!row || entry.source.type !== "dynamic_tool") return;
+    return {
+      threadId: row.sourceThreadId,
+      itemId: row.sourceItemId,
+      images: entry.panel.images.map((image) => ({ ...image })),
+    };
+  }
+
   clearToolPanels() {
     for (const entry of this.tools.values()) this.removeTool(entry);
   }
@@ -748,7 +1251,10 @@ export class DirectSession {
   private pruneTools() {
     for (const entry of this.tools.values()) {
       const row = this.currentTool(entry);
-      if (!row) { this.removeTool(entry); continue; }
+      if (!row) {
+        this.removeTool(entry);
+        continue;
+      }
       if (row.item === entry.source) continue;
       const needsDetail = toolNeedsDetail(row.item, entry.stream);
       if (!entry.stream && needsDetail && !toolNeedsDetail(entry.source, false)) {
@@ -769,11 +1275,24 @@ export class DirectSession {
     }
   }
 
-  async toolPanels(threadId: string, viewKey: string, wanted: readonly ToolRequest[]): Promise<ToolBatch> {
-    if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId)) return { viewKey, panels: [] };
+  async toolPanels(
+    threadId: string,
+    viewKey: string,
+    wanted: readonly ToolRequest[],
+    now: number,
+  ): Promise<ToolBatch> {
+    if (threadId !== this.selected || viewKey !== this.toolViewKey(threadId))
+      return { viewKey, panels: [] };
     this.pruneTools();
     for (const entry of this.tools.values()) {
-      if (!wanted.some((request) => request.rowId === entry.request.rowId && request.revision === entry.request.revision && request.retry === entry.request.retry))
+      if (
+        !wanted.some(
+          (request) =>
+            request.rowId === entry.request.rowId &&
+            request.revision === entry.request.revision &&
+            request.retry === entry.request.retry,
+        )
+      )
         this.removeTool(entry);
     }
     const entries: ExpandedTool[] = [];
@@ -783,42 +1302,79 @@ export class DirectSession {
       let entry = this.tools.get(request.rowId);
       if (!entry) {
         let resolve = () => {};
-        const first = new Promise<void>((done) => { resolve = done; });
-        const streaming = row.item.type === "command_execution" && object(object(this.config.environment).capabilities).commandOutputStreaming === true;
+        const first = new Promise<void>((done) => {
+          resolve = done;
+        });
+        const streaming =
+          row.item.type === "command_execution" &&
+          object(object(this.config.environment).capabilities).commandOutputStreaming === true;
         entry = {
-          threadId, viewKey, request, source: row.item, requestId: "", stream: streaming, terminal: EMPTY_TERMINAL_OUTPUT, first, resolve,
+          threadId,
+          viewKey,
+          request,
+          source: row.item,
+          requestId: "",
+          stream: streaming,
+          terminal: EMPTY_TERMINAL_OUTPUT,
+          first,
+          resolve,
           panel: { ...request, state: "loading", ...toolBody(row.item), error: "" },
         };
         this.tools.set(request.rowId, entry);
         try {
           if (streaming) {
             entry.panel.output = "";
-            entry.requestId = this.request("orchestration.subscribeCommandOutput", { threadId: row.sourceThreadId, itemId: row.sourceItemId });
+            entry.requestId = this.request("orchestration.subscribeCommandOutput", {
+              threadId: row.sourceThreadId,
+              itemId: row.sourceItemId,
+            });
           } else if (toolNeedsDetail(row.item, false)) {
-            entry.requestId = this.request("orchestration.getTurnItem", { threadId: row.sourceThreadId, itemId: row.sourceItemId, revision: request.revision });
+            entry.requestId = this.request("orchestration.getTurnItem", {
+              threadId: row.sourceThreadId,
+              itemId: row.sourceItemId,
+              revision: request.revision,
+            });
           } else {
             entry.panel.state = "ready";
             entry.resolve();
           }
         } catch (error) {
           entry.panel.state = "error";
-          entry.panel.error = error instanceof Error ? error.message : "Could not load this activity.";
+          entry.panel.error =
+            error instanceof Error ? error.message : "Could not load this activity.";
           entry.resolve();
         }
       }
       entries.push(entry);
     }
     if (entries.length) await Promise.race(entries.map((entry) => entry.first));
+    await Promise.all(entries.map((entry) => this.hydrateToolImages(entry, now)));
     return {
       viewKey,
-      panels: entries.filter((entry) => this.tools.get(entry.request.rowId) === entry && this.currentTool(entry)).map((entry) => ({ ...entry.panel })),
+      panels: entries
+        .filter((entry) => this.tools.get(entry.request.rowId) === entry && this.currentTool(entry))
+        .map((entry) => {
+          const image = viewedImageBlock(entry.source.viewedImagePath);
+          return {
+            ...entry.panel,
+            blocks: image ? [image, ...entry.panel.blocks] : entry.panel.blocks,
+          };
+        }),
     };
   }
 
   private toolFrame(entry: ExpandedTool, frame: ObjectValue) {
-    if (!this.currentTool(entry)) { this.removeTool(entry); return; }
-    if (!entry.stream || !["replace", "append"].includes(string(frame.kind)) || typeof frame.text !== "string" ||
-      typeof frame.running !== "boolean" || typeof frame.truncated !== "boolean") {
+    if (!this.currentTool(entry)) {
+      this.removeTool(entry);
+      return;
+    }
+    if (
+      !entry.stream ||
+      !["replace", "append"].includes(string(frame.kind)) ||
+      typeof frame.text !== "string" ||
+      typeof frame.running !== "boolean" ||
+      typeof frame.truncated !== "boolean"
+    ) {
       entry.panel.state = "error";
       entry.panel.error = "The server returned invalid command output.";
       entry.resolve();
@@ -827,14 +1383,23 @@ export class DirectSession {
     const before = frame.kind === "replace" ? EMPTY_TERMINAL_OUTPUT : entry.terminal;
     entry.terminal = appendTerminalOutput(before, frame.text);
     entry.panel = {
-      ...entry.panel, state: "ready", output: terminalOutputPlainText(entry.terminal.text),
-      truncated: entry.terminal.truncated || frame.truncated || (frame.kind === "append" && entry.panel.truncated), error: "",
+      ...entry.panel,
+      state: "ready",
+      output: terminalOutputPlainText(entry.terminal.text),
+      truncated:
+        entry.terminal.truncated ||
+        frame.truncated ||
+        (frame.kind === "append" && entry.panel.truncated),
+      error: "",
     };
     entry.resolve();
   }
 
   private toolExit(entry: ExpandedTool, exit: ObjectValue, error: string) {
-    if (!this.currentTool(entry)) { this.removeTool(entry); return; }
+    if (!this.currentTool(entry)) {
+      this.removeTool(entry);
+      return;
+    }
     entry.requestId = "";
     if (error) entry.panel = { ...entry.panel, state: "error", error };
     else if (entry.stream) entry.panel = { ...entry.panel, state: "ready" };
@@ -842,31 +1407,65 @@ export class DirectSession {
       const value = object(exit.value);
       const item = object(value.item);
       const current = this.currentTool(entry)!;
-      if (value.item === null) entry.panel = { ...entry.panel, state: "missing", error: "This activity is no longer available." };
-      else if (item.id !== current.sourceItemId || item.threadId !== current.sourceThreadId || item.type !== current.item.type)
-        entry.panel = { ...entry.panel, state: "error", error: "The server returned invalid activity detail." };
+      if (value.item === null)
+        entry.panel = {
+          ...entry.panel,
+          state: "missing",
+          error: "This activity is no longer available.",
+        };
+      else if (
+        item.id !== current.sourceItemId ||
+        item.threadId !== current.sourceThreadId ||
+        item.type !== current.item.type
+      )
+        entry.panel = {
+          ...entry.panel,
+          state: "error",
+          error: "The server returned invalid activity detail.",
+        };
       else if (entry.request.revision !== "live" && toolRevision(item) !== entry.request.revision)
-        entry.panel = { ...entry.panel, state: "error", error: "This activity changed while its output loaded. Retry to load it again." };
+        entry.panel = {
+          ...entry.panel,
+          state: "error",
+          error: "This activity changed while its output loaded. Retry to load it again.",
+        };
       else entry.panel = { ...entry.panel, ...toolBody(item), state: "ready", error: "" };
     }
     entry.resolve();
   }
 
-  async loadEarlier(threadId: string, read: (relativePath: string) => Promise<unknown>): Promise<Reply> {
+  async loadEarlier(
+    threadId: string,
+    read: (relativePath: string) => Promise<unknown>,
+  ): Promise<Reply> {
     const history = this.transcripts.get(threadId);
-    if (!history?.ready || history.deleted || !history.hasMore || !history.cursor || history.loading)
+    if (
+      !history?.ready ||
+      history.deleted ||
+      !history.hasMore ||
+      !history.cursor ||
+      history.loading
+    )
       return { ok: true, error: "" };
     const generation = history.generation;
     const cursor = history.cursor;
-    const current = () => this.transcripts.get(threadId) === history && history.generation === generation && history.cursor === cursor;
+    const current = () =>
+      this.transcripts.get(threadId) === history &&
+      history.generation === generation &&
+      history.cursor === cursor;
     history.loading = true;
     history.error = "";
     try {
       const query = new URLSearchParams({ cursor });
-      const page = object(await read(`/api/orchestration/threads/${encodeURIComponent(threadId)}/history?${query}`));
+      const page = object(
+        await read(`/api/orchestration/threads/${encodeURIComponent(threadId)}/history?${query}`),
+      );
       if (!current()) return { ok: true, error: "" };
-      if (!Array.isArray(page.items) || typeof page.hasMoreHistory !== "boolean" ||
-        (page.nextCursor !== null && typeof page.nextCursor !== "string"))
+      if (
+        !Array.isArray(page.items) ||
+        typeof page.hasMoreHistory !== "boolean" ||
+        (page.nextCursor !== null && typeof page.nextCursor !== "string")
+      )
         throw new Error("The server returned invalid thread history.");
       if (page.hasMoreHistory && (!page.nextCursor || page.nextCursor === cursor))
         throw new Error("History did not advance. Retry loading it.");
@@ -884,7 +1483,12 @@ export class DirectSession {
 
   settings(threadId: string, staged?: ThreadSettingsSelection | null) {
     const thread = this.shells.get(threadId);
-    const view = projectThreadSettings(this.config, thread ?? { id: threadId }, staged, this.settingsPolicy(thread));
+    const view = projectThreadSettings(
+      this.config,
+      thread ?? { id: threadId },
+      staged,
+      this.settingsPolicy(thread),
+    );
     return thread ? view : { ...view, error: "This thread is no longer available." };
   }
 
@@ -916,28 +1520,41 @@ export class DirectSession {
   }
 
   async setModelFavorite(threadId: string, modelId: string, favorite: boolean): Promise<Reply> {
-    if (!this.shells.has(threadId)) return { ok: false, error: "This thread is no longer available." };
+    if (!this.shells.has(threadId))
+      return { ok: false, error: "This thread is no longer available." };
     const settings = this.config.settings;
     if (!settings) return { ok: false, error: "Model favorites are still loading." };
-    const model = this.settings(threadId).groups.flatMap((group) => group.models)
+    const model = this.settings(threadId)
+      .groups.flatMap((group) => group.models)
       .find((model) => model.id === modelId);
-    const saved = !favorite ? records(object(settings).favorites)
-      .find((entry) => `${string(entry.provider)}:${string(entry.model)}` === modelId) : undefined;
-    const target = model ? { provider: model.instanceId, model: model.slug }
-      : saved ? { provider: string(saved.provider), model: string(saved.model) } : undefined;
+    const saved = !favorite
+      ? records(object(settings).favorites).find(
+          (entry) => `${string(entry.provider)}:${string(entry.model)}` === modelId,
+        )
+      : undefined;
+    const target = model
+      ? { provider: model.instanceId, model: model.slug }
+      : saved
+        ? { provider: string(saved.provider), model: string(saved.model) }
+        : undefined;
     if (!target?.provider || !target.model)
       return { ok: false, error: "This model is no longer available." };
     try {
       const updated = await this.query("server.updateSettings", {
         patch: {
           setModelFavorites: [{ ...target, favorite }],
-          ...(object(settings).favorites === null ? { migrateModelPreferences: { favorites: [] } } : {}),
+          ...(object(settings).favorites === null
+            ? { migrateModelPreferences: { favorites: [] } }
+            : {}),
         },
       });
       if (this.config.settings === settings) this.config.settings = updated;
       return { ok: true, error: "" };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : "The favorite could not be updated." };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "The favorite could not be updated.",
+      };
     }
   }
 
@@ -945,11 +1562,19 @@ export class DirectSession {
     const projection = this.switching;
     if (thread && projection && projection.thread.id === thread.id)
       return { canSwitchProvider: supportsProviderHandoff(projection) };
-    const backgroundHolds = thread?.status !== "failed" && records(thread?.pendingBackgroundTasks)
-      .some((task) => task.awaited === true || task.kind === "subagent" || task.kind === "background_task");
+    const backgroundHolds =
+      thread?.status !== "failed" &&
+      records(thread?.pendingBackgroundTasks).some(
+        (task) =>
+          task.awaited === true || task.kind === "subagent" || task.kind === "background_task",
+      );
     return {
-      canSwitchProvider: !thread || (thread.latestRunId == null && thread.latestUserMessageAt == null
-        && thread.activeProviderThreadId == null && !backgroundHolds),
+      canSwitchProvider:
+        !thread ||
+        (thread.latestRunId == null &&
+          thread.latestUserMessageAt == null &&
+          thread.activeProviderThreadId == null &&
+          !backgroundHolds),
     };
   }
 
@@ -964,6 +1589,10 @@ export class DirectSession {
     return new Promise((resolve) => this.replies.set(id, resolve));
   }
 
+  approvalSend(threadId: string): ApprovalSend | null {
+    return captureApprovalSend(this.controls(threadId).requests);
+  }
+
   send(
     threadId: string,
     text: string,
@@ -972,33 +1601,156 @@ export class DirectSession {
     staged?: ThreadSettingsSelection | null,
     attachments: StoredAttachment[] = [],
     replayUnknown = false,
+    options: { approval?: ApprovalSend | null; isCurrent?: () => boolean } = {},
   ): Promise<{ ok: boolean; error: string; state: string }> {
-    const refused = (error: string) => ({ ok: false, error, state: replayUnknown ? "unknown" : "rejected" });
-    try { validateAttachments(attachments, this.attachments.metadata().maxFileBytes, true); }
-    catch (error) { return Promise.resolve(refused(error instanceof Error ? error.message : "Invalid attachments.")); }
-    const dispatch = (modelSelection?: ModelSelection) => {
+    const refused = (error: string) => ({
+      ok: false,
+      error,
+      state: replayUnknown ? "unknown" : "rejected",
+    });
+    const approval =
+      options.approval !== undefined
+        ? options.approval
+        : replayUnknown
+          ? null
+          : this.approvalSend(threadId);
+    if (approval && !text.trim() && !attachments.length)
+      return Promise.resolve(refused("Write a message or add an attachment first."));
+    if (approval?.type === "feedback") {
+      if (attachments.length)
+        return Promise.resolve(
+          refused("Send approval feedback without attachments or added context."),
+        );
+      if (!text.trim()) return Promise.resolve(refused("Write approval feedback before sending."));
+    }
+    try {
+      validateAttachments(attachments, this.attachments.metadata().maxFileBytes, true);
+    } catch (error) {
+      return Promise.resolve(
+        refused(error instanceof Error ? error.message : "Invalid attachments."),
+      );
+    }
+    const dispatchMessage = (modelSelection?: ModelSelection) => {
       const shell = this.shells.get(threadId);
       return this.query("orchestration.dispatchCommand", {
-        type: "message.dispatch", commandId, threadId, messageId, text, attachments,
-        createdBy: "user", creationSource: "mobile",
-        dispatchMode: { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
+        type: "message.dispatch",
+        commandId,
+        threadId,
+        messageId,
+        text,
+        attachments,
+        createdBy: "user",
+        creationSource: "mobile",
+        dispatchMode:
+          approval?.type === "redirect" && shell?.activeRunId
+            ? { type: "steer_active", targetRunId: shell.activeRunId }
+            : { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
+        ...(approval?.type === "redirect" ? { deliveryIntent: "steer" } : {}),
         ...(modelSelection ? { modelSelection } : {}),
-      }).then(() => ({ ok: true, error: "", state: "accepted" }), (error: unknown) => ({
-        ok: false, error: error instanceof Error ? error.message : "Delivery could not be confirmed.", state: !replayUnknown && error instanceof RpcFailure ? "rejected" : "unknown",
-      }));
+      }).then(
+        () => ({ ok: true, error: "", state: "accepted" }),
+        (error: unknown) => ({
+          ok: false,
+          error: error instanceof Error ? error.message : "Delivery could not be confirmed.",
+          state: !replayUnknown && error instanceof RpcFailure ? "rejected" : "unknown",
+        }),
+      );
     };
+    const accessKey = this.controlAccessKey();
+    const sendSocket = this.socket;
+    const current = () =>
+      threadId === this.selected &&
+      this.controls(threadId).ready &&
+      this.hasControlAccess() &&
+      accessKey === this.controlAccessKey() &&
+      options.isCurrent?.() !== false;
+    const dispatch = async (modelSelection?: ModelSelection) => {
+      if (!approval) return dispatchMessage(modelSelection);
+      if (!current())
+        return refused("The thread or draft changed. Review your message before sending again.");
+      const controls = this.controls(threadId);
+      if (!replayUnknown && controls.requests.some((request) => request.pending))
+        return refused("Wait for the current response to finish sending.");
+      const targets =
+        approval.type === "feedback" ? approval.requests.slice(0, 1) : approval.requests;
+      for (const target of targets) {
+        if (!current())
+          return refused("The thread or draft changed. Review your message before sending again.");
+        if (!target.live) continue;
+        const responseId = `${commandId}:approval:${target.id}`;
+        const feedback = approval.type === "feedback" ? text.trim() : undefined;
+        try {
+          if (replayUnknown) {
+            // Reuse the durable command identity even when its request has already resolved.
+            await this.query("orchestration.dispatchCommand", {
+              type: "runtime-request.respond",
+              commandId: responseId,
+              threadId,
+              requestId: target.id,
+              decision: "decline",
+              ...(feedback === undefined ? {} : { feedback }),
+            });
+          } else {
+            const reply = await this.control(
+              threadId,
+              accessKey,
+              "redirect",
+              target.id,
+              "decline",
+              [],
+              responseId,
+              { feedback },
+            );
+            if (!reply.ok)
+              return {
+                ...refused(reply.error),
+                state:
+                  this.socket === sendSocket && this.socket?.readyState === 1
+                    ? "rejected"
+                    : "unknown",
+              };
+          }
+        } catch (error) {
+          return refused(
+            error instanceof Error ? error.message : "The approval response could not be sent.",
+          );
+        }
+      }
+      if (approval.type === "feedback") return { ok: true, error: "", state: "accepted" };
+      if (!current())
+        return refused("The thread or draft changed. Review your message before sending again.");
+      if (
+        this.controls(threadId).requests.some(
+          (request) =>
+            request.kind === "question" ||
+            (request.kind === "approval" &&
+              !approval.requests.some((sent) => sent.id === request.id)),
+        )
+      )
+        return refused("A new request arrived. Review it before sending your message again.");
+      return dispatchMessage(modelSelection);
+    };
+    if (approval?.type === "feedback") return dispatch();
     if (!staged) return dispatch();
     const validated = this.validateSettings(threadId, staged);
     if (!validated.ok || !validated.selection) return Promise.resolve(refused(validated.error));
     const selection = validated.selection;
-    if (selection.runtimeMode === this.shells.get(threadId)?.runtimeMode) return dispatch(selection.modelSelection);
+    if (selection.runtimeMode === this.shells.get(threadId)?.runtimeMode)
+      return dispatch(selection.modelSelection);
     return this.query("orchestration.dispatchCommand", {
-      type: "thread.runtime-mode.set", commandId: `${commandId}:runtime-mode`, threadId, runtimeMode: selection.runtimeMode,
-    }).then(() => {
-      const latest = this.validateSettings(threadId, selection);
-      if (!latest.ok || !latest.selection) return refused(latest.error);
-      return dispatch(latest.selection.modelSelection);
-    }, (error: unknown) => refused(error instanceof Error ? error.message : "The runtime mode could not be changed."));
+      type: "thread.runtime-mode.set",
+      commandId: `${commandId}:runtime-mode`,
+      threadId,
+      runtimeMode: selection.runtimeMode,
+    }).then(
+      () => {
+        const latest = this.validateSettings(threadId, selection);
+        if (!latest.ok || !latest.selection) return refused(latest.error);
+        return dispatch(latest.selection.modelSelection);
+      },
+      (error: unknown) =>
+        refused(error instanceof Error ? error.message : "The runtime mode could not be changed."),
+    );
   }
 
   create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
@@ -1082,7 +1834,9 @@ export class DirectSession {
     const parsed: unknown = JSON.parse(data);
     for (const frame of records(Array.isArray(parsed) ? parsed : [parsed])) {
       const id = String(frame.requestId ?? "");
-      const tool = [...this.tools.values()].find((entry) => entry.requestId !== "" && entry.requestId === id);
+      const tool = [...this.tools.values()].find(
+        (entry) => entry.requestId !== "" && entry.requestId === id,
+      );
       if (frame._tag === "Chunk") {
         for (const item of records(frame.values)) {
           if (tool) this.toolFrame(tool, item);
@@ -1119,7 +1873,8 @@ export class DirectSession {
         }
         const query = this.queries.get(id);
         this.queries.delete(id);
-        if (error) query?.reject(new RpcFailure(error, string(object(records(exit.cause)[0]?.error)._tag)));
+        if (error)
+          query?.reject(new RpcFailure(error, string(object(records(exit.cause)[0]?.error)._tag)));
         else query?.resolve(object(exit.value));
         const projectId = this.faviconRequests.get(id);
         if (projectId) {
@@ -1138,8 +1893,7 @@ export class DirectSession {
         }
         this.replies.get(id)?.({ ok: !error, error });
         this.replies.delete(id);
-        if (error && id === this.shellRequest)
-          this.environment.status = error;
+        if (error && id === this.shellRequest) this.environment.status = error;
         if (id === this.shellRequest) this.shellRequest = "";
       } else if (frame._tag === "Defect") {
         this.disconnected(
@@ -1161,7 +1915,8 @@ export class DirectSession {
         this.shells = new Map(
           records(snapshot.threads).map((thread) => [string(thread.id), thread]),
         );
-        if (this.switching && !this.shells.has(this.switching.thread.id)) this.switching = undefined;
+        if (this.switching && !this.shells.has(this.switching.thread.id))
+          this.switching = undefined;
       }
       for (const project of this.projects.values()) this.requestFavicon(project);
     } else if (item.kind === "project.updated") {
@@ -1230,16 +1985,28 @@ export class DirectSession {
     if (type === "thread.archived" || type === "thread.deleted") {
       this.switching = undefined;
       this.switchingSnapshots.delete(this.selected);
-    } else if (type.startsWith("thread.") && payload.id === projection.thread.id && payload.modelSelection) {
+    } else if (
+      type.startsWith("thread.") &&
+      payload.id === projection.thread.id &&
+      payload.modelSelection
+    ) {
       projection.thread = switchingThread(payload);
     } else if (type === "run.created" || type === "run.updated") {
       projection.runs = upsertSwitchingRecord(projection.runs, switchingRun(payload));
     } else if (type === "provider-thread.updated") {
-      projection.providerThreads = upsertSwitchingRecord(projection.providerThreads, switchingProviderThread(payload));
+      projection.providerThreads = upsertSwitchingRecord(
+        projection.providerThreads,
+        switchingProviderThread(payload),
+      );
     } else if (type === "provider-session.attached" || type === "provider-session.updated") {
-      projection.providerSessions = upsertSwitchingRecord(projection.providerSessions, switchingSession(payload));
+      projection.providerSessions = upsertSwitchingRecord(
+        projection.providerSessions,
+        switchingSession(payload),
+      );
     } else if (type === "provider-session.detached") {
-      projection.providerSessions = projection.providerSessions.filter((session) => session.id !== payload.providerSessionId);
+      projection.providerSessions = projection.providerSessions.filter(
+        (session) => session.id !== payload.providerSessionId,
+      );
     }
   }
 
@@ -1251,6 +2018,48 @@ export class DirectSession {
         title: string(project.title),
         environmentId: this.environment.id,
       }));
+  }
+
+  threadStatus(threadId: string, nowMs: number, stopping: boolean) {
+    if (threadId !== this.selected) return null;
+    const shell = this.shells.get(threadId);
+    if (!shell) return null;
+    const state = this.environment.status;
+    return projectThreadStatus({
+      connection: {
+        phase:
+          state === "Connected"
+            ? "connected"
+            : state === "Connecting"
+              ? "connecting"
+              : state === "Reconnecting"
+                ? "reconnecting"
+                : state === "Disconnected"
+                  ? "available"
+                  : "error",
+        label: this.environment.label,
+        error:
+          state === "Connected" ||
+          state === "Connecting" ||
+          state === "Reconnecting" ||
+          state === "Disconnected"
+            ? null
+            : state,
+      },
+      history: this.history(threadId),
+      controls: this.controls(threadId),
+      lifecycle: threadLifecycleStatus(shell, nowMs),
+      startedAt: threadWorkStartedAt(shell),
+      compacting: threadIsCompacting(
+        string(shell.activeRunId),
+        this.transcripts
+          .get(threadId)
+          ?.visibleRows()
+          .map((row) => row.item) ?? [],
+      ),
+      stopping,
+      nowMs,
+    });
   }
 
   threads(now = 0): Thread[] {
@@ -1267,7 +2076,18 @@ export class DirectSession {
           records(provider.models).find((entry) => entry.slug === selection.model) ?? {};
         const settled = thread.settledOverride === "settled" && thread.status !== "queued";
         const activityAt = activity(thread, settled);
-        const rows = this.transcripts.get(id)?.feed() ?? [];
+        const history = this.transcripts.get(id);
+        const rows = history
+          ? history.feed().map((row) => {
+              if (!row.message?.canFork) return row;
+              const sourceId = history.row(row.id)?.sourceThreadId;
+              const source =
+                sourceId && sourceId !== id ? this.transcripts.get(sourceId) : undefined;
+              return source && !history.forkPoint(row.id, source)
+                ? { ...row, message: { ...row.message, canFork: false } }
+                : row;
+            })
+          : [];
         const error = errorDetails(thread);
         return {
           id: scopedThreadId(this.environment.id, id),
@@ -1289,9 +2109,11 @@ export class DirectSession {
               ).driver,
             ),
           model: string(model.shortName) || string(model.name) || string(selection.model),
+          modelRevision: JSON.stringify(thread.modelSelection ?? null),
           lastError: error.message,
           lastErrorTime: error.time,
           settled,
+          working: working(thread),
           activityAt,
           title: string(thread.title),
           status: status(thread),

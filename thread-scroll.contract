@@ -1,0 +1,29 @@
+shape ThreadScrollPosition
+  scope: string
+  following: bool
+  away: bool
+  key: option<string>
+  offset: number
+
+fn threadScrollField(fields: string[], index: number): string = match fields.at(index) { case some(value) => value, case none => "" }
+
+members T3Code
+  state threadScroll = ThreadScrollPosition(scope="", following=true, away=false, key=none, offset=0)
+  state threadScrollRevision = 0
+  derive threadScrollScope = `${activeThreadId}:${threadRoute.id}`
+  derive threadFollowing = threadScroll.scope != threadScrollScope or threadScroll.following
+  derive threadAway = threadScroll.scope == threadScrollScope and threadScroll.away
+  derive threadScrollObservationKey = `${threadScrollScope}:${threadScrollRevision}`
+
+  action threadScrolled(scope: string, x: number, y: number, event: ScrollEvent)
+    if scope == threadScrollScope
+      threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=threadFollowing, away=threadAway, key=event.firstVisibleKey, offset=event.firstVisibleOffset)
+
+  action threadScrollObserved(message: string)
+    let fields = message.split("\n")
+    if fields.length == 8 and threadScrollField(fields, 0) == threadScrollObservationKey
+      let moving = threadScrollField(fields, 5) == "true"
+      let settled = threadScrollField(fields, 1) == "settled" and threadScrollField(fields, 6) == "true"
+      let atEnd = threadScrollField(fields, 7) == "true"
+      let savedScroll = threadScroll.scope == threadScrollScope ? threadScroll : ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+      threadScroll = ThreadScrollPosition(savedScroll, following=moving ? false : settled ? atEnd : savedScroll.following, away=not atEnd)

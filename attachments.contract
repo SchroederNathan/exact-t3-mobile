@@ -49,6 +49,7 @@ shape PendingSend
   attachments: StoredAttachment[]
   paths: string[]
   selection: string
+  approval: string
   state: string
 
 shape DraftReceipt
@@ -65,6 +66,7 @@ shape PersistedDraft
 
 shape PickerIntent
   threadId: string
+  draftId: string
   routeId: string
   serial: number
   photos: bool
@@ -86,6 +88,7 @@ shape AttachmentSlot
   index: number
   state: string
   threadId: string
+  draftId: string
   localId: string
   attempt: number
   accessKey: string
@@ -147,10 +150,22 @@ shape GalleryCandidate
   localPath: string
   sourceId: string
 
+shape ToolImageIdentity
+  threadId: string
+  itemId: string
+  index: number
+
+shape MediaFileIdentity
+  threadId: string
+  path: string
+
 shape GalleryItem
   item: Attachment
   localPath: string
   sourceId: string
+  toolImage: option<ToolImageIdentity>
+  mediaFile: option<MediaFileIdentity>
+  directUrl: string
   index: number
   path: string
   url: string
@@ -210,27 +225,42 @@ component ComposerAttachments
     retry: action
     preview: action
   view
-    scroll overflow-x="auto" overflow-y="hidden" width="100%" min-width=0 height=88 testId="composer-attachments"
-      row gap=10 padding="8px 12px" align-items="center"
+    scroll overflow-x="auto" overflow-y="hidden" width="100%" min-width=0 height=90 flex-shrink=0 testId="composer-attachments"
+      row gap=10 padding="8px 14px 10px" align-items="flex-start"
         for item in items key=item.localId
-          column position="relative" width=((item.type == "image" or isImageMime(item.mimeType)) ? 72 : 180) height=72 flex-shrink=0
-            button press=preview(item) appearance="none" width="100%" height=72 border-radius=16 background-color="bubble" overflow="hidden" aria-label=`Preview ${item.name}` testId=`preview-draft-${item.localId}`
+          column position="relative" width=72 height=72 flex-shrink=0
+            button press=preview(item) appearance="none" display="flex" flex-direction="column" align-items="center" justify-content="center" gap=4 width=72 height=72 box-sizing="border-box" padding=(item.type == "image" or isImageMime(item.mimeType) ? 0 : "0 8px") border-radius=16 background-color="bubble" overflow="hidden" aria-label=`Open ${item.name}` testId=`preview-draft-${item.localId}`
               if item.type == "image" or isImageMime(item.mimeType)
                 image item.path width=72 height=72 object-fit="cover" testId=`draft-image-${item.localId}`
               else
-                row padding=10 gap=8 align-items="center"
-                  image "symbol:sf/doc" width=22 height=22 color="muted"
-                  column flex=1 min-width=0 gap=2
-                    text item.name font-size=12 line-clamp=2 text-overflow="ellipsis"
-                    text attachmentSize(item.sizeBytes) font-size=10 color="muted"
+                image "symbol:sf/doc" width=22 height=22 color="muted"
+                text item.name width="100%" font-size=12 line-height="16px" color="foreground" text-align="center" line-clamp=1 text-overflow="ellipsis"
             button press=remove(item.localId) appearance="none" aria-label=`Remove ${item.name}` width=34 height=34 position="absolute" right=-2 top=-2 display="flex" align-items="center" justify-content="center" testId=`remove-attachment-${item.localId}`
               row width=22 height=22 align-items="center" justify-content="center" border-radius=11 background-color="rgba(0, 0, 0, 0.55)"
-                image "symbol:sf/xmark" width=9 height=9 color="white"
+                image "symbol:sf/xmark" width=9 height=9 font-weight=700 color="white"
             if item.state == "failed"
-              button press=retry(item.localId) appearance="none" aria-label=`Retry ${item.name}: ${item.error}` position="absolute" left=4 bottom=4 background-color="rgba(0, 0, 0, 0.7)" border-radius=8 padding="4px 6px" min-height=28 testId=`retry-attachment-${item.localId}`
-                text "Retry" font-size=11 color="white"
+              button press=retry(item.localId) appearance="none" display="flex" align-items="center" gap=2 aria-label=`Retry uploading ${item.name}: ${item.error}` position="absolute" left=2 bottom=2 background-color="rgba(0, 0, 0, 0.7)" border-radius=999 padding="2px 4px" testId=`retry-attachment-${item.localId}`
+                image "symbol:sf/arrow.clockwise" width=10 height=10 color="white"
+                text "Retry" font-size=12 line-height="16px" color="white"
             else if item.state != "uploaded"
-              text (item.state == "uploading" ? `${attachmentProgress(uploads, item.localId, item.attempt)}%` : "Waiting") position="absolute" left=4 bottom=4 padding="3px 5px" border-radius=6 background-color="rgba(0, 0, 0, 0.7)" font-size=10 color="white" font-variant-numeric="tabular-nums"
+              row position="absolute" left=2 bottom=2 align-items="center" gap=2 padding="2px 4px" border-radius=999 background-color="rgba(0, 0, 0, 0.7)" pointer-events="none"
+                image "symbol:sf/arrow.up" width=10 height=10 color="white"
+                text `${attachmentProgress(uploads, item.localId, item.attempt)}%` font-size=12 line-height="16px" color="white" font-variant-numeric="tabular-nums"
+
+component ComposerThumbnail
+  props
+    item: DraftAttachment
+    uploads: UploadProgress[]
+    preview: action
+  view
+    button press=preview(item) appearance="none" position="relative" display="flex" align-items="center" justify-content="center" width=30 height=30 flex-shrink=0 border-radius=8 background-color="bubble" overflow="hidden" aria-label=`Open ${item.name}` testId=`thumbnail-${item.localId}`
+      if item.type == "image" or isImageMime(item.mimeType)
+        image item.path width=30 height=30 object-fit="cover"
+      else
+        image "symbol:sf/doc" width=15 height=15 color="muted"
+      if item.state != "uploaded"
+        row position="absolute" left=2 bottom=2 align-items="center" padding="2px 4px" border-radius=999 background-color="rgba(0, 0, 0, 0.7)"
+          image (item.state == "failed" ? "symbol:sf/arrow.clockwise" : "symbol:sf/arrow.up") width=8 height=8 color="white"
 
 fn isImageMime(mimeType: string): bool = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mimeType.toLowerCase())
 fn isAttachmentImage(item: Attachment): bool = item.type == "image" or isImageMime(item.mimeType)
@@ -277,6 +307,7 @@ component MessageAttachments
 
 shape VerifiedAttachment
   threadId: string
+  draftId: string
   localId: string
   attachmentId: string
   attempt: number
@@ -290,13 +321,14 @@ shape AttachmentConnection
 
 shape CleanupAttachment
   threadId: string
+  draftId: string
   accessKey: string
   attachmentId: string
   path: string
   revision: number
 
 fn attachmentIdentity(threadId: string, localId: string, attempt: number): string = `${threadId}:${localId}:${attempt}`
-fn slotIdentity(slot: AttachmentSlot): string = attachmentIdentity(slot.threadId, slot.localId, slot.attempt)
-fn uploadedVerified(verified: VerifiedAttachment[], threadId: string, item: DraftAttachment, accessKey: string): bool = verified.filter(entry => entry.threadId == threadId and entry.localId == item.localId and entry.attachmentId == item.id and entry.attempt == item.attempt and entry.accessKey == accessKey and entry.state == "ready").length > 0
+fn slotIdentity(slot: AttachmentSlot): string = attachmentIdentity(slot.draftId, slot.localId, slot.attempt)
+fn uploadedVerified(verified: VerifiedAttachment[], draftId: string, item: DraftAttachment, accessKey: string): bool = verified.filter(entry => entry.draftId == draftId and entry.localId == item.localId and entry.attachmentId == item.id and entry.attempt == item.attempt and entry.accessKey == accessKey and entry.state == "ready").length > 0
 
 fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0, attachments=[], pendingSend=none) } }

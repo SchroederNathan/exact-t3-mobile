@@ -22,31 +22,46 @@ function nonempty(value: unknown): value is string {
 function isModelDraft(value: unknown): value is ModelDraft {
   if (!record(value) || !nonempty(value.id) || !record(value.selection)) return false;
   const selection = value.selection;
-  if (!nonempty(selection.threadId)
-    || (selection.modelSelection === undefined && selection.runtimeMode === undefined)
-    || (selection.runtimeMode !== undefined && (typeof selection.runtimeMode !== "string"
-      || !RUNTIME_MODES.has(selection.runtimeMode)))) return false;
+  if (
+    !nonempty(selection.threadId) ||
+    (selection.modelSelection === undefined && selection.runtimeMode === undefined) ||
+    (selection.runtimeMode !== undefined &&
+      (typeof selection.runtimeMode !== "string" || !RUNTIME_MODES.has(selection.runtimeMode)))
+  )
+    return false;
   const model = selection.modelSelection;
   if (model !== undefined) {
     if (!record(model) || !nonempty(model.instanceId) || !nonempty(model.model)) return false;
-    if (model.options !== undefined && (!Array.isArray(model.options) || !model.options.every(
-      (option: unknown) => record(option) && nonempty(option.id)
-        && (typeof option.value === "string" || typeof option.value === "boolean"),
-    ))) return false;
+    if (
+      model.options !== undefined &&
+      (!Array.isArray(model.options) ||
+        !model.options.every(
+          (option: unknown) =>
+            record(option) &&
+            nonempty(option.id) &&
+            (typeof option.value === "string" || typeof option.value === "boolean"),
+        ))
+    )
+      return false;
   }
   const separator = value.id.indexOf(":");
   if (separator < 1) return false;
   try {
-    return nonempty(decodeURIComponent(value.id.slice(0, separator)))
-      && decodeURIComponent(value.id.slice(separator + 1)) === selection.threadId;
+    return (
+      nonempty(decodeURIComponent(value.id.slice(0, separator))) &&
+      decodeURIComponent(value.id.slice(separator + 1)) === selection.threadId
+    );
   } catch {
     return false;
   }
 }
 
 function modelDrafts(value: unknown): ModelDraft[] {
-  if (!Array.isArray(value) || !value.every(isModelDraft)
-    || new Set(value.map(({ id }) => id)).size !== value.length)
+  if (
+    !Array.isArray(value) ||
+    !value.every(isModelDraft) ||
+    new Set(value.map(({ id }) => id)).size !== value.length
+  )
     throw new Error("Model drafts require valid, unique scoped selections.");
   return value;
 }

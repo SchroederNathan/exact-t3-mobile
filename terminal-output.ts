@@ -670,7 +670,6 @@ export function appendTerminalOutput(
   };
 }
 
-
 const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "gu");
 
 export function terminalOutputPlainText(text: string): string {

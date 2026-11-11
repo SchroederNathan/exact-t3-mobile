@@ -348,11 +348,23 @@ final class T3NativeModule: ExactModule {
       "workspace-tab-bar": ExactNativeFactory { props, events in
         WorkspaceTabBarInstance(props: props, events: events)
       },
-      "workspace-composer-glass": ExactNativeFactory { props, events in
-        ComposerGlassInstance(props: props, events: events)
+      "workspace-composer-metrics": ExactNativeFactory { props, events in
+        ComposerMetricsInstance(props: props, events: events)
       },
       "workspace-filter-menu": ExactNativeFactory { props, events in
         try WorkspaceFilterMenuInstance(props: props, events: events)
+      },
+      "workspace-tool-label": ExactNativeFactory { props, events in
+        ToolLabelInstance(props: props, events: events)
+      },
+      "workspace-markdown-table": ExactNativeFactory { props, events in
+        try MarkdownTableInstance(props: props, events: events)
+      },
+      "workspace-working-island": ExactNativeFactory { props, events in
+        WorkingIslandInstance(props: props, events: events)
+      },
+      "workspace-thread-scroll": ExactNativeFactory { props, events in
+        ThreadScrollObserverInstance(props: props, events: events)
       },
     ]
   }

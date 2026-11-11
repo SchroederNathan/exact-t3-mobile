@@ -1,0 +1,208 @@
+use ToolRow, ToolChild, ToolExpansion, ToolBatch from "./tool-row.contract"
+use BlockRef, CodeBatch, TableBatch from "./markdown.contract"
+use MediaBatch from "./media-image.contract"
+
+shape ToolGroupPosition
+  threadId: string
+  groupId: string
+  rowId: string
+  offset: number
+  scrollOffset: number
+  contentHeight: number
+
+shape ToolGroupGeometry
+  key: string
+  contentHeight: number
+  viewportHeight: number
+  scrollOffset: number
+  userScrolling: bool
+  settled: bool
+
+fn toolGroupAligned(a: number, b: number): bool = a >= b - 1 and a <= b + 1
+
+fn toolGroupSaved(positions: ToolGroupPosition[], threadId: string, groupId: string, ids: string[]): option<ToolGroupPosition> = first(positions.filter(position => position.threadId == threadId and position.groupId == groupId and ids.includes(position.rowId)))
+
+fn toolGroupAppend(previous: string[], current: string[]): bool = current.length > previous.length and previous.filter((id, index) => current.at(index) != some(id)).length == 0
+
+fn toolGroupFollow(previous: string[], current: string[], previousHeight: number, contentHeight: number, viewportHeight: number, scrollOffset: number, detailsChanged: bool, userScrolling: bool): bool = not detailsChanged and not userScrolling and contentHeight > previousHeight and toolGroupAppend(previous, current) and previousHeight - viewportHeight - scrollOffset <= 1
+
+fn toolGroupField(fields: string[], index: number): string = match fields.at(index) { case some(value) => value, case none => "" }
+
+fn toolGroupNumber(fields: string[], index: number): number = match parseNumber(toolGroupField(fields, index)) { case some(value) => value, case none => -1 }
+
+fn toolGroupGeometry(fields: string[]): ToolGroupGeometry = ToolGroupGeometry(key=toolGroupField(fields, 0), contentHeight=toolGroupNumber(fields, 2), viewportHeight=toolGroupNumber(fields, 3), scrollOffset=toolGroupNumber(fields, 4), userScrolling=toolGroupField(fields, 5) == "true", settled=toolGroupField(fields, 6) == "true")
+
+members T3Code
+  state toolGroupPositions: ToolGroupPosition[] = []
+
+  action rememberToolGroup(position: ToolGroupPosition)
+    toolGroupPositions = toolGroupPositions.filter(saved => saved.threadId != position.threadId or saved.groupId != position.groupId).concat([position])
+
+component ToolGroup
+  props
+    rows: ToolChild[]
+    groupId: string
+    threadId: string
+    positions: ToolGroupPosition[]
+    remember: action
+    batch: ToolBatch
+    viewKey: string
+    expanded: ToolExpansion[]
+    failedBatch: bool
+    toggle: action
+    retry: action
+    copy: action
+    openImage: action
+    highlights: CodeBatch
+    layouts: TableBatch
+    wrapped: BlockRef[]
+    seenBlock: action
+    toggleWrap: action
+    followLink: action
+    media: MediaBatch
+    seenMedia: action
+    retryMedia: action
+    openMedia: action
+  state initial = toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id))
+  state initialized = false
+  state restoring = false
+  state pointerHeld = false
+  state commandEpoch = 0
+  state scrollTarget = 0
+  state restoreCommanded = false
+  state rearmTarget: option<number> = none
+  state actualOffset = match toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id)) { case some(position) => position.scrollOffset, case none => 0 }
+  state previousIds = rows.map(row => row.id)
+  state previousDetails = expanded.filter(entry => entry.threadId == threadId and rows.map(row => row.id).includes(entry.rowId)).map(entry => `${encodeURIComponent(entry.rowId)}:${entry.attempt}`).join("|")
+  state previousHeight = match toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id)) { case some(position) => max(rows.length * 29, position.contentHeight), case none => rows.length * 29 }
+  state measuredHeight = match toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id)) { case some(position) => max(rows.length * 29, position.contentHeight), case none => rows.length * 29 }
+  state measuredCount = rows.length
+  state visibleKey = match toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id)) { case some(position) => some(position.rowId), case none => first(rows.map(row => row.id)) }
+  state visibleOffset = match toolGroupSaved(positions, threadId, groupId, rows.map(row => row.id)) { case some(position) => position.offset, case none => 0 }
+  state pendingAppend: option<number> = none
+  state pendingKey = ""
+  derive ids = rows.map(row => row.id)
+  derive detailsKey = expanded.filter(entry => entry.threadId == threadId and ids.includes(entry.rowId)).map(entry => `${encodeURIComponent(entry.rowId)}:${entry.attempt}`).join("|")
+  derive contentKey = `${rows.map(row => `${encodeURIComponent(row.id)}:${encodeURIComponent(row.revision)}`).join("|")}/${detailsKey}`
+  derive observationKey = `${contentKey}/${commandEpoch}`
+  derive listId = `tool-group-list-${threadId}-${groupId}`
+  derive portHeight = min(256, max(1, measuredHeight + max(0, rows.length - measuredCount) * 29))
+  derive restoredKey = not initialized or restoring ? match initial { case some(position) => some(position.rowId), case none => none } : none
+
+  action began
+    pointerHeld = true
+    pendingAppend = none
+    restoring = false
+    initialized = true
+    rearmTarget = none
+
+  action released
+    pointerHeld = false
+
+  action scrolled(x: number, y: number, event: ScrollEvent)
+    visibleKey = event.firstVisibleKey
+    visibleOffset = event.firstVisibleOffset
+    actualOffset = event.scrollTop
+    if initialized and not restoring
+      match event.firstVisibleKey
+        case some(rowId)
+          remember(ToolGroupPosition(threadId=threadId, groupId=groupId, rowId=rowId, offset=event.firstVisibleOffset, scrollOffset=event.scrollTop, contentHeight=event.scrollHeight))
+        case none
+          pendingAppend = none
+
+  action observed(message: string)
+    let fields = message.split("\n")
+    let geometry = toolGroupGeometry(fields)
+    if fields.length == 8 and geometry.key == observationKey and geometry.contentHeight >= 0 and geometry.viewportHeight > 0 and geometry.scrollOffset >= 0
+      let following = toolGroupFollow(previousIds, ids, previousHeight, geometry.contentHeight, min(previousHeight, 256), geometry.scrollOffset, previousDetails != detailsKey, pointerHeld or geometry.userScrolling)
+      measuredHeight = geometry.contentHeight
+      if not initialized or geometry.contentHeight != previousHeight or previousDetails != detailsKey or pointerHeld or geometry.userScrolling or not toolGroupAppend(previousIds, ids)
+        measuredCount = rows.length
+        previousHeight = geometry.contentHeight
+        previousIds = ids
+        previousDetails = detailsKey
+      actualOffset = geometry.scrollOffset
+      if pointerHeld or geometry.userScrolling
+        pendingAppend = none
+        rearmTarget = none
+        restoring = false
+        initialized = true
+      else if not initialized or restoring
+        if geometry.settled
+          match initial
+            case some(position)
+              if ids.includes(position.rowId)
+                restorePosition(position, geometry)
+              else
+                initialized = true
+                restoring = false
+            case none
+              initialized = true
+              restoring = false
+              rememberGeometry(geometry)
+      else if rearmTarget != none and (previousDetails != detailsKey or pendingKey != contentKey)
+        rearmTarget = none
+      else if rearmTarget != none
+        match rearmTarget
+          case some(target)
+            if geometry.settled
+              scrollTarget = min(target, max(0, geometry.contentHeight - geometry.viewportHeight))
+              rearmTarget = none
+              commandEpoch = commandEpoch + 1
+          case none
+            rearmTarget = none
+      else
+        let target = following ? some(min(geometry.contentHeight, 256)) : pendingKey == contentKey and not pointerHeld and not geometry.userScrolling ? pendingAppend : none
+        pendingAppend = target
+        pendingKey = contentKey
+        match target
+          case some(height)
+            if geometry.settled and geometry.viewportHeight >= height - 1 and geometry.viewportHeight <= height + 1
+              pendingAppend = none
+              commandScroll(max(0, geometry.contentHeight - geometry.viewportHeight), geometry.scrollOffset)
+          case none
+            pendingAppend = none
+            if geometry.settled
+              rememberGeometry(geometry)
+
+  action commandScroll(target: number, actual: number)
+    commandEpoch = commandEpoch + 1
+    if target == scrollTarget and not toolGroupAligned(target, actual)
+      scrollTarget = actual
+      rearmTarget = some(target)
+    else
+      scrollTarget = target
+      rearmTarget = none
+
+  action restorePosition(position: ToolGroupPosition, geometry: ToolGroupGeometry)
+    let rowFrame = frame(`tool-group-row-${threadId}-${groupId}-${position.rowId}`)
+    let portFrame = frame(listId)
+    if not rowFrame.unavailable and not rowFrame.provisional and not portFrame.unavailable and not portFrame.provisional and portFrame.height > 0
+      let rawTarget = rowFrame.y - portFrame.y + geometry.scrollOffset + position.offset
+      let target = min(max(0, rawTarget), max(0, geometry.contentHeight - geometry.viewportHeight))
+      initialized = true
+      if restoreCommanded and rearmTarget == none and toolGroupAligned(geometry.scrollOffset, target) and (not toolGroupAligned(rawTarget, target) or toolGroupAligned(rowFrame.y - portFrame.y, -position.offset))
+        restoring = false
+        rememberGeometry(geometry)
+      else
+        restoring = true
+        restoreCommanded = true
+        commandScroll(target, geometry.scrollOffset)
+
+  action rememberGeometry(geometry: ToolGroupGeometry)
+    match visibleKey
+      case some(rowId)
+        if ids.includes(rowId)
+          remember(ToolGroupPosition(threadId=threadId, groupId=groupId, rowId=rowId, offset=visibleOffset, scrollOffset=geometry.scrollOffset, contentHeight=geometry.contentHeight))
+      case none
+        pendingAppend = none
+
+  view
+    column position="relative" overflow="hidden" min-height=0 min-width=0 testId=`tool-group-${groupId}`
+      list id=listId testId=listId overflow-x="hidden" min-width=0 appearance="none" virtualized=true estimated-item-height=29 height=portHeight max-height=256 min-height=0 overscroll-behavior="none" keep-mounted=[restoredKey] scrollTop=scrollTarget scroll=scrolled pointerdown=began pointerup=released
+        for child, index in rows key=child.id
+          column id=`tool-group-row-${threadId}-${groupId}-${child.id}` padding-bottom=(index < rows.length - 1 ? 1 : 0) min-width=0
+            ToolRow(tool=child, parentRowId="", rowId=child.id, threadId=threadId, batch=batch, viewKey=viewKey, expanded=expanded, disclosureOnly=false, failedBatch=failedBatch, toggle=toggle, retry=retry, copy=copy, openImage=openImage, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, media=media, seenMedia=seenMedia, retryMedia=retryMedia, openMedia=openMedia)
+      workspace-thread-scroll target-test-id=listId observation-key=observationKey message=observed height=0 width=0
+      view position="absolute" left=0 right=0 top=0 height=12 background-image="linear-gradient(180deg, screen 0%, transparent 100%)" opacity=min(1, max(0, actualOffset) / 12) pointer-events="none" aria-hidden=true
+      view position="absolute" left=0 right=0 bottom=0 height=12 background-image="linear-gradient(0deg, screen 0%, transparent 100%)" opacity=min(1, max(0, measuredHeight - portHeight - actualOffset) / 12) pointer-events="none" aria-hidden=true

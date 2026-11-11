@@ -1,3 +1,9 @@
+## Project identity
+
+This repository is an active, personal clone of T3 Code's Expo mobile experience built with Exact. It is independent and unofficial. It is not an official T3 Code client and has no endorsement from pingdotgg.
+
+The sibling `t3-exact-ios` checkout is the upstream T3 Code reference. Use it to check server behavior and wire compatibility. Keep this client independent and do not import code from that checkout.
+
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
 # exact-t3-mobile: an Exact app
 

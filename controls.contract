@@ -1,3 +1,5 @@
+use QuestionAttachmentTarget, QuestionAttachments, questionAttachmentItems, questionAttachmentsReady from "./question-attachments.contract"
+use UploadProgress, VerifiedAttachment from "./attachments.contract"
 use InlineRun, MarkdownRuns, markdownPalette from "./markdown.contract"
 
 shape QuestionOption
@@ -40,6 +42,7 @@ shape PendingControl
   reason: string
   warning: string
   capability: string
+  supportsFeedback: bool
   unavailable: string
   dismissible: bool
   pending: bool
@@ -77,7 +80,7 @@ fn noControls(): ThreadControls = ThreadControls(accessKey="", keyPrefix="", pen
 fn questionDraft(drafts: QuestionDraft[], key: string, question: ControlQuestion): QuestionDraft = match first(drafts.filter(draft => draft.key == key and draft.questionId == question.id)) { case some(draft) => draft, case none => QuestionDraft(key=key, questionId=question.id, selected=[], custom=question.initial, hasCustom=question.hasInitial, revision=0) }
 fn selectedAnswer(drafts: QuestionDraft[], key: string, question: ControlQuestion, value: string): bool = questionDraft(drafts, key, question).selected.includes(value) and (not question.custom or questionDraft(drafts, key, question).custom.trim() == "")
 fn questionAnswered(drafts: QuestionDraft[], key: string, question: ControlQuestion): bool = (question.custom and ((question.hasInitial and questionDraft(drafts, key, question).hasCustom) or questionDraft(drafts, key, question).custom.trim() != "")) or question.options.filter(option => questionDraft(drafts, key, question).selected.includes(option.value)).length > 0
-fn allAnswered(drafts: QuestionDraft[], request: PendingControl): bool = request.questions.filter(question => not questionAnswered(drafts, request.key, question)).length == 0
+fn allAnswered(drafts: QuestionDraft[], request: PendingControl, attachments: QuestionAttachmentTarget[]): bool = request.questions.filter(question => not questionAnswered(drafts, request.key, question) and questionAttachmentItems(attachments, request.key, question.id).length == 0).length == 0
 
 component RequestCard
   props
@@ -87,6 +90,16 @@ component RequestCard
     busy: bool
     collapsed: bool
     drafts: QuestionDraft[]
+    attachments: QuestionAttachmentTarget[]
+    uploads: UploadProgress[]
+    verified: VerifiedAttachment[]
+    attachmentAccessKey: string
+    canAttach: bool
+    preparingAttachments: bool
+    pickAttachment: action
+    removeAttachment: action
+    retryAttachment: action
+    previewAttachment: action
     respond: action
     toggle: action
     choose: action
@@ -122,8 +135,8 @@ component RequestCard
           text "APPROVAL NEEDED" font-size=10.5 font-weight=700 letter-spacing="1.1px" color="muted"
           text request.title font-size=16 font-weight=700
       if request.kind == "approval" or not collapsed
-        scroll width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 keyboardDismissMode="none" testId=`request-body-${request.id}`
-          column gap=10 min-width=0 width="100%" box-sizing="border-box"
+        scroll width="100%" overflow-x="hidden" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 keyboardDismissMode="none" testId=`request-body-${request.id}`
+          column gap=10 min-width=0 width="100%" box-sizing="border-box" overflow-wrap="break-word"
             if request.detail != ""
               text request.detail font-size=14 line-height="20px" user-select="text" overflow-wrap="break-word"
             if request.reason != ""
@@ -154,6 +167,8 @@ component RequestCard
                       textarea value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 rows=2 max-height=120 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=16 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
                     else
                       input value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 min-height=44 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=16 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
+                  for target in attachments.filter(target => target.key == request.key and target.questionId == question.id) key=target.draft.id
+                    QuestionAttachments(target=target, uploads=uploads, blocked=(blocked or preparingAttachments), canAttach=canAttach, pick=pickAttachment, remove=removeAttachment, retry=retryAttachment, preview=previewAttachment)
             if request.kind == "approval"
               if optionWarning != ""
                 text optionWarning font-size=12 color="status-warning"
@@ -163,7 +178,7 @@ component RequestCard
                     text option.label font-size=14 font-weight=500 color=(blocked ? "muted" : option.decision == "accept" ? "white" : option.decision == "decline" ? "danger" : "foreground")
         if request.kind == "question"
           column gap=6 flex-shrink=0
-            button press=respond(threadId, accessKey, "answer", request.id, request.key, "") disabled=(blocked or not allAnswered(drafts, request)) buttonStyle="bordered-prominent" width="100%" min-height=44 testId=`question-submit-${request.id}`
+            button press=respond(threadId, accessKey, "answer", request.id, request.key, "") disabled=(blocked or preparingAttachments or not allAnswered(drafts, request, attachments) or not questionAttachmentsReady(attachments, request.key, verified, attachmentAccessKey)) buttonStyle="bordered-prominent" width="100%" min-height=44 testId=`question-submit-${request.id}`
               text (busy or request.pending ? "Sending…" : "Submit answers")
             if request.dismissible
               button press=respond(threadId, accessKey, "dismiss", request.id, request.key, "") disabled=(not allowed or busy or request.pending) appearance="none" width="100%" min-height=40 testId=`question-dismiss-${request.id}`

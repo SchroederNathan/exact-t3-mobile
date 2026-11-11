@@ -1,15 +1,17 @@
 {
-  "cli": { "version": ">=27.2.0", "appVersionSource": "remote" },
+  "cli": {
+    "appVersionSource": "local",
+    "promptToConfigurePushNotifications": false
+  },
   "build": {
-    "testflight": { "distribution": "store" }
+    "testflight": {
+      "distribution": "store"
+    }
   },
   "submit": {
     "testflight": {
       "ios": {
-        "ascAppId": "6821176299",
-        "appName": "T3 Code",
-        "bundleIdentifier": "com.exact.t3code.ios",
-        "language": "en-US"
+        "ascAppId": "6821176299"
       }
     }
   }

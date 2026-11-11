@@ -1,4 +1,27 @@
+use questionAttachmentsReady from "./question-attachments.contract"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, noControls, questionDraft from "./controls.contract"
+
+shape ForceStopAccess
+  threadId: string
+  accessKey: string
+  allowed: bool
+  pending: bool
+
+shape ComposerSendContext
+  epoch: number
+
+shape ForceStopTarget
+  threadId: string
+  routeId: string
+  accessKey: string
+  runId: string
+
+shape ForceStopReply
+  target: ForceStopTarget
+  ok: bool
+  error: string
+  outcome: string
+  sharedWithThreadIds: string[]
 
 members T3Code
   state questionDrafts: QuestionDraft[] = []
@@ -19,7 +42,22 @@ members T3Code
   derive stopKey = `${activeThreadId}:stop:${threadControls.stop.runId}`
   derive stopBusy = threadControls.stop.state == "stopping" or (pending(stopSent) and stopSubmissionKey == stopKey)
   derive stopSendError = match stopSent { case some(reply) => reply.key == stopKey ? reply.error : threadControls.stop.error, case none => threadControls.stop.error }
+  state forceStopTarget = ForceStopTarget(threadId="", routeId="", accessKey="", runId="")
+  state forceStopTitle = ""
+  state forceStopMessage = ""
+  resource forceStopAccess = loadForceStopAccess(activeThreadId, threadControls.accessKey, controlsAllowed, catalog) as shape ForceStopAccess else empty()
+  mutation forceStopped as shape ForceStopReply refreshes catalog then afterForceStop
+  derive forceStopAvailable = controlsAllowed and forceStopAccess.threadId == activeThreadId and forceStopAccess.accessKey == threadControls.accessKey and forceStopAccess.allowed and threadControls.stop.state == "unresponsive"
+  derive forceStopBusy = (pending(forceStopped) and forceStopTarget.threadId == activeThreadId) or (forceStopAccess.threadId == activeThreadId and forceStopAccess.accessKey == threadControls.accessKey and forceStopAccess.pending)
+  derive forceStopVisible = floatingStatus.kind == "stop" and forceStopAvailable
+  derive islandAction = forceStopVisible ? "force-stop" : floatingStatus.action
+  derive islandActionLabel = forceStopVisible ? forceStopBusy ? "Force stopping..." : "Force stop" : lifecycleBusy ? floatingStatus.actionPendingLabel : floatingStatus.actionLabel
+  derive islandActionBusy = forceStopVisible ? forceStopBusy : lifecycleBusy
+  derive islandActionDisabled = not controlsAllowed or (forceStopVisible ? pending(forceStopped) or forceStopBusy : pending(lifecycleChanged))
+  derive forceStopFailed = failed(forceStopped) and forceStopTarget.threadId == activeThreadId and forceStopTarget.routeId == `${threadRoute.id}`
   derive hasQuestion = threadControls.requests.filter(request => request.kind == "question").length > 0
+  derive activeApproval = first(threadControls.requests.filter(request => request.kind == "approval"))
+  derive approvalComposerPlaceholder = match activeApproval { case some(request) => request.supportsFeedback ? "Send feedback to decline this request" : "Send a message to decline and redirect the agent", case none => "Ask anything" }
   derive shownRequests = (match first(threadControls.requests.filter(request => request.kind == "approval")) { case some(request) => [request], case none => [] }).concat(match first(threadControls.requests.filter(request => request.kind == "question")) { case some(request) => [request], case none => [] })
 
   task pruneControlDrafts when threadControls.ready key=`${threadControls.keyPrefix}:${threadControls.pendingKeys.join("|")}`
@@ -30,6 +68,7 @@ members T3Code
       questionDrafts = questionDrafts.filter(draft => not draft.key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(draft.key))
       collapsedRequests = collapsedRequests.filter(key => not key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(key))
       explainedApprovals = explainedApprovals.filter(key => not key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(key))
+      answeredQuestionKeys = answeredQuestionKeys.filter(key => not key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(key))
 
   action retryControlAccess
     controlRetry = controlRetry + 1
@@ -56,9 +95,9 @@ members T3Code
     questionDrafts = questionDrafts.filter(draft => draft.key != key or draft.questionId != question.id).concat([QuestionDraft(key=key, questionId=question.id, selected=(question.hasInitial or value.trim() != "" ? [] : previous.selected), custom=value, hasCustom=true, revision=revision)])
 
   action respondControl(threadId: string, accessKey: string, kind: string, id: string, key: string, value: string)
-    if controlsAllowed and not sendingControls.includes(key)
+    if controlsAllowed and not sendingControls.includes(key) and (kind != "answer" or (not pending(stagedAttachments) and questionAttachmentsReady(questionAttachmentTargets, key, verifiedAttachments, attachmentAccess.accessKey)))
       sendingControls = sendingControls.concat([key])
-      send controlSent = submitControl(threadId, accessKey, kind, id, key, value, questionDrafts.filter(draft => draft.key == key))
+      send controlSent = submitControl(threadId, accessKey, kind, id, key, value, questionDrafts.filter(draft => draft.key == key), questionAttachmentTargets.filter(target => target.key == key))
 
   action stopTurn(threadId: string, accessKey: string, runId: string)
     if controlsAllowed and runId != "" and not stopBusy
@@ -66,11 +105,41 @@ members T3Code
       stopSubmissionKey = capturedKey
       send stopSent = stopControl(threadId, accessKey, runId, capturedKey)
 
+  action confirmForceStop
+    if forceStopAvailable and not pending(forceStopped) and not forceStopBusy
+      forceStopTarget = ForceStopTarget(threadId=activeThreadId, routeId=`${threadRoute.id}`, accessKey=threadControls.accessKey, runId=threadControls.stop.runId)
+      showModal("force-stop-confirmation")
+
+  action forceStopTurn
+    if forceStopTarget.threadId == activeThreadId and forceStopTarget.routeId == `${threadRoute.id}` and not pending(forceStopped)
+      send forceStopped = forceStopControl(forceStopTarget)
+
+  action afterForceStop
+    match forceStopped
+      case some(reply)
+        if reply.target == forceStopTarget and reply.target.threadId == activeThreadId and reply.target.routeId == `${threadRoute.id}` and (threadControls.stop.runId == "" or threadControls.stop.runId == reply.target.runId)
+          if not reply.ok or reply.outcome == "releasing" or reply.outcome == "shared"
+            forceStopTitle = not reply.ok ? "Could not force stop the agent" : reply.outcome == "releasing" ? "Turn stopped; the agent is still shutting down" : "Turn stopped; the agent process kept running"
+            forceStopMessage = not reply.ok ? reply.error : reply.outcome == "shared" ? `It is shared with ${reply.sharedWithThreadIds.length == 0 ? "other" : `${reply.sharedWithThreadIds.length}`} working ${reply.sharedWithThreadIds.length == 1 ? "thread" : "threads"}. Stop those to free it.` : ""
+            showModal("force-stop-result")
+      case none
+        forceStopMessage = ""
+
+  task leaveForceStopOrigin when forceStopTarget.routeId != "" and (forceStopTarget.threadId != activeThreadId or forceStopTarget.routeId != `${threadRoute.id}`) key=`${forceStopTarget.routeId}:${threadRoute.id}:${activeThreadId}`
+    after(1, clearForceStopDialogs)
+
+  action clearForceStopDialogs
+    close("force-stop-confirmation")
+    close("force-stop-result")
+    forceStopTarget = ForceStopTarget(forceStopTarget, routeId="")
+
   action afterControl
     match controlSent
       case some(reply)
         sendingControls = sendingControls.filter(key => key != reply.key)
         if reply.ok
+          if questionAttachmentTargets.filter(target => target.key == reply.key).length > 0
+            answeredQuestionKeys = answeredQuestionKeys.concat([reply.key])
           questionDrafts = questionDrafts.filter(draft => reply.drafts.filter(sentDraft => sentDraft.key == draft.key and sentDraft.questionId == draft.questionId and sentDraft.revision == draft.revision).length == 0)
       case none
         sendingControls = sendingControls

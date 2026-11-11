@@ -1,33 +1,68 @@
-import { appendTerminalOutput, EMPTY_TERMINAL_OUTPUT, terminalOutputPlainText } from "./terminal-output";
+import {
+  appendTerminalOutput,
+  EMPTY_TERMINAL_OUTPUT,
+  terminalOutputPlainText,
+} from "./terminal-output";
+import { commandDisplayText, commandProgramName } from "./command-label";
+import { markdownBlocks, type MarkdownBlock } from "./markdown";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : {};
-const text = (value: unknown) => typeof value === "string" ? value : "";
-const records = (value: unknown) => Array.isArray(value) ? value.map(record) : [];
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as RecordValue)
+    : {};
+const text = (value: unknown) => (typeof value === "string" ? value : "");
+const records = (value: unknown) => (Array.isArray(value) ? value.map(record) : []);
 const active = new Set(["idle", "pending", "running", "waiting"]);
-const types = new Set(["command_execution", "file_change", "file_search", "web_search", "dynamic_tool"]);
+const types = new Set([
+  "reasoning",
+  "command_execution",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+]);
 const DETAIL_LIMIT = 256 * 1024;
 const TRANSPORT_TRUNCATION_MARKER = "\n… output truncated for transport";
 const T3_TOOL_SUBJECTS: Record<string, readonly [string, string]> = {
-  thread: ["a T3 thread", "T3 threads"], project: ["a project", "projects"],
-  environment: ["an environment", "environments"], worktree: ["a workspace branch", "workspace branches"],
-  queue: ["a queued message", "queued messages"], pending_request: ["pending questions", "pending questions"],
+  thread: ["a T3 thread", "T3 threads"],
+  project: ["a project", "projects"],
+  environment: ["an environment", "environments"],
+  worktree: ["a workspace branch", "workspace branches"],
+  queue: ["a queued message", "queued messages"],
+  pending_request: ["pending questions", "pending questions"],
 };
 
-export interface ToolSummary {
-  category: "command" | "file-change" | "search" | "mcp" | "tool";
+export interface ToolChild {
+  id: string;
+  category: "reasoning" | "command" | "file-change" | "search" | "mcp" | "tool" | "run-fold";
   status: "pending" | "running" | "completed" | "error" | "interrupted";
   title: string;
+  displayTitle: string;
+  live: boolean;
   symbol: string;
   revision: string;
   exitLabel: string;
+}
+
+export interface ToolSummary extends ToolChild {
+  groupCount: number;
+  grouped: ToolChild[];
+  groupedIds: string[];
 }
 
 export interface ToolRequest {
   rowId: string;
   revision: string;
   retry: number;
+}
+
+export interface ToolImage {
+  url: string;
+  alt: string;
+  mimeType: string;
+  expiresAt: number;
+  error: string;
 }
 
 export interface ToolPanel {
@@ -37,6 +72,8 @@ export interface ToolPanel {
   state: "loading" | "ready" | "error" | "missing";
   input: string;
   output: string;
+  blocks: MarkdownBlock[];
+  images: ToolImage[];
   truncated: boolean;
   error: string;
 }
@@ -57,10 +94,13 @@ export function toolRevision(item: RecordValue): string {
 
 function t3ToolTitle(toolName: string, input: unknown): string | null {
   const label = toolName.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
-  const namespaced = /^(?:mcp__)?(?:t3[-_]code(?:[-_]direct)?|t3code)(?:__|[.:/]|\s*·\s*)(.+)$/i.exec(label);
+  const namespaced =
+    /^(?:mcp__)?(?:t3[-_]code(?:[-_]direct)?|t3code)(?:__|[.:/]|\s*·\s*)(.+)$/i.exec(label);
   const name = namespaced?.[1] ?? (/^t3_/.test(label) ? label : "");
   if (!name) return null;
-  const call = /^(?:t3_)?(thread|project|environment|worktree|queue|pending_request)_(.+)$/.exec(name);
+  const call = /^(?:t3_)?(thread|project|environment|worktree|queue|pending_request)_(.+)$/.exec(
+    name,
+  );
   const actionTool = /^(?:t3_)?(queue|pending_request)$/.exec(name);
   const family = call?.[1] ?? actionTool?.[1];
   const action = call?.[2] ?? (actionTool ? text(record(input).action) : "");
@@ -68,31 +108,50 @@ function t3ToolTitle(toolName: string, input: unknown): string | null {
     if (family === "thread" && action === "configure") return "Use thread model settings";
     if (family === "thread" && action === "configuration") return "Read thread configuration";
     const subject = T3_TOOL_SUBJECTS[family]!;
-    const verb = action === "respond" ? "Answer" : action[0]!.toUpperCase() + action.slice(1).replaceAll("_", " ");
+    const verb =
+      action === "respond"
+        ? "Answer"
+        : action[0]!.toUpperCase() + action.slice(1).replaceAll("_", " ");
     return `${verb}${action === "wait" ? " for" : action === "send" ? " to" : ""} ${subject[action === "list" ? 1 : 0]}`;
   }
   const words = name.replace(/^t3_/, "").split("_");
-  return words.map((word, index) => index === 0 ? word[0]?.toUpperCase() + word.slice(1) : word).join(" ");
+  return words
+    .map((word, index) => (index === 0 ? word[0]?.toUpperCase() + word.slice(1) : word))
+    .join(" ");
 }
 
 export function toolSummary(item: RecordValue): ToolSummary | null {
   if (!types.has(text(item.type))) return null;
   const output = record(item.output);
-  const failed = item.status === "failed" || (item.type === "command_execution"
-    ? typeof item.exitCode === "number" ? item.exitCode !== 0 : item.outputIndicatesFailure === true
-    : output.isError === true || output.is_error === true);
-  const status: ToolSummary["status"] = failed ? "error"
-    : item.status === "cancelled" || item.status === "interrupted" ? "interrupted"
-      : item.status === "pending" || item.status === "idle" ? "pending"
-        : active.has(text(item.status)) ? "running" : "completed";
+  const failed =
+    item.status === "failed" ||
+    (item.type === "command_execution"
+      ? typeof item.exitCode === "number"
+        ? item.exitCode !== 0
+        : item.outputIndicatesFailure === true
+      : output.isError === true || output.is_error === true);
+  const status: ToolSummary["status"] = failed
+    ? "error"
+    : item.status === "cancelled" || item.status === "interrupted"
+      ? "interrupted"
+      : item.status === "pending" || item.status === "idle"
+        ? "pending"
+        : active.has(text(item.status))
+          ? "running"
+          : "completed";
   let category: ToolSummary["category"] = "tool";
   let symbol = "wrench.and.screwdriver";
   let title = text(item.title);
   switch (item.type) {
+    case "reasoning":
+      category = "reasoning";
+      symbol = "brain";
+      title = text(item.text) || title || (active.has(text(item.status)) ? "Thinking" : "Thought");
+      break;
     case "command_execution":
       category = "command";
       symbol = "terminal";
-      title = text(item.input) || title || "Command";
+      title = commandDisplayText(text(item.input)) || title || "Command";
       break;
     case "file_change": {
       category = "file-change";
@@ -113,31 +172,92 @@ export function toolSummary(item: RecordValue): ToolSummary | null {
       break;
     case "dynamic_tool":
       category = /(?:^|[._])mcp(?:[._]|$)|^mcp__/i.test(text(item.toolName)) ? "mcp" : "tool";
-      title = t3ToolTitle(text(item.toolName), item.input) || title || text(item.toolName) || "Tool call";
+      title =
+        t3ToolTitle(text(item.toolName), item.input) || title || text(item.toolName) || "Tool call";
       break;
   }
+  title = title.replace(/\s+/gu, " ").trim().slice(0, 180);
+  const live = status === "pending" || status === "running";
   return {
-    category, status, title: title.replace(/\s+/gu, " ").trim().slice(0, 180), symbol, revision: toolRevision(item),
-    exitLabel: item.type === "command_execution" && typeof item.exitCode === "number" && item.exitCode !== 0 ? `exit ${item.exitCode}` : "",
+    id: text(item.id),
+    category,
+    status,
+    title,
+    displayTitle: live ? liveToolTitle(category, title) : title,
+    live,
+    symbol,
+    revision: toolRevision(item),
+    exitLabel:
+      item.type === "command_execution" && typeof item.exitCode === "number" && item.exitCode !== 0
+        ? `exit ${item.exitCode}`
+        : "",
+    groupCount: 1,
+    grouped: [],
+    groupedIds: [],
   };
+}
+
+export function liveToolTitle(category: ToolSummary["category"], title: string): string {
+  if (category === "reasoning") return "Thinking";
+  if (category === "command") {
+    return `Running ${commandProgramName(title) ?? "command"}`;
+  }
+  return title.replace(/^Changed\b/u, "Changing").replace(/^Searched\b/u, "Searching");
 }
 
 export function toolNeedsDetail(item: RecordValue, streaming: boolean): boolean {
   if (item.type === "command_execution") return !streaming && item.outputOmitted === true;
-  if (item.type === "file_change") return item.diffStr === undefined && item.oldStr === undefined && item.newStr === undefined;
+  if (item.type === "file_change")
+    return item.diffStr === undefined && item.oldStr === undefined && item.newStr === undefined;
   return item.type === "dynamic_tool" && (item.outputOmitted === true || summarized(item.input));
+}
+
+const imageMimeTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+function imageSource(item: RecordValue): ToolImage | null {
+  if (item.type !== "image") return null;
+  const source =
+    item.source !== null && typeof item.source === "object" && !Array.isArray(item.source)
+      ? record(item.source)
+      : undefined;
+  if (source && source.type !== "base64") return null;
+  const mimeType = text(source ? source.media_type : item.mimeType).toLowerCase();
+  if (!imageMimeTypes.has(mimeType)) return null;
+  const data = source ? source.data : item.data;
+  return {
+    url: typeof data === "string" ? `data:${mimeType};base64,${data}` : "",
+    alt: text(item.alt) || text(item.name) || "Tool output image",
+    mimeType,
+    expiresAt: typeof data === "string" ? Number.MAX_SAFE_INTEGER : 0,
+    error: "",
+  };
+}
+
+function imageBlocks(value: unknown): ToolImage[] {
+  const content = record(value).content;
+  const blocks = Array.isArray(value) ? value : Array.isArray(content) ? content : [value];
+  const images: ToolImage[] = [];
+  // The server's tool-output-image index counts only accepted top-level raster blocks.
+  for (const block of blocks) {
+    const image = imageSource(record(block));
+    if (image) images.push(image);
+    if (images.length === 8) break;
+  }
+  return images;
 }
 
 function outputText(value: unknown, depth = 0): string | null {
   if (depth > 4) return null;
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    const parts = value.map((part) => outputText(part, depth + 1));
-    return parts.every((part) => part !== null) ? parts.filter(Boolean).join("\n") : null;
+    const parts = value
+      .map((part) => outputText(part, depth + 1))
+      .filter((part): part is string => part !== null && part !== "");
+    return parts.join("\n");
   }
   const item = record(value);
   if (item.type === "text" && typeof item.text === "string") return item.text;
-  if (item.type === "image") return "[image]";
+  if (item.type === "image") return "";
   if (item.type === "resource_link" && typeof item.uri === "string") return item.uri;
   if (item.type === "resource") {
     const resource = record(item.resource);
@@ -158,7 +278,8 @@ function outputText(value: unknown, depth = 0): string | null {
 }
 
 function formatJson(value: unknown): string {
-  if (value === undefined || value === null || typeof value === "string" && !value.trim()) return "";
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim()))
+    return "";
   const json = JSON.stringify(value, null, 2) ?? "";
   return json === "{}" || json === "[]" ? "" : json;
 }
@@ -175,17 +296,27 @@ function commandOutput(value: unknown): string {
   const output = text(value);
   try {
     const parsed = record(JSON.parse(output));
-    if (typeof parsed.stdout === "string" && typeof parsed.stderr === "string" && typeof parsed.interrupted === "boolean")
+    if (
+      typeof parsed.stdout === "string" &&
+      typeof parsed.stderr === "string" &&
+      typeof parsed.interrupted === "boolean"
+    )
       return [parsed.stdout, parsed.stderr].filter((part) => part.trim()).join("\n");
   } catch {}
   return output;
 }
 
-export function toolBody(item: RecordValue): Pick<ToolPanel, "input" | "output" | "truncated"> {
+export function toolBody(
+  item: RecordValue,
+): Pick<ToolPanel, "input" | "output" | "blocks" | "images" | "truncated"> {
   let input = "";
   let output = "";
+  let images: ToolImage[] = [];
   let truncated = summarized(item.input) || summarized(item.output);
   switch (item.type) {
+    case "reasoning":
+      output = text(item.text);
+      break;
     case "command_execution": {
       input = text(item.input);
       const terminal = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, commandOutput(item.output));
@@ -194,27 +325,72 @@ export function toolBody(item: RecordValue): Pick<ToolPanel, "input" | "output" 
       break;
     }
     case "dynamic_tool":
-      input = summarized(item.input) ? text(record(item.input).summary)
-        : typeof item.input === "string" && item.input !== "" ? item.input
-          : JSON.stringify(item.input, null, 2) ?? "";
+      images = imageBlocks(item.output);
+      input = summarized(item.input)
+        ? text(record(item.input).summary)
+        : typeof item.input === "string" && item.input !== ""
+          ? item.input
+          : (JSON.stringify(item.input, null, 2) ?? "");
       output = item.outputOmitted === true ? "" : formatValue(item.output);
       break;
     case "file_change":
-      input = records(item.changes).map((change) => [text(change.operation), text(change.oldPath), text(change.path)].filter(Boolean).join(" ")).join("\n") || text(item.fileName);
-      output = text(item.diffStr) || [text(item.oldStr) && `Before\n${text(item.oldStr)}`, text(item.newStr) && `After\n${text(item.newStr)}`].filter(Boolean).join("\n\n");
+      input =
+        records(item.changes)
+          .map((change) =>
+            [text(change.operation), text(change.oldPath), text(change.path)]
+              .filter(Boolean)
+              .join(" "),
+          )
+          .join("\n") || text(item.fileName);
+      output =
+        text(item.diffStr) ||
+        [
+          text(item.oldStr) && `Before\n${text(item.oldStr)}`,
+          text(item.newStr) && `After\n${text(item.newStr)}`,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
       break;
     case "file_search":
       input = text(item.pattern);
-      output = records(item.results).map((result) => [text(result.fileName) + (typeof result.line === "number" ? `:${result.line}` : ""), text(result.preview)].filter(Boolean).join("\n")).join("\n");
+      output = records(item.results)
+        .map((result) =>
+          [
+            text(result.fileName) + (typeof result.line === "number" ? `:${result.line}` : ""),
+            text(result.preview),
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        )
+        .join("\n");
       break;
     case "web_search":
       input = Array.isArray(item.patterns) ? item.patterns.map(text).join("\n") : "";
-      output = records(item.results).map((result) => [text(result.title), text(result.url), text(result.snippet)].filter(Boolean).join("\n")).join("\n\n");
+      output = records(item.results)
+        .map((result) =>
+          [text(result.title), text(result.url), text(result.snippet)].filter(Boolean).join("\n"),
+        )
+        .join("\n\n");
       break;
   }
   return {
-    input: input.slice(0, DETAIL_LIMIT), output: output.slice(0, DETAIL_LIMIT),
-    truncated: truncated || input.length > DETAIL_LIMIT || output.length > DETAIL_LIMIT ||
-      input.includes(TRANSPORT_TRUNCATION_MARKER) || output.includes(TRANSPORT_TRUNCATION_MARKER),
+    input: input.slice(0, DETAIL_LIMIT),
+    output: output.slice(0, DETAIL_LIMIT),
+    blocks:
+      item.type === "reasoning"
+        ? markdownBlocks(
+            output.slice(0, DETAIL_LIMIT),
+            text(item.id),
+            false,
+            active.has(text(item.status)),
+          )
+        : [],
+    images,
+    truncated:
+      truncated ||
+      input.length > DETAIL_LIMIT ||
+      output.length > DETAIL_LIMIT ||
+      input.includes(TRANSPORT_TRUNCATION_MARKER) ||
+      output.includes(TRANSPORT_TRUNCATION_MARKER),
   };
 }

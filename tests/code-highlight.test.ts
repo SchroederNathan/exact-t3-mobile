@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
-import { CodeHighlights, codeRuns } from "./code-highlight";
+import { CodeHighlights, codeRuns } from "../code-highlight";
 
 test("UTF-16 token ranges preserve source exactly and reject invalid native ranges", () => {
   const body = "😀 const value = 'é';\r\n\0";
-  const runs = codeRuns(body, { tokens: [{ start: 3, end: 8, kind: 0 }, { start: 8, end: 9, kind: 0 }] });
+  const runs = codeRuns(body, {
+    tokens: [
+      { start: 3, end: 8, kind: 0 },
+      { start: 8, end: 9, kind: 0 },
+    ],
+  });
   expect(runs).toEqual([
     { id: "0", text: "😀 ", kind: -1 },
     { id: "1", text: "const ", kind: 0 },
@@ -11,16 +16,23 @@ test("UTF-16 token ranges preserve source exactly and reject invalid native rang
   ]);
   for (const tokens of [
     [{ start: 1, end: 2, kind: 0 }],
-    [{ start: 5, end: 8, kind: 0 }, { start: 3, end: 4, kind: 1 }],
+    [
+      { start: 5, end: 8, kind: 0 },
+      { start: 3, end: 4, kind: 1 },
+    ],
     [{ start: 0, end: 500, kind: 1 }],
     [{ start: 0, end: 2, kind: 14 }],
-  ]) expect(codeRuns(body, { tokens })).toEqual([{ id: "0", text: body, kind: -1 }]);
+  ])
+    expect(codeRuns(body, { tokens })).toEqual([{ id: "0", text: body, kind: -1 }]);
 });
 
 test("each source owns native requests while settled results stay bounded and reusable", async () => {
   const cache = new CodeHighlights(2, 240);
   const requests: { code: string; finish: (value: unknown) => void; fail: () => void }[] = [];
-  const request = (code: string) => new Promise((finish, reject) => requests.push({ code, finish, fail: () => reject(new Error("Superseded")) }));
+  const request = (code: string) =>
+    new Promise((finish, reject) =>
+      requests.push({ code, finish, fail: () => reject(new Error("Superseded")) }),
+    );
   const block = { id: "code", body: "one", language: "ts", pending: false };
   const first = cache.load([block], request);
   const repeated = cache.load([block], request);

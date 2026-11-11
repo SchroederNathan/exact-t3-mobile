@@ -63,6 +63,10 @@ def prepare(ipa, identity, manifest):
         run("codesign", "--verify", "--deep", "--strict", str(app))
         require(signing_certificate(app, root / "original-cert") == identity,
                 "Supplied identity differs from the archive signer.")
+        require(info.get("ITSAppUsesNonExemptEncryption") in (None, False),
+                "Archive declares non-exempt encryption; review export compliance before packaging.")
+        info["ITSAppUsesNonExemptEncryption"] = False
+        (app / "Info.plist").write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
 
         profile = plistlib.loads(run("security", "cms", "-D", "-i", str(app / "embedded.mobileprovision")))
         allowed = profile.get("Entitlements", {})
@@ -108,6 +112,7 @@ def prepare(ipa, identity, manifest):
     digest = checksum.hexdigest()
     print(json.dumps({"bundleIdentifier": bundle, "version": version, "buildNumber": build,
                       "teamIdentifier": team, "signingSHA1": identity, "ipaSha256": digest,
+                      "usesNonExemptEncryption": False,
                       "privacyManifest": str(manifest)}, indent=2))
 
 

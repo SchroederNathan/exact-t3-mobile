@@ -5,8 +5,22 @@
   "id": "com.exact.t3code.ios",
   "start_url": "/",
   "display": "standalone",
-  "icons": [{ "src": "assets/icon.png", "sizes": "1024x1024", "type": "image/png" }],
-  "modules": ["workspace-tab-bar", "workspace-composer-glass", "workspace-filter-menu"],
+  "icons": [
+    {
+      "src": "assets/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    }
+  ],
+  "modules": [
+    "workspace-tab-bar",
+    "workspace-composer-metrics",
+    "workspace-filter-menu",
+    "workspace-tool-label",
+    "workspace-markdown-table",
+    "workspace-working-island",
+    "workspace-thread-scroll"
+  ],
   "app": {
     "id": "com.exact.t3code.ios",
     "name": "T3 Code Exact iOS"

@@ -1,0 +1,109 @@
+shape MediaDemand
+  threadId: string
+  viewKey: string
+  messageId: string
+  blockId: string
+  attempt: number
+
+shape MediaPreview
+  messageId: string
+  blockId: string
+  attempt: number
+  version: number
+  url: string
+  state: string
+  error: string
+  width: number
+  height: number
+  expiresAt: number
+  fileRevision: string
+
+shape MediaBatch
+  threadId: string
+  viewKey: string
+  previews: MediaPreview[]
+
+members T3Code
+  state mediaDemands: MediaDemand[] = []
+  state mediaSerial = 0
+  state mediaClock = 0
+  state mediaNow = 0
+  resource mediaPreviews = loadMediaPreviews(activeToolThreadId, toolViewKey, mediaDemands.filter(ref => ref.threadId == activeToolThreadId).map(ref => MediaDemand(ref, viewKey=toolViewKey)), mediaClock, codeRevision, reasoningBlocks) with time.epochAtZero + mediaNow as shape MediaBatch else empty()
+
+  task expireMediaPreviews when mediaPreviews.previews.filter(preview => preview.expiresAt > 0 and preview.expiresAt < 9007199254740991).length > 0 key=`${mediaPreviews.previews.map(preview => preview.expiresAt).join(",")}:${mediaClock}`
+    after(60000, refreshMediaPreviews)
+
+  action refreshMediaPreviews
+    mediaClock = mediaClock + 1
+    mediaNow = performanceNow()
+
+  action observeMedia(threadId: string, viewKey: string, messageId: string, blockId: string, event: IntersectionObserverEntry)
+    if threadId == activeToolThreadId and viewKey == toolViewKey
+      let prior = first(mediaDemands.filter(ref => ref.threadId == threadId and ref.messageId == messageId and ref.blockId == blockId))
+      let retained = mediaDemands.filter(ref => ref.threadId == threadId and not (ref.messageId == messageId and ref.blockId == blockId))
+      mediaDemands = event.isIntersecting ? retained.concat([MediaDemand(threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=blockId, attempt=(match prior { case some(ref) => ref.attempt, case none => mediaSerial }))]) : retained
+
+  action retryMedia(threadId: string, viewKey: string, messageId: string, blockId: string)
+    if threadId == activeToolThreadId and viewKey == toolViewKey
+      let attempt = mediaSerial + 1
+      mediaSerial = attempt
+      mediaDemands = mediaDemands.filter(ref => ref.threadId == threadId and not (ref.messageId == messageId and ref.blockId == blockId)).concat([MediaDemand(threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=blockId, attempt=attempt)])
+
+  action openMedia(threadId: string, viewKey: string, messageId: string, blockId: string)
+    if not pending(viewerPresented) and not pending(viewerPrepared)
+      closeAttachmentViewer()
+      send viewerPrepared = prepareMediaViewer(threadId, `${threadRoute.id}`, viewKey, messageId, blockId)
+
+component MediaImage
+  props
+    batch: MediaBatch
+    threadId: string
+    viewKey: string
+    messageId: string
+    blockId: string
+    alt: string
+    tableImage: bool
+    inlineImage: bool
+    seen: action
+    retry: action
+    open: action
+  state loadedVersion = -2
+  state failedVersion = -2
+  state failure = ""
+  derive previews = batch.threadId == threadId and batch.viewKey == viewKey ? batch.previews.filter(preview => preview.messageId == messageId and preview.blockId == blockId) : []
+
+  action loaded(version: number)
+    if previews.filter(preview => preview.version == version).length > 0
+      loadedVersion = version
+      failedVersion = -2
+
+  action mediaFailed(version: number, message: string)
+    if previews.filter(preview => preview.version == version).length > 0
+      failedVersion = version
+      failure = message == "" ? "This image could not be decoded." : message
+
+  action retryImage
+    retry(threadId, viewKey, messageId, blockId)
+
+  view
+    column intersect=seen(threadId, viewKey, messageId, blockId) intersect-margin="160px" width=(inlineImage ? "20px" : "100%") height=(tableImage ? (inlineImage ? "20px" : "200px") : "auto") max-width=(tableImage ? 300 : 480) min-width=0 flex-shrink=0 gap=(tableImage ? 0 : 6) overflow=(tableImage ? "hidden" : "visible") border-radius=(tableImage ? 8 : 0) testId=`media-${messageId}-${blockId}`
+      if previews.length == 0 or previews.filter(preview => preview.state == "loading").length > 0
+        column align-items="center" justify-content="center" width="100%" height=(tableImage ? "100%" : "auto") aspect-ratio=(tableImage ? "auto" : "16 / 9") background-color="bubble" border-radius=(tableImage ? 8 : 12) aria-label="Loading image"
+          if not inlineImage
+            text "Loading image…" color="muted" font-size=12
+      for preview in previews key=preview.version
+        if preview.state == "ready" and failedVersion != preview.version
+          button press=open(threadId, viewKey, messageId, blockId) appearance="none" display="flex" align-items=(tableImage ? "center" : "flex-start") justify-content=(tableImage ? "center" : "flex-start") max-width="100%" min-width=0 width=(tableImage ? "100%" : "auto") height=(tableImage ? "100%" : "auto") flex-shrink=0 overflow=(tableImage ? "hidden" : "visible") aria-label=`Open ${alt == "" ? "image" : alt}` testId=`open-media-${messageId}-${blockId}`
+            image preview.url alt=alt width=(tableImage ? "100%" : (preview.width > 0 and preview.height > 0 ? `${min(480, min(preview.width, 480 * preview.width / preview.height))}px` : "auto")) height=(inlineImage ? "20px" : "auto") max-width="100%" max-height=(tableImage ? "none" : "480px") object-fit=(tableImage ? "fill" : "scale-down") border-radius=(tableImage ? 0 : 12) load=loaded(preview.version) error=mediaFailed(preview.version) testId=`media-source-${messageId}-${blockId}`
+          if loadedVersion != preview.version and not tableImage
+            text "Loading image…" color="muted" font-size=12
+        else if preview.state == "error" or failedVersion == preview.version
+          column align-items="center" justify-content="center" width="100%" height=(tableImage ? "100%" : "auto") min-height=(inlineImage ? 20 : 96) padding=(inlineImage ? 0 : 12) box-sizing="border-box" gap=6 background-color="bubble" border-radius=(tableImage ? 8 : 12)
+            if not inlineImage
+              text "Image unavailable" font-size=14 color="muted"
+              text (failedVersion == preview.version ? failure : preview.error) font-size=12 color="muted" overflow-wrap="break-word"
+            button press=retryImage appearance="none" min-height=(inlineImage ? 20 : 32) color="AccentColor" aria-label="Retry image" testId=`retry-media-${messageId}-${blockId}`
+              if inlineImage
+                image "symbol:sf/arrow.clockwise" width=12 height=12
+              else
+                text "Retry image"

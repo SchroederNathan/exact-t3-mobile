@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // Exact calls and URLSession delegate work share the main queue; completions hop back before state access.
 final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
@@ -12,6 +13,11 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     var ended = false
     var receiving = false
     var sending = false
+    var recoverable = false
+    var recoveryAvailable = false
+    var recoveryRequested = false
+    var probe: UUID?
+    var probeTimeout: DispatchWorkItem?
     var outgoing: [String] = []
     var outgoingBytes = 0
 
@@ -24,10 +30,17 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     func stop() {
       ended = true
       opened = false
+      cancelProbe()
       ticket?.cancel()
       socket?.cancel(with: .goingAway, reason: nil)
       outgoing.removeAll()
       outgoingBytes = 0
+    }
+
+    func cancelProbe() {
+      probe = nil
+      probeTimeout?.cancel()
+      probeTimeout = nil
     }
   }
 
@@ -41,11 +54,20 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
   private var events: [[String: Any]] = []
   private var bufferedBytes = 0
   private var session: URLSession?
+  private var lifecycleObservers: [NSObjectProtocol] = []
   private let maximumBytes = 8 * 1024 * 1024
 
   init(changed: @escaping () -> Void) {
     self.changed = changed
     super.init()
+    lifecycleObservers = [
+      NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        self?.becameActive()
+      },
+      NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        self?.resignedActive()
+      },
+    ]
   }
 
   func call(_ request: [String: Any]) throws -> [String: Any] {
@@ -76,7 +98,8 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
         connections.removeValue(forKey: id)?.stop()
       }
       for (id, generation, origin, token) in inputs {
-        if let existing = connections[id], existing.generation == generation, existing.origin == origin { continue }
+        if let existing = connections[id], existing.generation == generation, existing.origin == origin,
+           !existing.recoveryRequested { continue }
         connections[id]?.stop()
         let connection = Connection(id: id, generation: generation, origin: origin)
         connections[id] = connection
@@ -104,7 +127,12 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
       send(connection)
       return [:]
     case "connections.close":
-      if let connection = try? connection(request) { finish(connection, reason: "Disconnected") }
+      if let connection = try? connection(request) {
+        connection.recoveryAvailable = false
+        connection.recoveryRequested = false
+        connection.recoverable = false
+        finish(connection, reason: "Disconnected")
+      }
       return [:]
     case "connections.finish":
       let (id, receipt) = try receipt(request)
@@ -152,6 +180,8 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
   }
 
   func destroy() {
+    lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+    lifecycleObservers.removeAll()
     for receipt in receipts.values { receipt.reply?.fail("The connection session ended.") }
     receipts.removeAll()
     for connection in connections.values { connection.stop() }
@@ -160,6 +190,46 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     bufferedBytes = 0
     session?.invalidateAndCancel()
     session = nil
+  }
+
+  private func resignedActive() {
+    for connection in connections.values {
+      connection.recoveryAvailable = false
+      connection.recoveryRequested = false
+      connection.cancelProbe()
+    }
+  }
+
+  private func becameActive() {
+    for connection in connections.values {
+      connection.recoveryAvailable = true
+      if connection.ended {
+        if connection.recoverable {
+          connection.recoveryAvailable = false
+          connection.recoveryRequested = true
+          changed()
+        }
+      } else if connection.opened, let socket = connection.socket {
+        connection.cancelProbe()
+        let probe = UUID()
+        connection.probe = probe
+        let timeout = DispatchWorkItem { [weak self, weak connection] in
+          guard let self, let connection, self.current(connection), connection.probe == probe else { return }
+          self.finish(connection, reason: "The connection did not answer after resuming.", recoverable: true)
+        }
+        connection.probeTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
+        socket.sendPing { [weak self, weak connection] error in
+          DispatchQueue.main.async {
+            guard let self, let connection, self.current(connection), connection.probe == probe else { return }
+            connection.cancelProbe()
+            if let error {
+              self.finish(connection, reason: "Disconnected. Reconnect to continue.", recoverable: self.transient(error, socket: socket))
+            }
+          }
+        }
+      }
+    }
   }
 
   private func connection(_ request: [String: Any]) throws -> Connection {
@@ -186,7 +256,8 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
               let ticket = json["ticket"] as? String, !ticket.isEmpty else {
           let reason = (response as? HTTPURLResponse)?.statusCode == 401
             ? "Pairing required" : "Could not connect to the environment."
-          self.finish(connection, reason: reason)
+          let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+          self.finish(connection, reason: reason, recoverable: error.map { self.transient($0) } ?? (status == 408 || status == 429 || (500...599).contains(status)))
           return
         }
         var url = URLComponents(url: connection.origin, resolvingAgainstBaseURL: false)!
@@ -214,9 +285,31 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     if wasEmpty { changed() }
   }
 
-  private func finish(_ connection: Connection, reason: String) {
+  private func transientClose(_ code: URLSessionWebSocketTask.CloseCode) -> Bool {
+    // Foundation omits names for IANA service-restart, try-again-later, and bad-gateway codes.
+    [.goingAway, .noStatusReceived, .abnormalClosure, .internalServerError].contains(code) || [1012, 1013, 1014].contains(code.rawValue)
+  }
+
+  private func transient(_ error: Error, socket: URLSessionWebSocketTask? = nil) -> Bool {
+    if let socket {
+      if let response = socket.response as? HTTPURLResponse, (400...499).contains(response.statusCode) { return false }
+      if transientClose(socket.closeCode) { return true }
+      if socket.closeCode != .invalid { return false }
+    }
+    guard let error = error as? URLError else { return false }
+    return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+            .dnsLookupFailed, .notConnectedToInternet, .internationalRoamingOff,
+            .dataNotAllowed, .backgroundSessionWasDisconnected].contains(error.code)
+  }
+
+  private func finish(_ connection: Connection, reason: String, recoverable: Bool = false) {
     guard current(connection) else { return }
     connection.stop()
+    connection.recoverable = recoverable
+    if connection.recoveryAvailable && recoverable {
+      connection.recoveryAvailable = false
+      connection.recoveryRequested = true
+    }
     enqueue(connection, type: "close", reason: reason)
   }
 
@@ -228,10 +321,11 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
       DispatchQueue.main.async {
         guard let self, let connection, self.current(connection) else { return }
         connection.receiving = false
-        guard case let .success(message) = result else {
-          self.finish(connection, reason: "Disconnected. Reconnect to continue.")
+        if case let .failure(error) = result {
+          self.finish(connection, reason: "Disconnected. Reconnect to continue.", recoverable: self.transient(error, socket: socket))
           return
         }
+        guard case let .success(message) = result else { return }
         let text: String?
         switch message {
         case .string(let value): text = value
@@ -256,8 +350,8 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
       DispatchQueue.main.async {
         guard let self, let connection, self.current(connection) else { return }
         connection.sending = false
-        if error != nil {
-          self.finish(connection, reason: "The connection closed before the message could be sent.")
+        if let error {
+          self.finish(connection, reason: "The connection closed before the message could be sent.", recoverable: self.transient(error, socket: socket))
           return
         }
         connection.outgoing.removeFirst()
@@ -275,12 +369,12 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
     guard let connection = connections.values.first(where: { $0.socket === webSocketTask }) else { return }
-    finish(connection, reason: "Disconnected. Reconnect to continue.")
+    finish(connection, reason: "Disconnected. Reconnect to continue.", recoverable: transientClose(closeCode))
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    guard error != nil, let connection = connections.values.first(where: { $0.socket === task }) else { return }
-    finish(connection, reason: "Could not connect to the environment.")
+    guard let error, let connection = connections.values.first(where: { $0.socket === task }) else { return }
+    finish(connection, reason: "Could not connect to the environment.", recoverable: transient(error, socket: connection.socket))
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {

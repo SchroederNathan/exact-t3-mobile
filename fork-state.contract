@@ -1,0 +1,58 @@
+shape ForkState
+  threadId: string
+  rowId: string
+  routeId: string
+  targetId: string
+  error: string
+
+shape ForkReply
+  ok: bool
+  error: string
+  threadId: string
+
+members T3Code
+  state forkState = ForkState(threadId="", rowId="", routeId="", targetId="", error="")
+  mutation forked as shape ForkReply refreshes catalog then afterFork
+  derive forkBusy = pending(forked) or forkState.targetId != ""
+  derive forkTargetReady = forkState.targetId != "" and catalog.threads.filter(thread => thread.id == forkState.targetId).length > 0
+  derive forkError = forkState.threadId == activeThreadId ? failed(forked) ? "The response could not be forked." : forkState.error : ""
+
+  action forkResponse(threadId: string, rowId: string)
+    if not forkBusy and controlsAllowed and threadId == activeThreadId
+      forkState = ForkState(threadId=threadId, rowId=rowId, routeId=`${threadRoute.id}`, targetId="", error="")
+      send forked = forkThread(threadId, rowId, threadControls.accessKey)
+
+  action afterFork
+    match forked
+      case some(reply)
+        if reply.ok and forkState.threadId == activeThreadId and forkState.routeId == `${threadRoute.id}`
+          forkState = ForkState(forkState, targetId=reply.threadId)
+        else
+          forkState = ForkState(forkState, targetId="", error=reply.error)
+      case none
+        forkState = ForkState(forkState, targetId="")
+
+  task leaveForkOrigin when forkState.routeId != "" and (forkState.threadId != activeThreadId or forkState.routeId != `${threadRoute.id}`) key=`${forkState.routeId}:${threadRoute.id}:${activeThreadId}`
+    after(1, cancelForkNavigation)
+
+  action cancelForkNavigation
+    forkState = ForkState(forkState, routeId="", targetId="")
+
+  task forkTargetArrived when forkTargetReady key=forkState.targetId
+    after(1, finishForkNavigation)
+
+  task forkTargetTimeout when forkState.targetId != "" key=forkState.targetId
+    after(2000, expireForkNavigation)
+
+  action finishForkNavigation
+    if forkTargetReady and forkState.threadId == activeThreadId and forkState.routeId == `${threadRoute.id}`
+      let target = forkState.targetId
+      forkState = ForkState(forkState, targetId="", routeId="")
+      nav = replace(split ? threadNav : nav, path("thread", target))
+
+  action expireForkNavigation
+    if forkState.targetId != ""
+      if forkTargetReady
+        finishForkNavigation()
+      else
+        forkState = ForkState(forkState, targetId="", error="Fork created. Its thread data did not reach this client. Reconnect and open it from the thread list.")

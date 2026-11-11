@@ -125,6 +125,7 @@ final class AttachmentPreview: NSObject, QLPreviewControllerDataSource,
       }
       let presentation = Presentation(id: id, items: items, selectedIndex: selectedIndex, imageGallery: imageGallery, reply: reply)
       let controller = presentation.controller
+      controller.modalPresentationStyle = .overFullScreen
       active = presentation
       controller.dataSource = self
       controller.delegate = self

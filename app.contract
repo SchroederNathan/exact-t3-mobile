@@ -1,7 +1,12 @@
-use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments from "./attachments.contract"
-use Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage from "./markdown.contract"
+use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAttempt, matchingToolPanels, toolCopyText from "./tool-row.contract"
+use MediaBatch, MediaImage from "./media-image.contract"
+use TurnReview, TurnReviewContent from "./turn-review.contract"
+use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail from "./attachments.contract"
+use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette from "./markdown.contract"
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
+use ThreadScrollPosition from "./thread-scroll.contract"
+use ToolGroup from "./tool-group.contract"
 
 font "DM Sans"
   400 = "assets/fonts/DMSans_400Regular.ttf"
@@ -18,6 +23,7 @@ routes nav
     thread "/threads/:id"
       inspector "/threads/:id/inspect/:kind"
       linkedFile "/threads/:id/file/:file/:line/:column"
+      turnReview "/threads/:id/review/:turn"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
   tab pullRequests "/pulls"
@@ -72,6 +78,11 @@ shape SheetSettings
   saveLabel: string
   error: string
 
+shape ComposerModel
+  provider: string
+  label: string
+  summary: string
+
 shape NavigationChange
   before: Router
   after: Router
@@ -94,15 +105,23 @@ shape Environment
   machineSymbol: string
 
 shape ToolSummary
+  id: string
   category: string
   status: string
   title: string
+  displayTitle: string
+  live: bool
   symbol: string
   revision: string
   exitLabel: string
+  groupCount: number
+  grouped: ToolChild[]
+  groupedIds: string[]
 
 shape FeedRow
   id: string
+  foldId: string
+  changes: option<TurnChanges>
   message: option<Message>
   activity: option<ToolSummary>
 
@@ -110,25 +129,6 @@ shape ToolRequest
   rowId: string
   revision: string
   retry: number
-
-shape ToolExpansion
-  threadId: string
-  rowId: string
-  attempt: number
-
-shape ToolPanel
-  rowId: string
-  revision: string
-  retry: number
-  state: string
-  input: string
-  output: string
-  truncated: bool
-  error: string
-
-shape ToolBatch
-  viewKey: string
-  panels: ToolPanel[]
 
 shape VisitMetadata
   ready: bool
@@ -156,6 +156,16 @@ shape ThreadHistory
   loading: bool
   error: string
 
+shape WorkingStatus
+  kind: string
+  label: string
+  symbol: string
+  indicator: string
+  action: string
+  actionLabel: string
+  actionPendingLabel: string
+  ticking: bool
+
 shape Thread
   id: string
   listed: bool
@@ -165,8 +175,10 @@ shape Thread
   project: string
   projectId: string
   model: string
+  modelRevision: string
   activityAt: number
   settled: bool
+  working: bool
   projectIcon: string
   projectInitials: string
   projectIconColor: string
@@ -218,15 +230,14 @@ shape Inspection
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
 fn threadFeed(threads: Thread[]): FeedRow[] = match first(threads) { case some(thread) => thread.rows, case none => [] }
-fn threadRows(threads: Thread[]): option<FeedRow>[] = [none].concat(threadFeed(threads).map(row => some(row)))
+fn threadRows(threads: Thread[], expanded: ToolExpansion[], threadId: string): option<FeedRow>[] = [none].concat(threadFeed(threads).filter(row => row.foldId == "" or toolAttempt(expanded, threadId, row.foldId) >= 0).map(row => some(row)))
 fn threadToolViewKey(threads: Thread[]): string = match first(threads) { case some(thread) => thread.toolViewKey, case none => "" }
-fn toolAttempt(expanded: ToolExpansion[], threadId: string, rowId: string): number = match first(expanded.filter(entry => entry.threadId == threadId and entry.rowId == rowId)) { case some(entry) => entry.attempt, case none => -1 }
 fn toolRevision(row: FeedRow): string = match row.activity { case some(tool) => tool.revision, case none => "" }
-fn wantedTools(rows: FeedRow[], expanded: ToolExpansion[], threadId: string): ToolRequest[] = rows.filter(row => toolRevision(row) != "" and toolAttempt(expanded, threadId, row.id) >= 0).map(row => ToolRequest(rowId=row.id, revision=toolRevision(row), retry=toolAttempt(expanded, threadId, row.id)))
-fn matchingToolPanels(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number): ToolPanel[] = batch.viewKey == viewKey ? batch.panels.filter(panel => panel.rowId == rowId and panel.revision == revision and panel.retry == attempt) : []
-fn toolStatusSymbol(status: string): string = status == "error" ? "symbol:sf/exclamationmark.circle" : status == "interrupted" ? "symbol:sf/stop.circle" : "symbol:sf/clock"
-fn toolCopyText(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number, title: string): string = attempt < 0 or matchingToolPanels(batch, viewKey, rowId, revision, attempt).length == 0 ? title : matchingToolPanels(batch, viewKey, rowId, revision, attempt).map(panel => [panel.input, panel.output].filter(part => part != "").join("\n\n")).join("\n\n")
+fn reasoningOnly(tool: ToolSummary): bool = tool.grouped.length > 0 and tool.category == "reasoning"
+fn wantedTools(rows: FeedRow[], expanded: ToolExpansion[], threadId: string): ToolRequest[] = rows.filter(row => (row.foldId == "" or toolAttempt(expanded, threadId, row.foldId) >= 0) and toolRevision(row) != "" and toolAttempt(expanded, threadId, row.id) >= 0).map(row => match row.activity { case some(tool) => tool.category == "run-fold" ? [] : tool.groupedIds.length > 0 ? tool.grouped.filter(child => reasoningOnly(tool) or toolAttempt(expanded, threadId, child.id) >= 0).map(child => ToolRequest(rowId=child.id, revision=child.revision, retry=toolAttempt(expanded, threadId, reasoningOnly(tool) ? row.id : child.id))) : [ToolRequest(rowId=row.id, revision=tool.revision, retry=toolAttempt(expanded, threadId, row.id))], case none => [] }).flat()
+fn toolChild(tool: ToolSummary): ToolChild = ToolChild(id=tool.id, category=tool.category, status=tool.status, title=tool.title, displayTitle=tool.displayTitle, live=tool.live, symbol=tool.symbol, revision=tool.revision, exitLabel=tool.exitLabel)
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
+fn currentThreadEnvironment(threads: Thread[]): string = match first(threads) { case some(thread) => thread.environmentId, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
@@ -242,6 +253,12 @@ fn optionValue(options: ModelOption[], id: string): string = match first(options
 component T3Code
   members "./controls-state.contract"
   members "./attachment-state.contract"
+  members "./fork-state.contract"
+  members "./media-image.contract"
+  members "./tool-row.contract"
+  members "./thread-scroll.contract"
+  members "./tool-group.contract"
+  members "./question-attachments.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -259,8 +276,14 @@ component T3Code
   state environmentUrl = ""
   state removedEnvironment = ""
   state showSettled = false
+  state showWorking = false
   state inspectorPath = ""
   state composerBottomAdjustment = 0
+  state composerFocus = false
+  state composerWide = false
+  state composerThumbnailLimit = 1
+  state reviewRetry = 0
+  resource turnReview = loadTurnReview(threadRoute.name == "turnReview" ? activeThreadId : "", threadRoute.name == "turnReview" ? threadRoute.params.turn : "0", reviewRetry) as shape TurnReview else empty()
   state visitTracker = VisitTracker(id="", openPending=false, watermark=-1, cooling=false, serial=0)
   state threadOpens: ThreadOpen[] = []
   state loadingHistoryId = ""
@@ -278,12 +301,13 @@ component T3Code
   derive modelDraftsReady = not pending(restoredModelSettings) and not failed(restoredModelSettings)
   derive modelDraftError = failed(restoredModelSettings) ? "Saved model settings could not be loaded." : failed(persistedModelSettings) ? "Model settings could not be saved." : ""
   derive draftsReady = not pending(savedDrafts) and not failed(savedDrafts)
-  derive draftError = failed(savedDrafts) ? "Saved drafts could not be loaded." : failed(savedDraft) ? "The draft could not be saved." : match savedDraft { case some(reply) => reply.error, case none => "" }
+  derive draftError = failed(savedDrafts) ? "Saved drafts could not be loaded." : failed(savedDraft) ? "The draft could not be saved." : match first(failedDraftSaves) { case some(reply) => reply.error, case none => "" }
   resource settings = loadSettings(settingsThreadId) as shape SheetSettings else empty()
+  resource composerModel = loadComposerModel(activeThreadId, catalog.modelDraftRevision, activeModelRevision) as shape ComposerModel else empty()
   mutation favoriteChanged as shape Reply refreshes settings
   mutation settingsOpened as shape Reply refreshes settings then afterSettingsOpen
-  mutation settingsUpdated as shape Reply refreshes settings then afterSettingsUpdate
-  mutation settingsClosed as shape Reply refreshes settings then afterSettingsClose
+  mutation settingsUpdated as shape Reply refreshes settings, composerModel then afterSettingsUpdate
+  mutation settingsClosed as shape Reply refreshes settings, composerModel then afterSettingsClose
   derive favoriteError = failed(favoriteChanged) ? "The favorite could not be updated." : match favoriteChanged { case some(reply) => reply.error, case none => "" }
   derive settingsUpdateError = failed(settingsUpdated) ? "The model setting could not be changed." : match settingsUpdated { case some(reply) => reply.error, case none => "" }
   derive settingsCloseError = failed(settingsClosed) ? "The model settings could not be saved." : match settingsClosed { case some(reply) => reply.error, case none => "" }
@@ -292,6 +316,13 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentRecords = loadEnvironmentRecords() as shape Environment[] else empty()
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentRecords) with time.epochAtZero as shape Catalog else empty()
+  state statusNow = 0
+  derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
+  resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
+  task tickThreadStatus when workingStatus.filter(status => status.ticking).length > 0 key=`${activeThreadId}:${statusNow}`
+    after(1000, updateStatusClock)
+  action updateStatusClock
+    statusNow = performanceNow()
   mutation regrouped as shape NavigationChange then afterRegroup
   mutation changed as shape Reply refreshes environmentRecords, catalog
   mutation sent as shape SendReply then afterSend
@@ -300,6 +331,10 @@ component T3Code
   mutation savedEnvironment as shape Reply refreshes environmentRecords, catalog then afterEnvironmentSave
   mutation removed as shape Reply refreshes environmentRecords, catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
+  mutation lifecycleChanged as shape Reply refreshes catalog
+  state lifecycleThreadId = ""
+  derive lifecycleBusy = pending(lifecycleChanged) and lifecycleThreadId == activeThreadId
+  derive lifecycleError = match lifecycleChanged { case some(reply) => lifecycleThreadId == activeThreadId ? reply.error : "", case none => "" }
   mutation visited as shape Reply queue
   mutation earlierHistory as shape Reply refreshes catalog
   derive historyError = failed(earlierHistory) ? "Earlier messages could not be loaded." : match earlierHistory { case some(reply) => reply.error, case none => "" }
@@ -316,21 +351,24 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
   derive codeRevision = match first(selectedThread(catalog, activeToolThreadId)) { case some(thread) => thread.markdownRevision, case none => 0 }
   derive blockCandidates = observedBlocks.filter(ref => ref.threadId == activeToolThreadId and ref.viewKey == toolViewKey)
-  resource tableLayouts = loadTableLayouts(activeToolThreadId, toolViewKey, codeRevision, blockCandidates) as shape TableBatch else empty()
-  resource codeHighlights = loadCodeHighlights(activeToolThreadId, toolViewKey, codeRevision, blockCandidates) as shape CodeBatch else empty()
-  resource toolPanels = loadToolPanels(activeToolThreadId, toolViewKey, toolRequests) as shape ToolBatch else empty()
+  derive reasoningBlocks = toolPanels.panels.map(panel => panel.blocks).flat()
+  resource tableLayouts = loadTableLayouts(activeToolThreadId, toolViewKey, codeRevision, blockCandidates, reasoningBlocks) as shape TableBatch else empty()
+  resource codeHighlights = loadCodeHighlights(activeToolThreadId, toolViewKey, codeRevision, blockCandidates, reasoningBlocks) as shape CodeBatch else empty()
+  resource toolPanels = loadToolPanels(activeToolThreadId, toolViewKey, toolRequests, toolImageClock) with time.epochAtZero + toolImageNow as shape ToolBatch else empty()
   derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
+  derive composerExpanded = composer != "" and (composer.includes("\n") or composerWide)
+  derive activeModelRevision = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.modelRevision, case none => "" }
   derive composerError = match sent { case some(reply) => reply.id == activeThreadId and not pending(sent) ? reply.error : "", case none => "" }
   derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend)
 
@@ -370,18 +408,63 @@ component T3Code
     loadingHistoryId = id
     send earlierHistory = loadEarlierThread(id)
 
+  action preserveThreadDisclosure(threadId: string, rowId: string)
+    if threadId == activeThreadId
+      let savedScroll = threadScroll.scope == threadScrollScope ? threadScroll : ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+      let visibleIds = threadRows(selectedThread(catalog, threadId), expandedTools, threadId).map(item => match item { case some(row) => row.id, case none => "history" })
+      let savedKey = match savedScroll.key { case some(key) => visibleIds.includes(key) ? some(key) : visibleIds.includes(`${key}:group`) ? some(`${key}:group`) : none, case none => none }
+      threadScroll = ThreadScrollPosition(savedScroll, following=false, key=savedKey)
+      threadScrollRevision = threadScrollRevision + 1
+      match savedKey
+        case some(key)
+          scrollIntoView("thread-messages", key, offset=savedScroll.offset, behavior="instant")
+        case none
+          let anchor = match first(threadFeed(selectedThread(catalog, threadId)).filter(row => row.id == rowId or (match row.activity { case some(tool) => tool.groupedIds.includes(rowId), case none => false }))) { case some(row) => row.id, case none => rowId }
+          let port = frame("thread-messages")
+          let row = frame(`thread-tool-${anchor}`)
+          if not port.unavailable and not row.unavailable and not port.provisional and not row.provisional
+            scrollIntoView("thread-messages", anchor, offset=port.y - row.y, behavior="instant")
+
+  action scrollToEnd
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+    threadScrollRevision = threadScrollRevision + 1
+    let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
+    scrollIntoView("thread-messages", lastRow, block="end")
+
   action toggleTool(threadId: string, rowId: string)
+    preserveThreadDisclosure(threadId, rowId)
+    let inheritedParents = threadFeed(selectedThread(catalog, threadId)).filter(row => row.id != rowId and (match row.activity { case some(tool) => tool.groupedIds.includes(rowId), case none => false }) and toolAttempt(expandedTools, threadId, row.id) >= 0 and expandedTools.filter(entry => entry.threadId == threadId and entry.rowId == row.id).length == 0).map(row => ToolExpansion(threadId=threadId, rowId=row.id, attempt=toolAttempt(expandedTools, threadId, row.id)))
+    let retained = expandedTools.filter(entry => entry.threadId != threadId or entry.rowId != rowId).concat(inheritedParents)
     if toolAttempt(expandedTools, threadId, rowId) >= 0
-      expandedTools = expandedTools.filter(entry => entry.threadId != threadId or entry.rowId != rowId)
+      expandedTools = rowId.endsWith(":group") ? retained.concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=-1)]) : retained
     else
       let attempt = toolAttemptSerial + 1
       toolAttemptSerial = attempt
-      expandedTools = expandedTools.concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=attempt)])
+      expandedTools = retained.concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=attempt)])
+
+  action openTurnReview(threadId: string, turnCount: number)
+    cancelForkNavigation()
+    clearForceStopDialogs()
+    nav = push(nav, path("turnReview", threadId, `${turnCount}`))
+
+  action retryTurnReview
+    reviewRetry = reviewRetry + 1
 
   action retryTool(threadId: string, rowId: string)
     let attempt = toolAttemptSerial + 1
     toolAttemptSerial = attempt
     expandedTools = expandedTools.filter(entry => entry.threadId != threadId or entry.rowId != rowId).concat([ToolExpansion(threadId=threadId, rowId=rowId, attempt=attempt)])
+
+  action workingIslandAction(value: string)
+    if value == "scroll"
+      scrollToEnd()
+    else if value == "force-stop"
+      confirmForceStop()
+    else if value == "reconnect"
+      reconnectEnvironment(currentThreadEnvironment(selectedThread(catalog, activeThreadId)))
+    else if value == floatingStatus.action and controlsAllowed and not pending(lifecycleChanged)
+      lifecycleThreadId = activeThreadId
+      send lifecycleChanged = updateThreadLifecycle(activeThreadId, threadControls.accessKey, value, time.epochAtZero + performanceNow())
 
   task defaultSettings when split and current.name == "settingsDetail" key=current.id
     after(1, openEnvironments)
@@ -403,6 +486,8 @@ component T3Code
     wrappedCodes = exists ? retained.filter(ref => ref.threadId != threadId or ref.messageId != messageId or ref.blockId != blockId) : retained.concat([BlockRef(threadId=threadId, viewKey=viewKey, messageId=messageId, blockId=blockId)]).slice(-256)
 
   action followMarkdownLink(threadId: string, href: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
     send markdownLink = resolveMarkdownLink(threadId, href, `${threadRoute.id}`)
 
   action afterMarkdownLink
@@ -430,6 +515,8 @@ component T3Code
     after(1, loadInspector)
 
   action openModelSettings
+    cancelForkNavigation()
+    clearForceStopDialogs()
     let id = activeThreadId
     favoriteChanged = none
     settingsUpdated = none
@@ -497,6 +584,8 @@ component T3Code
         nav = nav
 
   action selectTab(name: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
     nav = select(nav, split and name == "threads" ? "threadDetail" : split and name == "settings" ? "settingsDetail" : name)
 
   action search(value: string)
@@ -578,22 +667,32 @@ component T3Code
       code = ""
 
   action follow(url: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
     let base = split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav
     let followed = go(base, url)
     nav = followed.next == base.next ? followed : open(base, url)
 
   action openThread(url: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
     let base = split ? threadNav : nav
     let detail = activeThreadId != "" ? go(base, path("thread", activeThreadId)) : base
     nav = split and depth(detail) > 1 ? replace(detail, url) : go(detail, url)
 
   action compose
+    cancelForkNavigation()
+    clearForceStopDialogs()
     nav = split ? push(select(threadNav, "threadDetail"), "/threads/new") : push(nav, "/threads/new")
 
   action workspaceAction(value: string)
     if value.startsWith("tab:")
+      cancelForkNavigation()
+      clearForceStopDialogs()
       nav = select(nav, value.replaceAll("tab:", ""))
     else if value == "compose"
+      cancelForkNavigation()
+      clearForceStopDialogs()
       nav = push(nav, "/threads/new")
 
   action createProjectThread(id: string)
@@ -610,6 +709,9 @@ component T3Code
   action toggleSettled
     showSettled = not showSettled
 
+  action toggleWorking
+    showWorking = not showWorking
+
   action toggleEnvironment(id: string, enabled: bool)
     send changed = command("toggle", id, enabled ? "true" : "false")
 
@@ -624,7 +726,31 @@ component T3Code
   action composerMetrics(value: string)
     composerBottomAdjustment = match parseNumber(value) { case some(inset) => inset, case none => 0 }
 
+  action composerFocused
+    composerFocus = true
+
+  action composerBlurred
+    composerFocus = false
+
+  action focusComposer
+    focus("composer")
+
+  task composerFit when activeThreadId != "" key=`${threadRoute.id}:${composer}:${composerAttachments.length}:${composerFocus}:${split}:${sidebarHidden}`
+    after(1, fitComposer, wait=frame)
+
+  action fitComposer
+    let surface = frame("composer-surface")
+    let line = frame("composer-mirror")
+    if not surface.unavailable and not line.unavailable and not surface.provisional and not line.provisional
+      let limit = surface.width >= 500 ? 3 : 1
+      let shown = composerFocus ? 0 : min(composerAttachments.length, limit)
+      let thumbnails = shown == 0 ? 0 : 4 + shown * 30 + (shown - 1) * 4 + (composerAttachments.length > limit ? 34 : 0)
+      composerThumbnailLimit = limit
+      composerWide = line.width > surface.width - 146 - thumbnails
+
   action inspect(kind: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
     inspectorPath = ""
     nav = push(split ? threadNav : nav, path("inspector", activeThreadId, kind))
 
@@ -635,7 +761,7 @@ component T3Code
   action sendMessage
     if canSend and activeThreadId != ""
       attachmentError = ""
-      send preparedSend = prepareSend(activeDraft)
+      send preparedSend = prepareSend(activeDraft, composerSendScope)
 
   action afterSend
     match sent
@@ -649,7 +775,7 @@ component T3Code
               let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
               persistDraft(updated)
               if reply.state != "unknown"
-                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0).map(path => CleanupAttachment(threadId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
           case none
             draftEdits = draftEdits
       case none
@@ -698,7 +824,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), showSettled=showSettled, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -802,7 +928,7 @@ component T3Code
                       footer
                         text (match created { case some(reply) => reply.error, case none => "" }) color="danger"
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll=`thread-${e.params.id}` data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll="thread-messages" data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     if split and sidebarHidden
                       button press=toggleSidebar buttonStyle="glass" aria-label="Show sidebar" testId="thread-sidebar-toggle"
@@ -821,127 +947,144 @@ component T3Code
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     button press=inspect("files") aria-label="Open files" testId="thread-files"
                       image "symbol:sf/folder"
-                  list id=`thread-${e.params.id}` appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=true flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=12
-                    for item in threadRows(selectedThread(catalog, e.params.id)) key=(match item { case some(row) => row.id, case none => "history" })
-                      column width="100%" box-sizing="border-box"
-                        match item
-                          case none
-                            for thread in selectedThread(catalog, e.params.id) key=thread.id
-                              column align-items="center" gap=6 padding-bottom=12
-                                if thread.history.hasMore
-                                  button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" color="muted" padding="8px 12px" testId="load-earlier"
-                                    text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier messages…" : "Load earlier messages") font-size=14
-                                if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
-                                  text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
-                          case some(row)
-                            match row.message
-                              case some(message)
-                                MarkdownMessage(message=message, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage, attachments=attachmentPreviews, seenAttachment=observeAttachment, openAttachment=openAttachment, retryAttachment=retryAttachmentPreview, thumbnailFailures=thumbnailFailures, imageFailed=attachmentImageFailed, imageLoaded=attachmentImageLoaded)
+                  column flex=1 min-height=0 min-width=0
+                    column flex=1 min-height=0 min-width=0 position="relative"
+                      list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
+                        for item in threadRows(selectedThread(catalog, e.params.id), expandedTools, e.params.id) key=(match item { case some(row) => row.id, case none => "history" })
+                          column width="100%" box-sizing="border-box"
+                            match item
                               case none
-                                match row.activity
-                                  case some(tool)
-                                    column padding-bottom=2 testId=`tool-${row.id}`
-                                      button press=toggleTool(e.params.id, row.id) contextmenu=copyMessage(toolCopyText(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id), tool.title)) appearance="none" display="flex" align-items="center" gap=6 min-height=32 width="100%" box-sizing="border-box" padding="0 2px" text-align="left" color="muted" aria-label=`${tool.title}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
-                                        row width=24 height=24 align-items="center" justify-content="center" flex-shrink=0
-                                          image `symbol:sf/${tool.symbol}` width=14 height=14
-                                        text tool.title flex=1 min-width=0 font-size=14 line-height="19px" line-clamp=1 text-overflow="ellipsis" testId=`tool-title-${row.id}`
-                                        if tool.status != "completed"
-                                          image toolStatusSymbol(tool.status) width=12 height=12 color=(tool.status == "error" ? "danger" : "muted")
-                                        image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11
-                                      if toolAttempt(expandedTools, e.params.id, row.id) >= 0
-                                        column padding-top=2 padding-bottom=4 gap=6 min-width=0
-                                          if matchingToolPanels(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id)).length == 0
-                                            if failed(toolPanels)
-                                              text "Could not load this activity." color="danger" font-size=12 testId=`tool-error-${row.id}`
-                                              button press=retryTool(e.params.id, row.id) aria-label="Retry activity" testId=`tool-retry-${row.id}`
-                                                text "Retry"
-                                            else
-                                              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${row.id}`
-                                          for panel in matchingToolPanels(toolPanels, threadToolViewKey(selectedThread(catalog, e.params.id)), row.id, tool.revision, toolAttempt(expandedTools, e.params.id, row.id)) key=panel.rowId
-                                            if panel.state == "loading"
-                                              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${row.id}`
-                                            else if panel.state == "error" or panel.state == "missing"
-                                              text panel.error color="danger" font-size=12 overflow-wrap="break-word" testId=`tool-error-${row.id}`
-                                              if panel.state == "error"
-                                                button press=retryTool(e.params.id, row.id) aria-label="Retry activity" testId=`tool-retry-${row.id}`
-                                                  text "Retry"
-                                            else
-                                              if panel.truncated
-                                                text "Earlier or large output not shown" color="muted" font-size=11 testId=`tool-truncated-${row.id}`
-                                              if tool.category == "command"
-                                                list appearance="none" virtualized=true max-height=210 min-height=0 scroll-start="end" scrollFollowEnd=true
-                                                  for detail in [panel] key=detail.rowId
-                                                    ToolDetail(panel=detail, tool=tool, rowId=row.id)
-                                              else
-                                                scroll max-height=210 min-height=0
-                                                  ToolDetail(panel=panel, tool=tool, rowId=row.id)
+                                for thread in selectedThread(catalog, e.params.id) key=thread.id
+                                  column align-items="center" gap=6 padding-bottom=12
+                                    if thread.history.hasMore
+                                      button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" display="flex" align-items="center" justify-content="center" gap=7 min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground" aria-label="Load earlier activity" testId="load-earlier"
+                                        if thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))
+                                          progress width=18 height=18
+                                        else
+                                          image "symbol:sf/chevron.up" width=18 height=18
+                                        text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier activity…" : "Load earlier activity") font-size=16 font-weight=500
+                                    if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
+                                      text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
+                              case some(row)
+                                match row.message
+                                  case some(message)
+                                    MarkdownMessage(message=message, fork=forkResponse, forkBusy=(forkBusy and forkState.threadId == e.params.id and forkState.rowId == row.id), forkDisabled=(not controlsAllowed or forkBusy), changes=row.changes, openChanges=openTurnReview, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage, attachments=attachmentPreviews, seenAttachment=observeAttachment, openAttachment=openAttachment, retryAttachment=retryAttachmentPreview, thumbnailFailures=thumbnailFailures, imageFailed=attachmentImageFailed, imageLoaded=attachmentImageLoaded, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
                                   case none
-                                    view
-                  for thread in selectedThread(catalog, e.params.id) key=thread.id
-                    if thread.lastError != ""
-                      row align-items="flex-start" gap=8 padding="0 16px 6px 20px"
-                        image "symbol:sf/exclamationmark.circle" width=16 height=16 margin-top=1.5 color="danger"
-                        column gap=2 flex=1 min-width=0
-                          row align-items="center" gap=8
-                            text "Provider error" flex=1 color="rose" font-size=14 line-height="19px" font-weight=500
-                            text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
-                          text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
-                  if draftError != "" or modelDraftError != ""
-                    text (draftError != "" ? draftError : modelDraftError) color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="draft-error"
-                  if markdownLinkError != ""
-                    text markdownLinkError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="markdown-link-error"
-                  if composerError != ""
-                    text composerError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="send-error"
-                  if e.params.id == activeThreadId
-                    if threadControls.requests.length > 0
-                      column max-height="80%" width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 padding="4px 12px" padding-bottom=(hasQuestion ? "calc(6px + env(safe-area-inset-bottom))" : "4px") gap=8 testId="requests-panel"
-                        for request in shownRequests key=request.key
-                          RequestCard(request=request, threadId=e.params.id, allowed=controlsAllowed, busy=sendingControls.includes(request.key), collapsed=collapsedRequests.includes(request.key), drafts=questionDrafts, respond=respondControl, toggle=toggleRequest, choose=chooseAnswer, edit=editAnswer, followLink=followMarkdownLink, accessKey=threadControls.accessKey, runId=threadControls.stop.runId, stopping=(stopBusy or threadControls.stop.state == "unresponsive"), explanationOpen=explainedApprovals.includes(request.key), explain=explainApproval, stop=stopTurn)
-                    if threadControls.requests.length > 0 or threadControls.stop.runId != ""
-                      if controlsAccessError != ""
-                        row padding="4px 16px" gap=8 align-items="center"
-                          text controlsAccessError flex=1 min-width=0 color="danger" font-size=13 line-height="18px" testId="controls-access-error"
-                          button press=retryControlAccess disabled=pending(controlAccess) testId="controls-access-retry"
-                            text "Retry"
-                      else if not controlsAllowed
-                        text (threadControls.ready ? "Checking permission…" : "Reconnecting…") padding="4px 16px" color="muted" font-size=13 testId="controls-access-loading"
-                    if controlSendError != ""
-                      text controlSendError padding="4px 16px" color="danger" font-size=13 line-height="18px" testId="controls-error"
-                    if stopSendError != ""
-                      text stopSendError padding="4px 16px" color="danger" font-size=13 line-height="18px" testId="stop-error"
-                    if stopBusy or threadControls.stop.state == "unresponsive"
-                      text (threadControls.stop.state == "unresponsive" ? "The turn is not responding to Stop. Check the provider on your computer." : "Stopping…") padding="4px 16px" color="muted" font-size=13 line-height="18px" testId="stop-state"
+                                    match row.activity
+                                      case some(tool)
+                                        column id=`thread-tool-${row.id}` padding-bottom=3.5 testId=`tool-${row.id}`
+                                          if tool.category == "run-fold"
+                                            row align-items="center" padding="0 7px" border-bottom="1px solid edge"
+                                              button press=toggleTool(e.params.id, row.id) appearance="none" display="flex" align-items="center" gap=7 min-width=0 min-height=38.5 flex=1 padding=0 color="muted" aria-label=`${tool.displayTitle}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
+                                                text tool.displayTitle font-size=14 font-weight=500 line-height="19px" line-clamp=1 text-overflow="ellipsis" font-variant-numeric="tabular-nums"
+                                                image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=15 height=15
+                                              match row.changes
+                                                case some(changes)
+                                                  TurnChangeStat(changes=changes, threadId=e.params.id, open=openTurnReview)
+                                                case none
+                                                  view
+                                          else
+                                            ToolRow(tool=toolChild(tool), parentRowId="", rowId=row.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=(tool.groupedIds.length > 0), failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                          if tool.groupedIds.length > 0 and toolAttempt(expandedTools, e.params.id, row.id) >= 0
+                                            if reasoningOnly(tool)
+                                              scroll max-height=336 min-height=0 min-width=0 overflow-x="hidden" margin-left=24.5 padding-top=3.5 padding-bottom=3.5 testId=`tool-group-${row.id}`
+                                                column gap=0
+                                                  for child in tool.grouped key=child.id
+                                                    ToolRow(tool=child, parentRowId=row.id, rowId=child.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=false, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                            else
+                                              ToolGroup(rows=tool.grouped, groupId=row.id, threadId=e.params.id, positions=toolGroupPositions, remember=rememberToolGroup, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                      case none
+                                        view
+                      workspace-thread-scroll target-test-id="thread-messages" observation-key=`${e.params.id}:${e.id}:${threadScrollRevision}` message=threadScrollObserved position="absolute" left=0 top=0 height=0 width=0
+                      if e.params.id == activeThreadId
+                        workspace-composer-metrics message=composerMetrics position="absolute" left=0 top=0 height=0 width=0 pointer-events="none"
+                        text composer id="composer-mirror" aria-hidden=true position="absolute" left=0 top=0 opacity=0 pointer-events="none" white-space="pre" font-family="DM Sans" font-size=16 line-height="23px"
+                      if e.params.id == activeThreadId and selectedThread(catalog, e.params.id).length > 0 and (threadAway or workingStatus.length > 0)
+                        workspace-working-island status-label=floatingStatus.label status-kind=floatingStatus.kind status-symbol=floatingStatus.symbol indicator=floatingStatus.indicator status-action=islandAction action-label=islandActionLabel action-pending=(islandActionBusy ? "true" : "false") action-disabled=(islandActionDisabled ? "true" : "false") action-accessibility-label=(forceStopVisible ? "Force stop the agent" : floatingStatus.actionLabel) reconnect=(floatingStatus.action == "reconnect" ? "true" : "false") show-arrow=(threadAway ? "true" : "false") message=workingIslandAction position="absolute" left=18 right=(split ? "calc(env(safe-area-inset-right) + 18px)" : 18) bottom=2 min-height=38.5 z-index=3
+                    for thread in selectedThread(catalog, e.params.id) key=thread.id
+                      if thread.lastError != ""
+                        row align-items="flex-start" gap=8 padding="0 16px 6px 20px"
+                          image "symbol:sf/exclamationmark.circle" width=16 height=16 margin-top=1.5 color="danger"
+                          column gap=2 flex=1 min-width=0
+                            row align-items="center" gap=8
+                              text "Provider error" flex=1 color="rose" font-size=14 line-height="19px" font-weight=500
+                              text thread.lastErrorTime color="foreground" font-size=14 line-height="19px"
+                            text thread.lastError color="foreground" font-size=14 line-height="19px" user-select="text"
+                    if draftError != "" or modelDraftError != ""
+                      text (draftError != "" ? draftError : modelDraftError) color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="draft-error"
+                    if markdownLinkError != ""
+                      text markdownLinkError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="markdown-link-error"
+                    if forkError != ""
+                      text forkError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="fork-error"
+                    if lifecycleError != ""
+                      text lifecycleError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="lifecycle-error"
+                    if forceStopFailed
+                      text "Could not force stop the agent." color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="force-stop-error"
+                    if composerError != ""
+                      text composerError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="send-error"
+                    if e.params.id == activeThreadId
+                      if threadControls.requests.length > 0
+                        column max-height="80%" width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 padding="4px 12px" padding-bottom=(hasQuestion ? "calc(6px + env(safe-area-inset-bottom))" : "4px") gap=8 testId="requests-panel"
+                          for request in shownRequests key=request.key
+                            RequestCard(request=request, threadId=e.params.id, allowed=controlsAllowed, busy=sendingControls.includes(request.key), collapsed=collapsedRequests.includes(request.key), drafts=questionDrafts, attachments=questionAttachmentTargets, uploads=uploadProgresses, verified=verifiedAttachments, attachmentAccessKey=attachmentAccess.accessKey, canAttach=(attachmentAccess.allowed and attachmentAccess.uploads), preparingAttachments=pending(stagedAttachments), pickAttachment=pickQuestionAttachments, removeAttachment=removeDraftAttachment, retryAttachment=retryDraftAttachment, previewAttachment=previewAttachmentDraft, respond=respondControl, toggle=toggleRequest, choose=chooseAnswer, edit=editAnswer, followLink=followMarkdownLink, accessKey=threadControls.accessKey, runId=threadControls.stop.runId, stopping=(stopBusy or threadControls.stop.state == "unresponsive"), explanationOpen=explainedApprovals.includes(request.key), explain=explainApproval, stop=stopTurn)
+                      if threadControls.requests.length > 0 or threadControls.stop.runId != "" or floatingStatus.kind == "lifecycle"
+                        if controlsAccessError != ""
+                          row padding="4px 16px" gap=8 align-items="center"
+                            text controlsAccessError flex=1 min-width=0 color="danger" font-size=13 line-height="18px" testId="controls-access-error"
+                            button press=retryControlAccess disabled=pending(controlAccess) testId="controls-access-retry"
+                              text "Retry"
+                        else if not controlsAllowed
+                          text (threadControls.ready ? "Checking permission…" : "Reconnecting…") padding="4px 16px" color="muted" font-size=13 testId="controls-access-loading"
+                      if controlSendError != ""
+                        text controlSendError padding="4px 16px" color="danger" font-size=13 line-height="18px" testId="controls-error"
+                      if stopSendError != ""
+                        text stopSendError padding="4px 16px" color="danger" font-size=13 line-height="18px" testId="stop-error"
+                    if not hasQuestion
+                      if attachmentError != "" or attachmentStatus != ""
+                        text (attachmentError != "" ? attachmentError : attachmentStatus) padding="4px 16px" font-size=13 color=(attachmentError != "" or composerAttachments.filter(item => item.state == "failed").length > 0 ? "danger" : "muted") testId="attachment-status"
+                      if draftError != ""
+                        button press=retryDraftSave appearance="none" color="danger" min-height=32 testId="retry-draft-save"
+                          text "Retry saving draft" font-size=13
+                      if pendingDelivery
+                        button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
+                          text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
-                    if composerAttachments.length > 0
-                      ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
-                    if attachmentError != "" or attachmentStatus != ""
-                      text (attachmentError != "" ? attachmentError : attachmentStatus) padding="4px 16px" font-size=13 color=(attachmentError != "" or composerAttachments.filter(item => item.state == "failed").length > 0 ? "danger" : "muted") testId="attachment-status"
-                    if draftError != ""
-                      button press=retryDraftSave appearance="none" color="danger" min-height=32 testId="retry-draft-save"
-                        text "Retry saving draft" font-size=13
-                    if pendingDelivery
-                      button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
-                        text (pending(sent) ? "Sending…" : "Retry message delivery")
-                    row align-items="flex-end" gap=8 padding="6px 12px 7px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 z-index=2 flex-wrap="wrap" min-width=0 box-sizing="border-box"
-                      row flex=1 min-width=0 width="100%" box-sizing="border-box" align-items="center" gap=0 padding="2px 0" min-height=48 border-radius=27 position="relative" z-index=0 box-shadow="0 6px 28px #00000026"
-                        workspace-composer-glass message=composerMetrics position="absolute" inset=0 z-index=-1 pointer-events="none"
-                        button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" display="flex" align-items="center" justify-content="center" aria-label="Add attachment" width=44 height=44 testId="add-attachment"
-                          image "symbol:sf/plus" width=20 height=20
-                        textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" max-height=104 height=36 min-height=36 box-sizing="border-box" flex=1 min-width=0 padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder="Ask anything" aria-label="Message" testId="composer"
-                          ::placeholder
-                            color="muted"
-                        button press=openModelSettings disabled=not modelDraftsReady appearance="none" aria-label="Model and reasoning settings" testId="model-settings" height=44 padding="0 7px"
-                          row align-items="center" gap=7
-                            ProviderIcon(provider=(match first(selectedThread(catalog, e.params.id)) { case some(thread) => thread.provider, case none => "" }), size=16)
-                            image "symbol:sf/chevron.down" font-size=10
-                        if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
-                          button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
-                            row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
-                              image "symbol:sf/stop.fill" font-size=12
-                        else
-                          button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label=(threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
-                            row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
-                              image "symbol:sf/arrow.up" font-size=16 font-weight=600
+                    row position="relative" padding="6px 12px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 min-width=0 box-sizing="border-box" testId="composer-dock"
+                      view aria-hidden=true position="absolute" inset=0 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-0) 0%, var(--composer-wash-60) 78%, var(--composer-wash-68) 100%)"
+                      view aria-hidden=true position="absolute" left=0 right=0 top="100%" height=120 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-68) 0px, var(--composer-wash-90) 34px, var(--composer-wash-90) 120px)"
+                      column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
+                        if composerFocus and composerAttachments.length > 0
+                          ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                        row flex-wrap="wrap" align-items="flex-end" min-width=0
+                          button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
+                            image "symbol:sf/plus" width=20 height=20
+                          textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=approvalComposerPlaceholder aria-label="Message" testId="composer"
+                            ::placeholder
+                              color="muted"
+                          if not composerFocus and composerAttachments.length > 0
+                            row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
+                              for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
+                                ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
+                              if composerAttachments.length > composerThumbnailLimit
+                                button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
+                                  text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
+                          row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
+                            button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
+                              row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
+                                ProviderIcon(provider=composerModel.provider, size=16)
+                              if composerExpanded
+                                text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
+                                if composerModel.summary != ""
+                                  text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
+                              image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
+                            if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
+                              button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
+                                row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
+                                  image "symbol:sf/stop.fill" font-size=12
+                            else
+                              button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
+                                row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
+                                  image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
               if e.name == "threadSettings"
                 column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="models-list" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -1048,6 +1191,12 @@ component T3Code
                             text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
                             text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
                             text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+              if e.name == "turnReview"
+                column navigationKey=`${e.id}` navigationScroll="turn-review-lines" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Review" role="heading" aria-level=2
+                    text `Turn ${e.params.turn}`
+                  TurnReviewContent(review=turnReview, loading=(pending(turnReview) or turnReview.threadId != e.params.id or `${turnReview.turnCount}` != e.params.turn), failure=failed(turnReview), retry=retryTurnReview)
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1119,6 +1268,16 @@ component T3Code
           for project in catalog.projects key=project.id
             button press=filterProject(project.id) role="menuitemradio" aria-checked=(selectedProject == project.id) popovertarget="project-filter-menu" popovertargetaction="hide" testId=`project-${project.id}`
               text project.title
+      dialog id="force-stop-confirmation" role="alertdialog" aria-label="Force stop the agent?"
+        text "It has not answered Stop. Force stop ends the turn and kills the agent's processes, unless other working threads share them."
+        button commandfor="force-stop-confirmation" command="close" testId="force-stop-cancel"
+          text "Cancel"
+        button press=forceStopTurn destructive=true commandfor="force-stop-confirmation" command="close" disabled=pending(forceStopped) testId="force-stop-confirm"
+          text "Force stop"
+      dialog id="force-stop-result" role="alertdialog" aria-label=forceStopTitle
+        text forceStopMessage
+        button commandfor="force-stop-result" command="close" testId="force-stop-ok"
+          text "OK"
       dialog id="remove-environment" role="alertdialog" aria-label=`Remove ${environmentLabel(catalog, removedEnvironment)}?`
         text "This environment will be removed from this device. Your projects and threads will stay on the server."
         button commandfor="remove-environment" command="close" testId="environment-remove-cancel"
@@ -1153,22 +1312,6 @@ component T3Code
           image "symbol:settings"
           text "Setting"
 
-component ToolDetail
-  props
-    panel: ToolPanel
-    tool: ToolSummary
-    rowId: string
-  view
-    column gap=5.25 padding-right=8
-      if panel.input != ""
-        text panel.input font-family="Menlo" font-size=12 line-height="18px" color="foreground" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-input-${rowId}`
-      if panel.output != ""
-        text panel.output font-family="Menlo" font-size=12 line-height="18px" color="muted" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-output-${rowId}`
-      else
-        text (tool.status == "running" or tool.status == "pending" ? "No output yet." : "No output.") font-family="Menlo" font-size=12 line-height="18px" color="muted" testId=`tool-empty-${rowId}`
-      if tool.exitLabel != ""
-        text tool.exitLabel font-family="Menlo" font-size=12 line-height="18px" color="danger" testId=`tool-exit-${rowId}`
-
 component ThreadList
   props
     catalog: Catalog
@@ -1177,15 +1320,22 @@ component ThreadList
     selectedProject: string
     selectedProjectLabel: string
     nativeMenus: bool
+    query: string
     showSettled: bool
+    showWorking: bool
     sidebar: bool
     selectedId: string
     toggleSettled: action
+    toggleWorking: action
     openThread: action
     filterEnvironment: action
     filterProject: action
     resetFilters: action
-  derive displayedThreads = visibleThreads.filter(thread => not thread.settled or showSettled)
+  derive searching = query.trim() != ""
+  derive activeThreads = visibleThreads.filter(thread => not thread.settled and (searching or not thread.working))
+  derive workingThreads = visibleThreads.filter(thread => not searching and not thread.settled and thread.working)
+  derive displayedWorking = workingThreads.filter(thread => showWorking or selectedId == thread.id)
+  derive settledThreads = visibleThreads.filter(thread => thread.settled)
   derive availableProjects = catalog.projects.filter(project => selectedEnvironment == "" or project.environmentId == selectedEnvironment)
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
@@ -1210,40 +1360,58 @@ component ThreadList
           column align-items="center" padding="28px 21px" gap=7
             text "No threads yet" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
             text "Start a new thread to begin coding." font-size=16 line-height="24px" color="muted" text-align="center"
-        for thread, index in displayedThreads key=thread.id
-          button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
-            column flex=1 min-width=0 gap=3.5 padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
-              row align-items="flex-start" gap=7 color=(sidebar ? "sidebar-foreground" : "foreground")
-                if thread.projectIcon != ""
-                  image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
-                else
-                  text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
-                text thread.title font-size=16 line-height="23px" font-weight=500 flex=1 min-width=0 line-clamp=2
-                if thread.status != ""
-                  row align-items="center" gap=3.5 min-height=23 color=(sidebar and selectedId == thread.id ? "foreground" : threadStatusColor(thread.status))
-                    image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600
-                    text thread.status font-size=13 line-height="17px" font-weight=700
-                else
-                  text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
-              row align-items="center" gap=7 min-height=14 padding-left=27
-                if thread.lastError != ""
-                  text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
-                else if catalog.environments.length > 1
-                  image "symbol:sf/laptopcomputer" font-size=12 color="muted"
-                  text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
-                else
-                  view flex=1
-                row opacity=0.6
-                  ProviderIcon(provider=thread.provider, size=14)
-          if index < displayedThreads.length - 1
-            view height=1 background-color="edge" opacity=0.7 margin-left=16 display=(sidebar ? "none" : "flex")
-      if visibleThreads.filter(thread => thread.settled).length > 0
+      for threads, groupIndex in [activeThreads, displayedWorking] key=groupIndex
         section
-          button press=toggleSettled appearance="none" padding="14px 17.5px" width="100%" box-sizing="border-box" aria-label="Settled threads"
-            row align-items="center" gap=10 width="100%"
-              text `Settled (${visibleThreads.filter(thread => thread.settled).length})` font-size=13 color="muted"
-              view flex=1 height=1 background-color="edge"
-              image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=11 color="muted"
+          if groupIndex == 1 and workingThreads.length > 0
+            button press=toggleWorking appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Working threads" testId="working-threads"
+              row align-items="center" gap=8.75 width="100%"
+                text (showWorking ? "Working" : `Working (${workingThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
+                view flex=1 height=1 background-color="edge"
+                image (showWorking ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
+          for thread, index in threads key=thread.id
+            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+              column flex=1 min-width=0 gap=3.5 opacity=(thread.working and selectedId != thread.id ? 0.55 : 1) padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
+                row align-items="flex-start" gap=7 color=(sidebar ? "sidebar-foreground" : "foreground")
+                  if thread.projectIcon != ""
+                    image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
+                  else
+                    text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
+                  text thread.title font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
+                  if thread.status != ""
+                    row align-items="center" gap=3.5 min-height=23 color=(sidebar and selectedId == thread.id ? "foreground" : threadStatusColor(thread.status))
+                      image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600
+                      text thread.status font-size=13 line-height="17px" font-weight=700
+                  else
+                    text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                row align-items="center" gap=7 min-height=14 padding-left=28
+                  if thread.lastError != ""
+                    text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
+                  else if catalog.environments.length > 1
+                    image "symbol:sf/laptopcomputer" font-size=12 color="muted"
+                    text environmentLabel(catalog, thread.environmentId) font-size=13 line-height="17px" color="muted" flex=1 min-width=0 line-clamp=1
+                  else
+                    view flex=1
+                  row opacity=0.6
+                    ProviderIcon(provider=thread.provider, size=14)
+            if index < threads.length - 1
+              view height=1 background-color="edge" opacity=0.7 margin-left=17.5 display=(sidebar ? "none" : "flex")
+      if settledThreads.length > 0
+        section
+          if not searching
+            button press=toggleSettled appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Settled threads"
+              row align-items="center" gap=8.75 width="100%"
+                text (showSettled ? "Settled" : `Settled (${settledThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
+                view flex=1 height=1 background-color="edge"
+                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
+          for thread in settledThreads.filter(thread => searching or showSettled or selectedId == thread.id) key=thread.id
+            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+              row flex=1 min-width=0 min-height=44 box-sizing="border-box" align-items="center" gap=7 padding=(sidebar ? "7px 10.5px" : "7px 17.5px")
+                if thread.projectIcon != ""
+                  image thread.projectIcon width=20 height=20 border-radius=4 opacity=0.4
+                else
+                  text thread.projectInitials width=20 height=20 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center" opacity=0.4
+                text thread.title font-size=16 line-height="23px" font-weight=400 flex=1 min-width=0 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
+                text thread.updatedAt font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
 
 component EnvironmentList
   props

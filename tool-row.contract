@@ -1,0 +1,252 @@
+use MarkdownBlock, MarkdownBlockView, markdownPalette, BlockRef, CodeBatch, TableBatch from "./markdown.contract"
+use MediaBatch, MediaImage from "./media-image.contract"
+
+shape ToolChild
+  id: string
+  category: string
+  status: string
+  title: string
+  displayTitle: string
+  live: bool
+  symbol: string
+  revision: string
+  exitLabel: string
+
+shape ToolExpansion
+  threadId: string
+  rowId: string
+  attempt: number
+
+shape ToolImage
+  url: string
+  alt: string
+  mimeType: string
+  expiresAt: number
+  error: string
+
+shape ToolPanel
+  rowId: string
+  revision: string
+  retry: number
+  state: string
+  input: string
+  output: string
+  images: ToolImage[]
+  blocks: MarkdownBlock[]
+  truncated: bool
+  error: string
+
+shape ToolBatch
+  viewKey: string
+  panels: ToolPanel[]
+
+members T3Code
+  state toolImageClock = 0
+  state toolImageNow = 0
+  derive expiringToolImages = toolPanels.panels.map(panel => panel.images).flat().filter(image => image.url != "" and image.expiresAt > 0 and image.expiresAt < 9007199254740991)
+
+  task expireToolImages when expiringToolImages.length > 0 key=`${toolViewKey}:${expiringToolImages.map(image => image.expiresAt).join(",")}:${toolImageClock}`
+    after(60000, refreshToolImages)
+
+  action refreshToolImages
+    toolImageClock = toolImageClock + 1
+    toolImageNow = performanceNow()
+
+fn toolAttempt(expanded: ToolExpansion[], threadId: string, rowId: string): number = match first(expanded.filter(entry => entry.threadId == threadId and entry.rowId == rowId)) { case some(entry) => entry.attempt, case none => rowId.endsWith(":group") ? match first(expanded.filter(entry => entry.threadId == threadId and entry.rowId == rowId.slice(0, -6))) { case some(entry) => entry.attempt, case none => -1 } : -1 }
+
+fn matchingToolPanels(batch: ToolBatch, viewKey: string, rowId: string, revision: string, attempt: number): ToolPanel[] = batch.viewKey == viewKey ? batch.panels.filter(panel => panel.rowId == rowId and panel.revision == revision and panel.retry == attempt) : []
+
+fn toolCopyText(panels: ToolPanel[], tool: ToolChild): string = panels.length == 0 ? tool.title : panels.map(panel => [panel.input, panel.output].filter(part => part != "").join("\n\n")).join("\n\n")
+
+component ToolRow
+  props
+    tool: ToolChild
+    rowId: string
+    threadId: string
+    batch: ToolBatch
+    viewKey: string
+    expanded: ToolExpansion[]
+    disclosureOnly: bool
+    parentRowId: string
+    failedBatch: bool
+    toggle: action
+    retry: action
+    copy: action
+    openImage: action
+    highlights: CodeBatch
+    layouts: TableBatch
+    wrapped: BlockRef[]
+    seenBlock: action
+    toggleWrap: action
+    followLink: action
+    media: MediaBatch
+    seenMedia: action
+    retryMedia: action
+    openMedia: action
+  derive bodyOnly = parentRowId != ""
+  derive attempt = toolAttempt(expanded, threadId, bodyOnly ? parentRowId : rowId)
+  derive label = tool.category == "reasoning" and not disclosureOnly and attempt >= 0 ? (tool.status == "running" or tool.status == "pending" ? "Thinking" : "Thought") : tool.displayTitle
+  derive panels = matchingToolPanels(batch, viewKey, rowId, tool.revision, attempt)
+  view
+    column min-width=0
+      if not bodyOnly
+        button press=toggle(threadId, rowId) contextmenu=copy(toolCopyText(panels, tool)) appearance="none" display="flex" align-items="center" gap=5.25 min-height=28 width="100%" box-sizing="border-box" padding="0 1.75px" text-align="left" color="muted" aria-label=`${label}, ${tool.status}, ${attempt >= 0 ? "expanded" : "collapsed"}` aria-expanded=(attempt >= 0) testId=`tool-toggle-${rowId}`
+          row width=21 height=21 align-items="center" justify-content="center" flex-shrink=0
+            image `symbol:sf/${tool.symbol}` width=14 height=14 color=(tool.status == "error" ? "danger" : "muted") opacity=(tool.status == "error" ? 0.4 : 1)
+          workspace-tool-label tool-label=label live=(tool.live and (disclosureOnly or attempt < 0) ? "true" : "false") flex=1 min-width=0 min-height=19 pointer-events="none" testId=`tool-title-${rowId}`
+          row width=14 height=14 align-items="center" justify-content="center" flex-shrink=0
+            image (attempt >= 0 ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11
+      if attempt >= 0 and not disclosureOnly
+        column padding-top=(tool.category == "reasoning" ? 0 : 2) padding-bottom=(tool.category == "reasoning" ? 0 : 4) gap=6 min-width=0
+          if panels.length == 0
+            if failedBatch
+              text "Could not load this activity." color="danger" font-size=12 testId=`tool-error-${rowId}`
+              button press=retry(threadId, bodyOnly ? parentRowId : rowId) aria-label="Retry activity" testId=`tool-retry-${rowId}`
+                text "Retry"
+            else
+              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${rowId}`
+          for panel in panels key=panel.rowId
+            if panel.state == "loading"
+              text "Loading output…" color="muted" font-size=12 testId=`tool-loading-${rowId}`
+            else if panel.state == "error" or panel.state == "missing"
+              text panel.error color="danger" font-size=12 overflow-wrap="break-word" testId=`tool-error-${rowId}`
+              if panel.state == "error"
+                button press=retry(threadId, bodyOnly ? parentRowId : rowId) aria-label="Retry activity" testId=`tool-retry-${rowId}`
+                  text "Retry"
+            else
+              if panel.truncated
+                text "Earlier or large output not shown" color="muted" font-size=11 testId=`tool-truncated-${rowId}`
+              if tool.category != "reasoning"
+                for block in panel.blocks.filter(block => block.kind == "image") key=block.id
+                  MediaImage(batch=media, threadId=threadId, viewKey=viewKey, messageId=rowId, blockId=block.id, alt=block.imageAlt, tableImage=false, inlineImage=false, seen=seenMedia, retry=retryMedia, open=openMedia)
+              for rendered, index in panel.images key=`${index}:${panel.retry}`
+                ToolOutputImage(source=rendered, threadId=threadId, rowId=rowId, retryRowId=(bodyOnly ? parentRowId : rowId), index=index, open=openImage, retry=retry)
+              if tool.category == "reasoning"
+                scroll max-height=(bodyOnly ? "none" : 210) min-height=0 min-width=0 overflow-x="hidden" margin-left=(bodyOnly ? 0 : 24.5) padding-top=(bodyOnly ? 0 : 3.5) padding-bottom=(bodyOnly ? 0 : 3.5)
+                  column min-width=0
+                    for block, index in panel.blocks key=block.id
+                      MarkdownBlockView(block=block, isLast=(index == panel.blocks.length - 1), palette=markdownPalette(false), threadId=threadId, messageId=rowId, viewKey=viewKey, highlights=highlights, layouts=layouts, wrapped=wrapped, seenBlock=seenBlock, toggleWrap=toggleWrap, followLink=followLink, copy=copy, media=media, seenMedia=seenMedia, retryMedia=retryMedia, openMedia=openMedia)
+              else if tool.category == "command"
+                ToolCommandOutput(panel=panel, tool=tool, rowId=rowId, threadId=threadId)
+              else
+                scroll max-height=210 min-height=0 min-width=0 overflow-x="hidden"
+                  ToolDetail(panel=panel, tool=tool, rowId=rowId)
+
+component ToolOutputImage
+  props
+    source: ToolImage
+    threadId: string
+    rowId: string
+    retryRowId: string
+    index: number
+    open: action
+    retry: action
+  state loadedUrl = ""
+  state failedUrl = ""
+  state failure = ""
+
+  action loaded(url: string)
+    if source.url == url
+      loadedUrl = url
+      failedUrl = ""
+
+  action imageFailed(url: string, message: string)
+    if source.url == url
+      failedUrl = url
+      failure = message == "" ? "This image could not be decoded." : message
+
+  view
+    column width="100%" min-width=0 gap=6
+      if source.error != "" or (source.url != "" and failedUrl == source.url)
+        column align-items="center" justify-content="center" width="100%" min-height=96 padding=12 box-sizing="border-box" gap=6 background-color="bubble" border-radius=12
+          text "Image unavailable" font-size=14 color="muted"
+          text (source.error != "" ? source.error : failure) font-size=12 color="muted" overflow-wrap="break-word"
+          button press=retry(threadId, retryRowId) appearance="none" min-height=32 color="AccentColor" aria-label="Retry image" testId=`retry-tool-image-${rowId}-${index}`
+            text "Retry image"
+      else if source.url != ""
+        button press=open(threadId, rowId, index) appearance="none" display="flex" width="100%" border-radius=8 overflow="hidden" aria-label=`Open ${source.alt}` testId=`open-tool-image-${rowId}-${index}`
+          image source.url alt=source.alt width="100%" max-height=260 object-fit="contain" load=loaded(source.url) error=imageFailed(source.url) testId=`tool-image-${rowId}-${index}`
+        if loadedUrl != source.url
+          text "Loading image…" color="muted" font-size=12
+      else
+        text "Loading image…" color="muted" font-size=12
+
+component ToolDetail
+  props
+    panel: ToolPanel
+    tool: ToolChild
+    rowId: string
+  view
+    column gap=5.25 padding-right=8
+      if panel.input != ""
+        text panel.input font-family="Menlo" font-size=12 line-height="18px" color="foreground" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-input-${rowId}`
+      if panel.output != ""
+        text panel.output font-family="Menlo" font-size=12 line-height="18px" color="muted" white-space="pre-wrap" overflow-wrap="break-word" user-select="text" testId=`tool-output-${rowId}`
+      if panel.output == "" and panel.images.length == 0 and panel.blocks.filter(block => block.kind == "image").length == 0
+        text (tool.status == "running" or tool.status == "pending" ? "No output yet." : "No output.") font-family="Menlo" font-size=12 line-height="18px" color="muted" testId=`tool-empty-${rowId}`
+      if tool.exitLabel != ""
+        text tool.exitLabel font-family="Menlo" font-size=12 line-height="18px" color="danger" testId=`tool-exit-${rowId}`
+
+fn toolOutputField(fields: string[], index: number): string = match fields.at(index) { case some(value) => value, case none => "" }
+
+fn toolOutputNumber(fields: string[], index: number): number = match parseNumber(toolOutputField(fields, index)) { case some(value) => value, case none => -1 }
+
+component ToolCommandOutput
+  props
+    panel: ToolPanel
+    tool: ToolChild
+    rowId: string
+    threadId: string
+  state initialized = false
+  state following = true
+  state contentHeight = 0
+  state scrollTarget = 0
+  state pendingEnd = false
+  state rearmTarget: option<number> = none
+  state commandEpoch = 0
+  derive scrollId = `tool-command-output-${threadId}-${rowId}`
+  derive observationKey = `${threadId}/${rowId}/${panel.revision}/${panel.retry}/${commandEpoch}`
+
+  action scrolled(x: number, y: number, event: ScrollEvent)
+    if initialized and not pendingEnd and event.scrollHeight == contentHeight
+      following = event.scrollHeight - event.scrollTop - event.clientHeight <= 8
+
+  action observed(message: string)
+    let fields = message.split("\n")
+    let height = toolOutputNumber(fields, 2)
+    let viewportHeight = toolOutputNumber(fields, 3)
+    let offset = toolOutputNumber(fields, 4)
+    let moving = toolOutputField(fields, 5) == "true"
+    let settled = toolOutputField(fields, 6) == "true"
+    if fields.length == 8 and toolOutputField(fields, 0) == observationKey and height >= 0 and viewportHeight > 0 and offset >= 0
+      let atEnd = height - viewportHeight - offset <= 8
+      contentHeight = height
+      if moving
+        initialized = true
+        following = atEnd
+        pendingEnd = false
+        rearmTarget = none
+      else if not initialized or (height != contentHeight and following) or pendingEnd
+        pendingEnd = true
+        if settled
+          let target = max(0, height - viewportHeight)
+          initialized = true
+          if pendingEnd and rearmTarget == none and offset >= target - 1 and offset <= target + 1
+            pendingEnd = false
+            following = true
+          else
+            commandEpoch = commandEpoch + 1
+            if target == scrollTarget and (offset < target - 1 or offset > target + 1)
+              scrollTarget = offset
+              rearmTarget = some(target)
+            else
+              scrollTarget = target
+              rearmTarget = none
+      else if settled
+        following = atEnd
+
+  view
+    column min-height=0 min-width=0
+      scroll id=scrollId testId=scrollId max-height=210 min-height=0 min-width=0 overflow-x="hidden" scrollTop=scrollTarget scroll=scrolled
+        ToolDetail(panel=panel, tool=tool, rowId=rowId)
+      workspace-thread-scroll target-test-id=scrollId observation-key=observationKey message=observed height=0 width=0

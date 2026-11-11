@@ -1,0 +1,82 @@
+use ThreadDraft, DraftAttachment, ComposerAttachments, UploadProgress, VerifiedAttachment, uploadedVerified, AttachmentSlot, CleanupAttachment, threadDraft from "./attachments.contract"
+
+shape QuestionAttachmentTarget
+  key: string
+  questionId: string
+  draft: ThreadDraft
+
+shape QuestionAttachmentState
+  threadId: string
+  ready: bool
+  targets: QuestionAttachmentTarget[]
+  retired: ThreadDraft[]
+
+fn questionAttachmentItems(targets: QuestionAttachmentTarget[], key: string, questionId: string): DraftAttachment[] = match first(targets.filter(target => target.key == key and target.questionId == questionId)) { case some(target) => target.draft.attachments, case none => [] }
+fn questionAttachmentsReady(targets: QuestionAttachmentTarget[], key: string, verified: VerifiedAttachment[], accessKey: string): bool = targets.filter(target => target.key == key and target.draft.attachments.filter(item => item.state != "uploaded" or not uploadedVerified(verified, target.draft.id, item, accessKey)).length > 0).length == 0
+
+component QuestionAttachments
+  props
+    target: QuestionAttachmentTarget
+    uploads: UploadProgress[]
+    blocked: bool
+    canAttach: bool
+    pick: action
+    remove: action
+    retry: action
+    preview: action
+  action removeItem(localId: string)
+    if not blocked
+      remove(target.draft.id, localId)
+  action retryItem(localId: string)
+    if not blocked
+      retry(target.draft.id, localId)
+  action previewItem(item: DraftAttachment)
+    preview(target.draft.id, item)
+  view
+    column gap=8 min-width=0 width="100%"
+      if canAttach
+        button popovertarget=`question-attachment-menu-${target.draft.id}` aria-label="Add attachment to answer" disabled=blocked appearance="none" width=44 height=44
+          image "symbol:sf/paperclip" width=18 height=18 color="muted"
+        column id=`question-attachment-menu-${target.draft.id}` popover="auto" role="menu" aria-label="Add attachment to answer"
+          button press=pick(target.draft.id, true) role="menuitem"
+            image "symbol:sf/photo.on.rectangle"
+            text "Photo Library"
+          button press=pick(target.draft.id, false) role="menuitem"
+            image "symbol:sf/folder"
+            text "Choose File"
+      if target.draft.attachments.length > 0
+        ComposerAttachments(items=target.draft.attachments, uploads=uploads, remove=removeItem, retry=retryItem, preview=previewItem)
+
+members T3Code
+  state answeredQuestionKeys: string[] = []
+  resource questionAttachments = loadQuestionAttachments(activeThreadId, threadControls, savedDrafts, draftEdits, answeredQuestionKeys) as shape QuestionAttachmentState else empty()
+  derive questionAttachmentTargets = questionAttachments.threadId == activeThreadId ? questionAttachments.targets : []
+  derive attachmentDrafts = [activeDraft].concat(questionAttachmentTargets.map(target => threadDraft(savedDrafts, draftEdits, target.draft.id)))
+
+  task retireQuestionAttachments when draftsReady and threadControls.ready and questionAttachments.ready and not pending(questionAttachments) key=`${activeThreadId}:${questionAttachments.retired.map(draft => `${draft.id}:${draft.revision}`).join("|")}`
+    after(1, clearResolvedQuestionAttachments)
+
+  action clearResolvedQuestionAttachments
+    if questionAttachments.threadId == activeThreadId and questionAttachments.ready and threadControls.ready and not pending(questionAttachments)
+      match first(questionAttachments.retired)
+        case some(draft)
+          clearQuestionAttachmentDraft(draft)
+        case none
+          attachmentError = attachmentError
+
+  action clearQuestionAttachmentDraft(draft: ThreadDraft)
+    let revision = draft.revision + 1
+    persistDraft(ThreadDraft(draft, attachments=[], revision=revision))
+    transferSlots = transferSlots.filter(slot => slot.draftId != draft.id)
+    verifiedAttachments = verifiedAttachments.filter(item => item.draftId != draft.id)
+    attachmentCleanup = attachmentCleanup.concat(draft.attachments.map(item => CleanupAttachment(threadId=activeThreadId, draftId=draft.id, accessKey="", attachmentId="", path=item.path, revision=revision)))
+    if pickerIntent.draftId == draft.id
+      cancelledAttachments()
+
+  action pickQuestionAttachments(draftId: string, photos: bool)
+    match first(questionAttachmentTargets.filter(target => target.draft.id == draftId))
+      case some(target)
+        if controlsAllowed and not sendingControls.includes(target.key) and threadControls.requests.filter(request => request.key == target.key and not request.pending and request.unavailable == "").length > 0
+          pickDraftAttachments(draftId, photos)
+      case none
+        attachmentError = attachmentError

@@ -3,15 +3,22 @@ import {
   projectThreadSettings,
   stageThreadSettings,
   validateThreadSettings,
-} from "./thread-settings";
+} from "../thread-settings";
 
 function fixture() {
   const capabilities = {
     optionDescriptors: [
       {
-        id: "effort", label: "Reasoning", type: "select",
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
         options: [
-          { id: "medium", label: "Medium", description: "Balance speed and depth.", isDefault: true },
+          {
+            id: "medium",
+            label: "Medium",
+            description: "Balance speed and depth.",
+            isDefault: true,
+          },
           { id: "xhigh", label: "Extra high" },
           { id: "ultrathink", label: "Ultrathink" },
         ],
@@ -20,14 +27,20 @@ function fixture() {
       { id: "fastMode", label: "Fast mode", type: "boolean", currentValue: true },
       { id: "ultracode", label: "Ultracode", type: "boolean", currentValue: false },
       {
-        id: "variant", label: "Variant", type: "select",
+        id: "variant",
+        label: "Variant",
+        type: "select",
         options: [{ id: "default", label: "Default", isDefault: true }],
       },
     ],
   };
   const provider = {
-    instanceId: "codex-work", driver: "codex", displayName: "Work account",
-    enabled: true, installed: true, auth: { status: "authenticated" },
+    instanceId: "codex-work",
+    driver: "codex",
+    displayName: "Work account",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
     models: [
       { slug: "gpt-6", name: "GPT-6", isDefault: true, capabilities },
       { slug: "gpt-6-mini", name: "GPT-6 Mini", capabilities },
@@ -36,7 +49,9 @@ function fixture() {
   return {
     config: { providers: [provider], settings: {} },
     thread: {
-      id: "thread-one", projectId: "project", runtimeMode: "full-access",
+      id: "thread-one",
+      projectId: "project",
+      runtimeMode: "full-access",
       modelSelection: { instanceId: "codex-work", model: "gpt-6" },
     },
     provider,
@@ -62,11 +77,23 @@ describe("thread settings", () => {
     ]);
     expect(view.selectedModel?.isFavorite).toBe(false);
     for (const favorites of [[], null]) {
-      expect(projectThreadSettings({ ...config, settings: { ...settings, favorites } }, thread).groups[0]?.models.map((model) => model.slug)).toEqual(["gpt-6", "gpt-6-mini"]);
+      expect(
+        projectThreadSettings(
+          { ...config, settings: { ...settings, favorites } },
+          thread,
+        ).groups[0]?.models.map((model) => model.slug),
+      ).toEqual(["gpt-6", "gpt-6-mini"]);
     }
-    const both = projectThreadSettings({ ...config, settings: {
-      ...settings, favorites: [...settings.favorites, { provider: "codex-work", model: "gpt-6" }],
-    } }, thread);
+    const both = projectThreadSettings(
+      {
+        ...config,
+        settings: {
+          ...settings,
+          favorites: [...settings.favorites, { provider: "codex-work", model: "gpt-6" }],
+        },
+      },
+      thread,
+    );
     expect(both.groups[0]?.models.map((model) => model.slug)).toEqual(["gpt-6", "gpt-6-mini"]);
     expect(JSON.stringify(settings)).toBe(before);
   });
@@ -99,7 +126,8 @@ describe("thread settings", () => {
     const legacyThread = {
       ...thread,
       modelSelection: {
-        provider: "codex-work", model: "gpt-6",
+        provider: "codex-work",
+        model: "gpt-6",
         options: { fastMode: false, effort: "ultracode" },
       },
     };
@@ -109,19 +137,28 @@ describe("thread settings", () => {
       { id: "fastMode", value: false },
       { id: "ultracode", value: true },
     ]);
-    expect(view.selectedModel?.options.find((option) => option.id === "fastMode")?.value).toBe("false");
+    expect(view.selectedModel?.options.find((option) => option.id === "fastMode")?.value).toBe(
+      "false",
+    );
   });
 
   test("stages typed option values independently per thread and rejects invalid choices", () => {
     const { config, thread } = fixture();
     const result = stageThreadSettings(config, thread, undefined, {
-      type: "option", id: "fastMode", value: "false",
+      type: "option",
+      id: "fastMode",
+      value: "false",
     });
     expect(result.ok).toBe(true);
     expect(result.selection?.modelSelection.options).toEqual([{ id: "fastMode", value: false }]);
     expect(projectThreadSettings(config, thread).selection?.modelSelection.options).toBeUndefined();
-    expect(projectThreadSettings(config, { ...thread, id: "thread-two" }, result.selection).selection?.modelSelection.options).toBeUndefined();
-    expect(validateThreadSettings(config, { ...thread, id: "thread-two" }, result.selection).error).toContain("another thread");
+    expect(
+      projectThreadSettings(config, { ...thread, id: "thread-two" }, result.selection).selection
+        ?.modelSelection.options,
+    ).toBeUndefined();
+    expect(
+      validateThreadSettings(config, { ...thread, id: "thread-two" }, result.selection).error,
+    ).toContain("another thread");
     for (const change of [
       { type: "option", id: "fastMode", value: "yes" },
       { type: "option", id: "effort", value: "nonexistent" },
@@ -131,9 +168,13 @@ describe("thread settings", () => {
       expect(stageThreadSettings(config, thread, result.selection, change).ok).toBe(false);
     }
     const changed = stageThreadSettings(config, thread, result.selection, {
-      type: "model", id: "codex-work:gpt-6-mini",
+      type: "model",
+      id: "codex-work:gpt-6-mini",
     });
-    expect(changed.selection?.modelSelection).toEqual({ instanceId: "codex-work", model: "gpt-6-mini" });
+    expect(changed.selection?.modelSelection).toEqual({
+      instanceId: "codex-work",
+      model: "gpt-6-mini",
+    });
     expect(result.selection?.modelSelection.model).toBe("gpt-6");
   });
 
@@ -141,10 +182,18 @@ describe("thread settings", () => {
     const { config, thread, provider } = fixture();
     const catalog = {
       ...config,
-      providers: [provider, { ...provider, instanceId: "codex-personal" }, { ...provider, instanceId: "claude", driver: "claudeAgent" }],
+      providers: [
+        provider,
+        { ...provider, instanceId: "codex-personal" },
+        { ...provider, instanceId: "claude", driver: "claudeAgent" },
+      ],
       settings: {
-        providerModelPreferences: { "codex-work": { hiddenModels: ["gpt-6"], modelOrder: ["gpt-6-mini"] } },
-        projectSettingsOverrides: { project: { providerInstances: { "codex-personal": { enabled: false } } } },
+        providerModelPreferences: {
+          "codex-work": { hiddenModels: ["gpt-6"], modelOrder: ["gpt-6-mini"] },
+        },
+        projectSettingsOverrides: {
+          project: { providerInstances: { "codex-personal": { enabled: false } } },
+        },
       },
     };
     const view = projectThreadSettings(catalog, thread, undefined, { canSwitchProvider: false });
@@ -152,8 +201,19 @@ describe("thread settings", () => {
     expect(view.groups[0]?.models.map((model) => model.slug)).toEqual(["gpt-6-mini"]);
     expect(view.selectedModel?.slug).toBe("gpt-6");
     expect(view.selectedModel?.available).toBe(true);
-    expect(stageThreadSettings(catalog, thread, undefined, { type: "model", id: "claude:gpt-6" }, { canSwitchProvider: false }).ok).toBe(false);
-    expect(stageThreadSettings(catalog, thread, undefined, { type: "model", id: "codex-personal:gpt-6" }).ok).toBe(false);
+    expect(
+      stageThreadSettings(
+        catalog,
+        thread,
+        undefined,
+        { type: "model", id: "claude:gpt-6" },
+        { canSwitchProvider: false },
+      ).ok,
+    ).toBe(false);
+    expect(
+      stageThreadSettings(catalog, thread, undefined, { type: "model", id: "codex-personal:gpt-6" })
+        .ok,
+    ).toBe(false);
     const continuation = {
       providers: [
         { ...provider, continuation: { groupKey: "first" } },
@@ -161,10 +221,21 @@ describe("thread settings", () => {
         { ...provider, instanceId: "other-family", continuation: { groupKey: "second" } },
       ],
     };
-    expect(projectThreadSettings(continuation, thread, undefined, { canSwitchProvider: false }).groups.map((group) => group.id)).toEqual(["codex-work", "same-family"]);
+    expect(
+      projectThreadSettings(continuation, thread, undefined, {
+        canSwitchProvider: false,
+      }).groups.map((group) => group.id),
+    ).toEqual(["codex-work", "same-family"]);
     expect(projectThreadSettings({ providers: [] }, thread).selectedModel?.available).toBe(true);
-    expect(projectThreadSettings({ providers: [{ ...provider, enabled: false }] }, thread).error).toContain("turned off");
-    expect(projectThreadSettings({ providers: [{ ...provider, driver: "antigravity", availability: "unavailable" }] }, thread).selectedModel?.available).toBe(false);
+    expect(
+      projectThreadSettings({ providers: [{ ...provider, enabled: false }] }, thread).error,
+    ).toContain("turned off");
+    expect(
+      projectThreadSettings(
+        { providers: [{ ...provider, driver: "antigravity", availability: "unavailable" }] },
+        thread,
+      ).selectedModel?.available,
+    ).toBe(false);
   });
 
   test("retains supported runtime choices and refuses managed or stale staged settings", () => {
@@ -180,20 +251,55 @@ describe("thread settings", () => {
       { id: "full-access", available: false },
     ]);
     expect(view.error).toContain("limits threads");
-    expect(stageThreadSettings(restricted, thread, undefined, { type: "runtime", id: "auto" }).ok).toBe(false);
-    const staged = stageThreadSettings(restricted, thread, undefined, { type: "runtime", id: "approval-required" });
+    expect(
+      stageThreadSettings(restricted, thread, undefined, { type: "runtime", id: "auto" }).ok,
+    ).toBe(false);
+    const staged = stageThreadSettings(restricted, thread, undefined, {
+      type: "runtime",
+      id: "approval-required",
+    });
     expect(staged.ok).toBe(true);
     const disabled = { ...restricted, providers: [{ ...provider, enabled: false }] };
     expect(validateThreadSettings(disabled, thread, staged.selection).ok).toBe(false);
-    const otherModel = stageThreadSettings(config, thread, undefined, { type: "model", id: "codex-work:gpt-6-mini" });
-    const hidden = { ...config, settings: { providerModelPreferences: { "codex-work": { hiddenModels: ["gpt-6-mini"] } } } };
+    const otherModel = stageThreadSettings(config, thread, undefined, {
+      type: "model",
+      id: "codex-work:gpt-6-mini",
+    });
+    const hidden = {
+      ...config,
+      settings: { providerModelPreferences: { "codex-work": { hiddenModels: ["gpt-6-mini"] } } },
+    };
     expect(validateThreadSettings(hidden, thread, otherModel.selection).ok).toBe(false);
-    const option = stageThreadSettings(config, thread, undefined, { type: "option", id: "effort", value: "xhigh" });
+    const option = stageThreadSettings(config, thread, undefined, {
+      type: "option",
+      id: "effort",
+      value: "xhigh",
+    });
     const changedCatalog = {
-      providers: [{ ...provider, models: [{ ...provider.models[0], capabilities: { optionDescriptors: [{ id: "effort", type: "select", options: [{ id: "medium", isDefault: true }] }] } }] }],
+      providers: [
+        {
+          ...provider,
+          models: [
+            {
+              ...provider.models[0],
+              capabilities: {
+                optionDescriptors: [
+                  { id: "effort", type: "select", options: [{ id: "medium", isDefault: true }] },
+                ],
+              },
+            },
+          ],
+        },
+      ],
     };
     expect(validateThreadSettings(changedCatalog, thread, option.selection).ok).toBe(false);
-    const disallowed = { ...config, managedPolicy: { organization: "Example", limits: { providers: { allowedDrivers: ["claudeAgent"] } } } };
+    const disallowed = {
+      ...config,
+      managedPolicy: {
+        organization: "Example",
+        limits: { providers: { allowedDrivers: ["claudeAgent"] } },
+      },
+    };
     expect(projectThreadSettings(disallowed, thread).error).toContain("not allowed");
   });
 });
