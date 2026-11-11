@@ -147,7 +147,7 @@ export class ControlsFixture {
 
   private snapshot(scenario: Scenario, socket: Socket, requestId: string) {
     const visible = [...scenario.items.values()].filter((item) => item.ordinal >= scenario.windowStart).sort((a, b) => a.ordinal - b.ordinal);
-    const controls = [...scenario.items.values()].filter((item) => ["approval_request", "user_input_request", "run_interrupt_request", "run_interrupt_result"].includes(item.type));
+    const controls = [...scenario.items.values()].filter((item) => ["approval_request", "user_input_request"].includes(item.type) && scenario.requests.get(text(item.requestId))?.status === "pending");
     const rows: RecordValue[] = visible.map((item, position) => this.row(item, position));
     if (scenario.id === "controls-boundaries") {
       const inherited = this.item("ancestor-thread", "inherited-question", "user_input_request", 241, { requestId: "request-shared", questions: [{ id: "wrong", header: "Inherited", question: "Never answer this inherited request.", options: [] }] });
