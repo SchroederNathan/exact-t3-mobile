@@ -872,9 +872,9 @@ component T3Code
                     text composerError color="danger" font-size=14 line-height="19px" padding="0 16px 6px 20px" testId="send-error"
                   if e.params.id == activeThreadId
                     if threadControls.requests.length > 0
-                      column max-height=(hasQuestion ? "80%" : "40%") width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 padding="4px 12px" padding-bottom=(hasQuestion ? "calc(6px + env(safe-area-inset-bottom))" : "4px") gap=8 testId="requests-panel"
+                      column max-height="80%" width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 padding="4px 12px" padding-bottom=(hasQuestion ? "calc(6px + env(safe-area-inset-bottom))" : "4px") gap=8 testId="requests-panel"
                         for request in shownRequests key=request.key
-                          RequestCard(request=request, threadId=e.params.id, allowed=controlsAllowed, busy=sendingControls.includes(request.key), collapsed=collapsedRequests.includes(request.key), drafts=questionDrafts, respond=respondControl, toggle=toggleRequest, choose=chooseAnswer, edit=editAnswer, followLink=followMarkdownLink, accessKey=threadControls.accessKey, runId=threadControls.stop.runId, stopping=(stopBusy or threadControls.stop.state == "unresponsive"), stop=stopTurn)
+                          RequestCard(request=request, threadId=e.params.id, allowed=controlsAllowed, busy=sendingControls.includes(request.key), collapsed=collapsedRequests.includes(request.key), drafts=questionDrafts, respond=respondControl, toggle=toggleRequest, choose=chooseAnswer, edit=editAnswer, followLink=followMarkdownLink, accessKey=threadControls.accessKey, runId=threadControls.stop.runId, stopping=(stopBusy or threadControls.stop.state == "unresponsive"), explanationOpen=explainedApprovals.includes(request.key), explain=explainApproval, stop=stopTurn)
                     if threadControls.requests.length > 0 or threadControls.stop.runId != ""
                       if controlsAccessError != ""
                         row padding="4px 16px" gap=8 align-items="center"
@@ -904,7 +904,7 @@ component T3Code
                             image "symbol:sf/chevron.down" font-size=10
                         if threadControls.stop.runId != "" and composer.trim() == ""
                           button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
-                            row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy ? "foreground" : "send-disabled") color="screen" align-items="center" justify-content="center"
+                            row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
                               image "symbol:sf/stop.fill" font-size=12
                         else
                           button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" retainFocus=true aria-label=(threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44

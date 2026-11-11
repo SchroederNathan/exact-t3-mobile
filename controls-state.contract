@@ -4,6 +4,7 @@ members T3Code
   state questionDrafts: QuestionDraft[] = []
   state questionRevision = 0
   state collapsedRequests: string[] = []
+  state explainedApprovals: string[] = []
   state sendingControls: string[] = []
   state controlRetry = 0
   state stopSubmissionKey = ""
@@ -28,6 +29,7 @@ members T3Code
     if threadControls.ready
       questionDrafts = questionDrafts.filter(draft => not draft.key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(draft.key))
       collapsedRequests = collapsedRequests.filter(key => not key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(key))
+      explainedApprovals = explainedApprovals.filter(key => not key.startsWith(threadControls.keyPrefix) or threadControls.pendingKeys.includes(key))
 
   action retryControlAccess
     controlRetry = controlRetry + 1
@@ -37,16 +39,21 @@ members T3Code
       blur()
     collapsedRequests = collapsedRequests.includes(key) ? collapsedRequests.filter(value => value != key) : collapsedRequests.concat([key])
 
+  action explainApproval(key: string)
+    explainedApprovals = explainedApprovals.includes(key) ? explainedApprovals.filter(value => value != key) : explainedApprovals.concat([key])
+
   action chooseAnswer(key: string, question: ControlQuestion, value: string)
     let previous = questionDraft(questionDrafts, key, question)
     let selected = question.multi ? (previous.selected.includes(value) ? previous.selected.filter(entry => entry != value) : previous.selected.concat([value])) : [value]
-    questionRevision = questionRevision + 1
-    questionDrafts = questionDrafts.filter(draft => draft.key != key or draft.questionId != question.id).concat([QuestionDraft(key=key, questionId=question.id, selected=selected, custom="", hasCustom=true, revision=questionRevision)])
+    let revision = questionRevision + 1
+    questionRevision = revision
+    questionDrafts = questionDrafts.filter(draft => draft.key != key or draft.questionId != question.id).concat([QuestionDraft(key=key, questionId=question.id, selected=selected, custom="", hasCustom=true, revision=revision)])
 
   action editAnswer(key: string, question: ControlQuestion, value: string)
     let previous = questionDraft(questionDrafts, key, question)
-    questionRevision = questionRevision + 1
-    questionDrafts = questionDrafts.filter(draft => draft.key != key or draft.questionId != question.id).concat([QuestionDraft(key=key, questionId=question.id, selected=(question.hasInitial or value.trim() != "" ? [] : previous.selected), custom=value, hasCustom=true, revision=questionRevision)])
+    let revision = questionRevision + 1
+    questionRevision = revision
+    questionDrafts = questionDrafts.filter(draft => draft.key != key or draft.questionId != question.id).concat([QuestionDraft(key=key, questionId=question.id, selected=(question.hasInitial or value.trim() != "" ? [] : previous.selected), custom=value, hasCustom=true, revision=revision)])
 
   action respondControl(threadId: string, accessKey: string, kind: string, id: string, key: string, value: string)
     if controlsAllowed and not sendingControls.includes(key)

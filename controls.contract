@@ -95,24 +95,33 @@ component RequestCard
     accessKey: string
     runId: string
     stopping: bool
+    explanationOpen: bool
+    explain: action
     stop: action
   derive blocked = not allowed or busy or request.pending or request.unavailable != ""
+  derive countLabel = `${request.questions.length} ${request.questions.length == 1 ? "question" : "questions"}`
+  derive optionWarning = match first(request.options.filter(option => option.description != "")) { case some(option) => option.description, case none => "" }
   view
-    column padding=(collapsed and request.kind == "question" ? "6px 6px 6px 16px" : "16px") gap=10 border-radius=(collapsed and request.kind == "question" ? 27 : 20) background-color="card" border="1px solid var(--edge)" width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 overflow="hidden" testId=`request-${request.id}`
-      row align-items="center" gap=8 flex-shrink=0
-        button press=toggle(request.key) appearance="none" display="flex" flex=1 min-width=0 min-height=40 align-items="center" gap=8 text-align="left" aria-expanded=not collapsed aria-label=(request.kind == "question" ? (collapsed ? `Expand user input, ${request.questions.length} questions` : "Collapse user input") : request.title) testId=`request-collapse-${request.id}`
-          image (request.kind == "question" ? "symbol:sf/questionmark.bubble" : "symbol:sf/exclamationmark.shield") width=17 height=17 color=(request.kind == "question" ? "status-input" : "status-warning")
-          column flex=1 min-width=0 gap=6
-            text (request.kind == "question" ? "User input needed" : "Approval needed") font-size=12 font-weight=500
-            if request.kind == "question"
-              text (collapsed ? `${request.questions.length} questions` : "Fill in the pending answers") font-size=(collapsed ? 12 : 18) font-weight=(collapsed ? 400 : 700) color=(collapsed ? "muted" : "foreground")
-            else
-              text request.title font-size=18 font-weight=700
-          image (collapsed ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11 color="muted"
-        if collapsed and request.kind == "question" and runId != ""
-          button press=stop(threadId, accessKey, runId) disabled=(not allowed or stopping) appearance="none" aria-label=(stopping ? "Stopping turn" : "Stop turn") width=40 height=40 testId="question-stop"
-            image "symbol:sf/stop.fill" width=14 height=14 color="danger"
-      if not collapsed
+    column padding=(collapsed and request.kind == "question" ? "6px 6px 6px 16px" : "16px") gap=10 border-radius=(collapsed and request.kind == "question" ? 27 : 20) background-color="control-surface" border="1px solid var(--edge)" width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 overflow="hidden" testId=`request-${request.id}`
+      if request.kind == "question"
+        row align-items="center" gap=8 flex-shrink=0
+          button press=toggle(request.key) appearance="none" display="flex" flex=1 min-width=0 min-height=40 align-items="center" gap=8 text-align="left" aria-expanded=not collapsed aria-label=(request.kind == "question" ? (collapsed ? `Expand user input, ${countLabel}` : "Collapse user input") : request.title) testId=`request-collapse-${request.id}`
+            image (request.kind == "question" ? "symbol:sf/questionmark.bubble" : "symbol:sf/exclamationmark.shield") width=17 height=17 color=(request.kind == "question" ? "status-input" : "status-warning")
+            column flex=1 min-width=0 gap=6
+              text (request.kind == "question" ? "User input needed" : "Approval needed") font-size=12 font-weight=500
+              if request.kind == "question"
+                text (collapsed ? countLabel : "Fill in the pending answers") font-size=(collapsed ? 12 : 18) font-weight=(collapsed ? 400 : 700) color=(collapsed ? "muted" : "foreground")
+              else
+                text request.title font-size=18 font-weight=700
+            image (collapsed ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=11 height=11 color="muted"
+          if collapsed and request.kind == "question" and runId != ""
+            button press=stop(threadId, accessKey, runId) disabled=(not allowed or stopping) appearance="none" aria-label=(stopping ? "Stopping turn" : "Stop turn") width=40 height=40 testId="question-stop"
+              image "symbol:sf/stop.fill" width=14 height=14 color="danger"
+      else
+        column gap=8 flex-shrink=0
+          text "APPROVAL NEEDED" font-size=10.5 font-weight=700 letter-spacing="1.1px" color="muted"
+          text request.title font-size=16 font-weight=700
+      if request.kind == "approval" or not collapsed
         scroll width="100%" box-sizing="border-box" min-width=0 min-height=0 flex-shrink=1 keyboardDismissMode="none" testId=`request-body-${request.id}`
           column gap=10 min-width=0 width="100%" box-sizing="border-box"
             if request.detail != ""
@@ -120,7 +129,10 @@ component RequestCard
             if request.reason != ""
               text request.reason color="muted" font-size=13 line-height="19px"
             if request.warning != ""
-              text request.warning color="status-warning" font-size=13 line-height="19px"
+              button press=explain(request.key) appearance="none" aria-expanded=explanationOpen text-align="left" min-height=32
+                text "Why am I being asked this?" color="muted" font-size=12 font-weight=700 text-decoration="underline"
+              if explanationOpen
+                text request.warning color="muted" font-size=12 line-height="18px"
             if request.unavailable != ""
               text request.unavailable color="muted" font-size=13 line-height="19px" testId=`request-unavailable-${request.id}`
             if request.kind == "question"
@@ -135,22 +147,21 @@ component RequestCard
                         image (question.multi ? (selectedAnswer(drafts, request.key, question, option.value) ? "symbol:sf/checkmark.square.fill" : "symbol:sf/square") : (selectedAnswer(drafts, request.key, question, option.value) ? "symbol:sf/largecircle.fill.circle" : "symbol:sf/circle")) width=18 height=18 color=(selectedAnswer(drafts, request.key, question, option.value) ? "AccentColor" : "muted")
                         column flex=1 min-width=0 gap=3
                           text option.label font-size=14 line-height="20px"
-                          if option.description != ""
+                          if option.description != "" and option.description != option.label
                             text option.description color="muted" font-size=12 line-height="17px"
                   if question.custom
                     if question.hasInitial
-                      textarea value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 rows=2 max-height=120 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=14 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
+                      textarea value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 rows=2 max-height=120 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=16 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
                     else
-                      input value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 min-height=44 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=14 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
-        if request.kind == "approval"
-          row gap=8 flex-wrap="wrap" flex-shrink=0
-            for option in request.options key=option.decision
-              column gap=4
-                button press=respond(threadId, accessKey, "approve", request.id, request.key, option.decision) disabled=blocked buttonStyle=(option.decision == "accept" ? "bordered-prominent" : "bordered") aria-label=option.label testId=`approval-${option.decision}`
-                  text option.label
-                if option.description != ""
-                  text option.description font-size=12 color="status-warning"
-        else
+                      input value=questionDraft(drafts, request.key, question).custom input=edit(request.key, question) disabled=blocked width="100%" box-sizing="border-box" min-width=0 min-height=44 padding=10 border-radius=12 border="1px solid var(--input-edge)" background-color="input-fill" font-size=16 placeholder=(question.options.length > 0 ? "Or type your answer…" : "Type your answer…") aria-label=`${question.header}, custom answer` testId=`question-custom-${question.id}`
+            if request.kind == "approval"
+              if optionWarning != ""
+                text optionWarning font-size=12 color="status-warning"
+              column gap=8 width="100%" box-sizing="border-box"
+                for option in request.options key=option.decision
+                  button press=respond(threadId, accessKey, "approve", request.id, request.key, option.decision) disabled=blocked appearance="none" display="flex" align-items="center" justify-content="center" width="100%" box-sizing="border-box" min-height=44 padding="0 21px" border-radius=24 background-color=(blocked ? "send-disabled" : option.decision == "accept" ? "AccentColor" : option.decision == "decline" ? "control-danger-fill" : "control-secondary") aria-label=option.label testId=`approval-${option.decision}`
+                    text option.label font-size=14 font-weight=500 color=(blocked ? "muted" : option.decision == "accept" ? "white" : option.decision == "decline" ? "danger" : "foreground")
+        if request.kind == "question"
           column gap=6 flex-shrink=0
             button press=respond(threadId, accessKey, "answer", request.id, request.key, "") disabled=(blocked or not allAnswered(drafts, request)) buttonStyle="bordered-prominent" width="100%" min-height=44 testId=`question-submit-${request.id}`
               text (busy or request.pending ? "Sending…" : "Submit answers")
