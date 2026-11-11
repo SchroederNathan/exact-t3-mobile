@@ -1,5 +1,6 @@
 import { markdownBlocks } from "./markdown";
 import { toolSummary, type ToolSummary } from "./tool-activity";
+import { projectControls } from "./thread-controls";
 
 export type HistoryRecord = Record<string, unknown>;
 export interface TimelineRow {
@@ -73,6 +74,9 @@ export class ThreadHistory {
   private rawMessages = new Map<string, HistoryRecord>();
   private runs = new Map<string, HistoryRecord>();
   private attempts = new Map<string, HistoryRecord>();
+  private requests = new Map<string, HistoryRecord>();
+  private controlProjection: ReturnType<typeof projectControls> | undefined;
+  private interruptTokens: Map<string, string> | undefined;
   private latestLocalOrdinal: number | null = null;
   private rendered: FeedRow[] | undefined;
   private messageCache = new Map<string, DisplayMessage>();
@@ -87,6 +91,21 @@ export class ThreadHistory {
   }
 
   visibleRows(): readonly TimelineRow[] { return this.rows; }
+
+  controls(environmentId: string) {
+    this.controlProjection ??= projectControls(environmentId, this.threadId, [...this.requests.values()], [...this.items.values()].filter((item) => !item.threadId || item.threadId === this.threadId).sort((a, b) => ordinal(a) - ordinal(b)), [...this.runs.values()]);
+    return { ...this.controlProjection, stop: { ...this.controlProjection.stop }, requests: this.controlProjection.requests.map((request) => ({ ...request })), ready: this.synchronized && !this.deleted };
+  }
+
+  private invalidateControls() {
+    this.controlProjection = undefined;
+    this.interruptTokens = undefined;
+  }
+
+  interruptResult(runId: string) {
+    this.interruptTokens ??= new Map([...this.items.values()].filter((item) => item.type === "run_interrupt_result").map((item) => [text(item.runId), JSON.stringify([item.id, item.updatedAt])]));
+    return this.interruptTokens.get(runId) ?? "";
+  }
 
   row(id: string): TimelineRow | undefined {
     this.rowIndex ??= new Map(this.rows.map((row) => [key(row), row]));
@@ -126,6 +145,8 @@ export class ThreadHistory {
     this.rawMessages.clear();
     this.runs.clear();
     this.attempts.clear();
+    this.requests.clear();
+    this.invalidateControls();
     this.messageCache.clear();
     this.rowIndex = undefined;
     this.rendered = [];
@@ -147,6 +168,8 @@ export class ThreadHistory {
     this.rawMessages = entities(projection.messages);
     this.runs = entities(projection.runs);
     this.attempts = entities(projection.attempts);
+    this.requests = entities(projection.runtimeRequests);
+    this.invalidateControls();
     this.cursor = text(snapshot.historyCursor) || null;
     this.hasMore = snapshot.hasMoreHistory === true;
     this.latestLocalOrdinal = sequence(snapshot.latestLocalTurnOrdinal);
@@ -177,10 +200,16 @@ export class ThreadHistory {
         if (!this.timeline) this.invalidate();
         break;
       case "turn-item.updated":
-        if (id && this.timeline) this.updateItem(payload);
+        if (["approval_request", "user_input_request", "run_interrupt_request", "run_interrupt_result"].includes(text(payload.type))) this.invalidateControls();
+        if (id) this.updateItem(payload);
+        break;
+      case "runtime-request.updated":
+        this.invalidateControls();
+        if (id) this.requests.set(id, payload);
         break;
       case "run.created":
       case "run.updated":
+        this.invalidateControls();
         if (id) this.runs.set(id, payload);
         this.filterVisible();
         break;
@@ -234,6 +263,7 @@ export class ThreadHistory {
     const id = text(incoming.id);
     const previous = this.items.get(id);
     if (!previous && this.outsideWindow(incoming)) {
+      if (["approval_request", "user_input_request", "run_interrupt_request", "run_interrupt_result"].includes(text(incoming.type))) this.items.set(id, incoming);
       this.latestLocalOrdinal = Math.max(this.latestLocalOrdinal ?? 0, ordinal(incoming));
       return;
     }
@@ -259,6 +289,7 @@ export class ThreadHistory {
   }
 
   mergePage(page: HistoryRecord) {
+    this.invalidateControls();
     const existing = new Map(this.rows.map((row) => [key(row), row]));
     const seen = new Set<string>();
     const older: TimelineRow[] = [];
@@ -298,6 +329,10 @@ export class ThreadHistory {
     if (this.timeline) {
       for (const row of this.rows) {
         const item = row.item;
+        if (item.type === "error") {
+          append(key(row), "system", [text(item.title), text(record(item.failure).message)].filter(Boolean).join("\n\n"), text(item.updatedAt), false);
+          continue;
+        }
         if (item.type !== "user_message" && item.type !== "assistant_message") {
           let activity = this.activityCache.get(item);
           if (activity === undefined) {

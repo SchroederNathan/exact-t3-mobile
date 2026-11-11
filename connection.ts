@@ -1,6 +1,7 @@
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
+import { answersFor, controlAccess, controlKey, emptyControls, type QuestionDraft } from "./thread-controls";
 import { summarized, toolBody, toolNeedsDetail, toolRevision, toolSummary, type ToolBatch, type ToolPanel, type ToolRequest } from "./tool-activity";
 import { appendTerminalOutput, EMPTY_TERMINAL_OUTPUT, terminalOutputPlainText, type TerminalOutputState } from "./terminal-output";
 import {
@@ -406,6 +407,9 @@ function upsertSwitchingRecord<T extends { id: string }>(rows: T[], value: T): T
 export class DirectSession {
   readonly environment: Environment;
   private readonly serial = ++sessionSerial;
+  private controlEpoch = 0;
+  private controlGrant = false;
+  private controlOperations = new Map<string, { pending: boolean; error: string; threadId: string; runId: string; result: string }>();
   private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
@@ -552,6 +556,8 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.controlEpoch++;
+    this.controlGrant = false;
     this.clearToolPanels();
     for (const history of this.transcripts.values()) history.disconnect();
     this.shellLive = false;
@@ -601,6 +607,80 @@ export class DirectSession {
     return this.transcripts.get(threadId)?.summary() ?? {
       ready: false, synchronized: false, hasMore: false, loading: false, error: "",
     };
+  }
+
+  controlAccessKey() {
+    return this.socket?.readyState === 1 ? JSON.stringify([this.environment.id, this.serial, this.controlEpoch]) : "";
+  }
+
+  installControlAccess(key: string, session: unknown): boolean {
+    if (!key || key !== this.controlAccessKey()) return false;
+    return this.controlGrant = controlAccess(session);
+  }
+
+  hasControlAccess() { return this.controlGrant && this.controlAccessKey() !== ""; }
+
+  controls(threadId: string) {
+    const controls = this.transcripts.get(threadId)?.controls(this.environment.id) ?? emptyControls();
+    controls.accessKey = this.controlAccessKey();
+    for (const key of controls.resolvedKeys) this.controlOperations.delete(key);
+    for (const [key, operation] of this.controlOperations) {
+      if (operation.threadId === threadId && !operation.runId && controls.ready && !controls.pendingKeys.includes(key)) this.controlOperations.delete(key);
+      if (operation.threadId === threadId && operation.runId &&
+        (operation.runId !== controls.stop.runId || this.transcripts.get(threadId)?.interruptResult(operation.runId) !== operation.result)) this.controlOperations.delete(key);
+    }
+    for (const request of controls.requests) {
+      const operation = this.controlOperations.get(request.key);
+      if (operation) { request.pending = operation.pending; request.error = operation.error; }
+    }
+    const stopping = this.controlOperations.get(controlKey(this.environment.id, threadId, `stop:${controls.stop.runId}`));
+    if (stopping) {
+      controls.stop.error = stopping.error;
+      if (stopping.pending && controls.stop.state === "available") controls.stop.state = "stopping";
+    }
+    return controls;
+  }
+
+  async control(threadId: string, accessKey: string, kind: string, targetId: string, decision: string, drafts: QuestionDraft[], commandId: string): Promise<Reply> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey()) throw new Error("Reconnect and check your permission before responding.");
+    const controls = this.controls(threadId);
+    if (threadId !== this.selected || !controls.ready) throw new Error("Wait for this thread to finish reconnecting.");
+    let payload: ObjectValue;
+    let key = controlKey(this.environment.id, threadId, targetId);
+    if (kind === "stop") {
+      if (controls.stop.runId !== targetId || !targetId) throw new Error("This turn is no longer running.");
+      if (controls.stop.state !== "available") throw new Error("This turn is already stopping.");
+      key = controlKey(this.environment.id, threadId, `stop:${targetId}`);
+      payload = { type: "run.interrupt", commandId, threadId, runId: targetId, holdQueue: true };
+    } else {
+      const request = controls.requests.find((request) => request.id === targetId);
+      if (!request) throw new Error("This request is no longer pending.");
+      if (request.pending) throw new Error("A response is already being sent.");
+      if (request.unavailable && !(kind === "dismiss" && request.dismissible)) throw new Error(request.unavailable);
+      if (kind === "approve" && request.kind === "approval") {
+        if (!request.options.some((option) => option.decision === decision)) throw new Error("This approval option is no longer available.");
+        payload = { type: "runtime-request.respond", commandId, threadId, requestId: targetId, decision };
+      } else if (kind === "answer" && request.kind === "question") {
+        const answers = answersFor(request.questions, drafts, key);
+        if (!answers) throw new Error("Answer every question before submitting.");
+        payload = { type: "runtime-request.respond", commandId, threadId, requestId: targetId, answers };
+      } else if (kind === "dismiss" && request.dismissible) {
+        payload = { type: "thread.user-input.dismiss", commandId, threadId, requestId: targetId };
+      } else throw new Error("This response is not available.");
+    }
+    const operation = { pending: true, error: "", threadId, runId: kind === "stop" ? targetId : "", result: this.transcripts.get(threadId)?.interruptResult(targetId) ?? "" };
+    const id = this.request("orchestration.dispatchCommand", payload);
+    this.controlOperations.set(key, operation);
+    const reply = await new Promise<Reply>((resolve) => this.replies.set(id, resolve));
+    if (!reply.ok) {
+      operation.pending = false;
+      operation.error = reply.error;
+      if (/permission|forbidden|unauthorized|scope|not authorized/i.test(reply.error)) {
+        this.controlGrant = false;
+        this.controlEpoch++;
+      }
+    }
+    return reply;
   }
 
   timeline(threadId: string): readonly TimelineRow[] {
@@ -962,6 +1042,8 @@ export class DirectSession {
   }
 
   disconnected(reason: string) {
+    this.controlEpoch++;
+    this.controlGrant = false;
     this.clearToolPanels();
     this.shellLive = false;
     this.shellRequest = "";
@@ -1199,6 +1281,7 @@ export class DirectSession {
           toolViewKey: this.toolViewKey(id),
           markdownRevision: this.transcripts.get(id)?.markdownRevision ?? 0,
           history: this.history(id),
+          controls: this.controls(id),
         };
       })
       .sort(

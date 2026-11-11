@@ -737,6 +737,7 @@ describe("direct T3 connection", () => {
     session.select("");
     expect(session.threads(Date.parse("2026-11-08T12:00:00Z"))).toEqual([
       {
+        controls: { accessKey: session.controlAccessKey(), keyPrefix: "", pendingKeys: [], ready: false, requests: [], resolvedKeys: [], stop: { runId: "", state: "", error: "" } },
         id: scopedThreadId("env", "t"),
         listed: true,
         environmentId: "env",
