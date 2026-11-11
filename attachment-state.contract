@@ -346,7 +346,6 @@ members T3Code
                     send galleryCancelled = cancelGalleryWork(work)
                   case none
                     attachmentError = attachmentError
-                viewerUrl = none
                 viewerDownloaded = none
                 let attempt = galleryAttempt + 1
                 let work = GalleryWork(presentationId=viewer.presentationId, threadId=viewer.threadId, accessKey=viewer.accessKey, origin=viewer.origin, index=item.index, attempt=attempt, item=item)
