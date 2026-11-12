@@ -24,6 +24,7 @@ routes nav
       inspector "/threads/:id/inspect/:kind"
       linkedFile "/threads/:id/file/:file/:line/:column"
       turnReview "/threads/:id/review/:turn"
+      terminal "/threads/:id/terminal/:terminalId"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
   tab pullRequests "/pulls"
@@ -198,6 +199,44 @@ shape Project
   title: string
   environmentId: string
 
+shape TerminalScript
+  id: string
+  label: string
+  command: string
+  icon: string
+
+shape TerminalSession
+  terminalId: string
+  cwd: string
+  status: string
+  hasRunningSubprocess: bool
+  displayLabel: string
+  updatedAt: string
+
+shape TerminalView
+  threadId: string
+  terminalId: string
+  cwd: string
+  status: string
+  output: string
+  error: string
+  hasRunningSubprocess: bool
+  displayLabel: string
+  updatedAt: string
+
+shape TerminalMenu
+  sessions: TerminalSession[]
+  scripts: TerminalScript[]
+  workspaceRoot: string
+  canOpen: bool
+  canRead: bool
+  canOperate: bool
+
+shape TerminalAccess
+  canRead: bool
+  canOperate: bool
+  error: string
+
 shape Catalog
   modelDraftRevision: number
   projects: Project[]
@@ -212,6 +251,11 @@ shape CreatedThread
 shape Reply
   ok: bool
   error: string
+
+shape TerminalLaunchReply
+  ok: bool
+  error: string
+  terminalId: string
 
 
 shape InspectionItem
@@ -243,6 +287,10 @@ fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thr
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
+fn terminalBasename(path: string): string = match first(path.split("/").filter(part => part != "").slice(-1)) { case some(value) => value, case none => "/" }
+fn nextTerminalId(sessions: TerminalSession[], activeId: string): string = match first(range(sessions.length + 3).filter(index => index > 0 and sessions.filter(session => session.terminalId == `term-${index}`).length == 0 and activeId != `term-${index}`)) { case some(index) => `term-${index}`, case none => `term-${sessions.length + 1}` }
+fn terminalHostPlatformFromLabel(label: string): string = label.toLowerCase().includes("mac") or label.toLowerCase().includes("darwin") or label.toLowerCase().includes("imac") ? "mac" : label.toLowerCase().includes("windows") or label.toLowerCase().includes("win") ? "windows" : label.toLowerCase().includes("linux") or label.toLowerCase().includes("ubuntu") or label.toLowerCase().includes("debian") ? "linux" : "unknown"
+fn terminalHostPlatform(catalog: Catalog, threadId: string): string = match first(selectedThread(catalog, threadId)) { case some(thread) => match first(catalog.environments.filter(environment => environment.id == thread.environmentId)) { case some(environment) => environment.machineSymbol == "macmini" or environment.machineSymbol == "macstudio" ? "mac" : terminalHostPlatformFromLabel(environment.label), case none => "unknown" }, case none => "unknown" }
 
 
 fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
@@ -284,6 +332,10 @@ component T3Code
   state composerWide = false
   state composerThumbnailLimit = 1
   state reviewRetry = 0
+  state terminalClock = 0
+  state terminalFontSize = 10.5 persist
+  state terminalModifier = ""
+  state terminalKeyboardVisible = false
   resource turnReview = loadTurnReview(threadRoute.name == "turnReview" ? activeThreadId : "", threadRoute.name == "turnReview" ? threadRoute.params.turn : "0", reviewRetry) as shape TurnReview else empty()
   state visitTracker = VisitTracker(id="", openPending=false, watermark=-1, cooling=false, serial=0)
   state threadOpens: ThreadOpen[] = []
@@ -317,6 +369,10 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentRecords = loadEnvironmentRecords() as shape Environment[] else empty()
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentRecords) with time.epochAtZero as shape Catalog else empty()
+  resource terminalAccess = loadTerminalAccess(activeThreadId) as shape TerminalAccess else empty()
+  resource terminalMenu = loadTerminalMenu(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalMenu else empty()
+  resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
+  derive terminalHost = terminalHostPlatform(catalog, activeThreadId)
   state statusNow = 0
   derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
   resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
@@ -324,6 +380,18 @@ component T3Code
     after(1000, updateStatusClock)
   action updateStatusClock
     statusNow = performanceNow()
+  task tickTerminal when visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "terminal") key=`${activeThreadId}:${threadRoute.name}:${terminalClock}`
+    after(500, updateTerminalClock)
+  action updateTerminalClock
+    terminalClock = performanceNow()
+  task leaveExitedTerminal when threadRoute.name == "terminal" and terminal.status == "exited" and terminal.updatedAt != "" key=`${activeThreadId}:${threadRoute.params.terminalId}:${terminal.updatedAt}`
+    after(1, closeTerminal)
+  action decreaseTerminalFont
+    terminalFontSize = max(6, terminalFontSize - 0.5)
+  action increaseTerminalFont
+    terminalFontSize = min(14, terminalFontSize + 0.5)
+  action toggleTerminalModifier(modifier: string)
+    terminalModifier = terminalModifier == modifier ? "" : modifier
   mutation regrouped as shape NavigationChange then afterRegroup
   mutation changed as shape Reply refreshes environmentRecords, catalog
   mutation sent as shape SendReply then afterSend
@@ -332,6 +400,11 @@ component T3Code
   mutation savedEnvironment as shape Reply refreshes environmentRecords, catalog then afterEnvironmentSave
   mutation removed as shape Reply refreshes environmentRecords, catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
+  state terminalInput = ""
+  state terminalLaunchThreadId = ""
+  mutation terminalWritten as shape Reply queue
+  mutation terminalCleared as shape Reply queue
+  mutation terminalScriptStarted as shape TerminalLaunchReply then afterTerminalScript
   mutation lifecycleChanged as shape Reply refreshes catalog
   state lifecycleThreadId = ""
   derive lifecycleBusy = pending(lifecycleChanged) and lifecycleThreadId == activeThreadId
@@ -352,7 +425,7 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "terminal" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
@@ -568,6 +641,104 @@ component T3Code
 
   action loadInspector
     send inspected = inspectThread(current.params.id, current.params.kind, inspectorPath)
+
+  action openTerminal(id: string, terminalId: string)
+    let base = split ? threadNav : nav
+    nav = threadRoute.name == "terminal" ? replace(base, path("terminal", id, terminalId)) : push(base, path("terminal", id, terminalId))
+
+  action openNewTerminal(id: string)
+    let next = nextTerminalId(terminalMenu.sessions, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "")
+    let base = split ? threadNav : nav
+    nav = threadRoute.name == "terminal" ? replace(base, path("terminal", id, next)) : push(base, path("terminal", id, next))
+
+  action closeTerminal
+    nav = back(nav)
+
+  action editTerminalInput(value: string)
+    terminalInput = value
+
+  task resetTerminalInput when visibleTab == "threads" key=`${activeThreadId}:${threadRoute.name}:${threadRoute.name == "terminal" ? threadRoute.params.terminalId : ""}`
+    after(1, clearTerminalInput)
+  action clearTerminalInput
+    terminalInput = ""
+    terminalModifier = ""
+    terminalKeyboardVisible = false
+
+  action focusTerminal
+    terminalKeyboardVisible = true
+
+  action terminalFocused
+    terminalKeyboardVisible = true
+
+  action terminalBlurred
+    terminalKeyboardVisible = false
+
+  task focusTerminalInputLater when terminalKeyboardVisible and threadRoute.name == "terminal" key=`${activeThreadId}:${threadRoute.params.terminalId}:${terminalKeyboardVisible}`
+    after(1, focusTerminalInput)
+  action focusTerminalInput
+    focus("terminal-input")
+
+  action sendTerminalInput
+    if terminalInput != "" and threadRoute.name == "terminal"
+      send terminalWritten = writeTerminal(threadRoute.params.id, threadRoute.params.terminalId, `${terminalInput}\u{000D}`)
+      terminalInput = ""
+
+  action sendTerminalControl(data: string)
+    if threadRoute.name == "terminal"
+      let modified = terminalModifier == "ctrl" and data == "c" ? "\u{0003}" : terminalModifier == "ctrl" and data == "d" ? "\u{0004}" : terminalModifier == "ctrl" and data == "\u{001B}[A" ? "\u{001B}[1;5A" : terminalModifier == "ctrl" and data == "\u{001B}[B" ? "\u{001B}[1;5B" : terminalModifier == "ctrl" and data == "\u{001B}[C" ? "\u{001B}[1;5C" : terminalModifier == "ctrl" and data == "\u{001B}[D" ? "\u{001B}[1;5D" : terminalModifier == "meta" and data == "\u{001B}[A" ? "\u{001B}[1;3A" : terminalModifier == "meta" and data == "\u{001B}[B" ? "\u{001B}[1;3B" : terminalModifier == "meta" and data == "\u{001B}[C" ? "\u{001B}[1;3C" : terminalModifier == "meta" and data == "\u{001B}[D" ? "\u{001B}[1;3D" : terminalModifier == "meta" ? `\u{001B}${data}` : data
+      send terminalWritten = writeTerminal(threadRoute.params.id, threadRoute.params.terminalId, modified)
+      terminalModifier = ""
+
+  action terminalKey(key: string, e: KeyboardEvent)
+    if key == "Enter" and not e.shiftKey and not e.altKey
+      sendTerminalInput()
+      preventDefault()
+    else if key == "ArrowUp"
+      sendTerminalControl(e.ctrlKey ? "\u{001B}[1;5A" : e.altKey or e.metaKey ? "\u{001B}[1;3A" : "\u{001B}[A")
+      preventDefault()
+    else if key == "ArrowDown"
+      sendTerminalControl(e.ctrlKey ? "\u{001B}[1;5B" : e.altKey or e.metaKey ? "\u{001B}[1;3B" : "\u{001B}[B")
+      preventDefault()
+    else if key == "ArrowLeft"
+      sendTerminalControl(e.ctrlKey ? "\u{001B}[1;5D" : e.altKey or e.metaKey ? "\u{001B}[1;3D" : "\u{001B}[D")
+      preventDefault()
+    else if key == "ArrowRight"
+      sendTerminalControl(e.ctrlKey ? "\u{001B}[1;5C" : e.altKey or e.metaKey ? "\u{001B}[1;3C" : "\u{001B}[C")
+      preventDefault()
+    else if key == "Escape"
+      sendTerminalControl("\u{001B}")
+      preventDefault()
+    else if key == "Tab"
+      sendTerminalControl("\u{0009}")
+      preventDefault()
+    else if key.toLowerCase() == "c" and e.ctrlKey
+      sendTerminalControl("\u{0003}")
+      preventDefault()
+    else if key.toLowerCase() == "d" and e.ctrlKey
+      sendTerminalControl("\u{0004}")
+      preventDefault()
+
+  action pasteTerminal(e: ClipboardEvent)
+    if threadRoute.name == "terminal" and e.text != ""
+      send terminalWritten = writeTerminal(threadRoute.params.id, threadRoute.params.terminalId, e.text)
+      preventDefault()
+
+  action clearTerminalOutput
+    if threadRoute.name == "terminal"
+      send terminalCleared = clearTerminal(threadRoute.params.id, threadRoute.params.terminalId)
+
+  action runTerminalScript(threadId: string, scriptId: string)
+    terminalLaunchThreadId = threadId
+    send terminalScriptStarted = runTerminalScript(threadId, scriptId)
+
+  action afterTerminalScript
+    match terminalScriptStarted
+      case some(reply)
+        if reply.ok and terminalLaunchThreadId == activeThreadId
+          let base = split ? threadNav : nav
+          nav = threadRoute.name == "terminal" ? replace(base, path("terminal", terminalLaunchThreadId, reply.terminalId)) : push(base, path("terminal", terminalLaunchThreadId, reply.terminalId))
+      case none
+        nav = nav
 
   task regroup when needsRegroup key=`${split}:${nav.tab}:${nav.next}:${current.id}`
     after(1, regroupNow)
@@ -947,8 +1118,9 @@ component T3Code
                     if split
                       button press=inspect("files") aria-label="Show inspector" testId="thread-inspector"
                         image "symbol:sf/sidebar.right"
-                    button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
-                      image "symbol:sf/terminal"
+                    if terminalMenu.canRead or terminalMenu.canOperate
+                      button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
+                        image "symbol:sf/terminal"
                     button aria-label="Git controls" popovertarget="git-menu" testId="thread-git"
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     button press=inspect("files") aria-label="Open files" testId="thread-files"
@@ -1091,6 +1263,68 @@ component T3Code
                               button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
                                 row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
                                   image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
+              if e.name == "terminal"
+                column navigationKey=`${e.id}` navigationScroll="terminal-output" data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Terminal" role="heading" aria-level=2
+                    for thread in selectedThread(catalog, e.params.id) key=thread.id
+                      text thread.project font-size=13 color="muted"
+                    button popovertarget="terminal-options-menu" aria-label="Terminal options" testId="terminal-options"
+                      image "symbol:sf/terminal"
+                  if pending(terminal)
+                    text "Opening terminal…" color="muted" padding=16 testId="terminal-loading"
+                  else if terminal.error != ""
+                    column gap=10 padding=16
+                      text "Terminal unavailable" font-size=21 font-weight=700
+                      text terminal.error color="danger" user-select="text" testId="terminal-error"
+                      button press=openNewTerminal(e.params.id) buttonStyle="bordered-prominent" testId="terminal-retry"
+                        text "Open new terminal"
+                  else
+                    scroll id="terminal-output" flex=1 min-height=0 padding="12px 14px" background-color="terminal-surface" paste=pasteTerminal testId="terminal-output"
+                      text terminal.output user-select="text" white-space="pre-wrap" overflow-wrap="break-word" font-family="Menlo" font-size=terminalFontSize line-height="20px" color="terminal-foreground"
+                    if terminalKeyboardVisible
+                      scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 background-color="terminal-surface" testId="terminal-toolbar"
+                        row gap=6 padding="6px 12px 0" flex-wrap="nowrap" align-items="center" min-width=0
+                          button press=sendTerminalControl("\u{001B}[A") aria-label="Arrow up" testId="terminal-key-up" flex-shrink=0 min-width=42
+                            text "↑"
+                          button press=sendTerminalControl("\u{001B}[B") aria-label="Arrow down" testId="terminal-key-down" flex-shrink=0 min-width=42
+                            text "↓"
+                          button press=sendTerminalControl("\u{001B}[D") aria-label="Arrow left" testId="terminal-key-left" flex-shrink=0 min-width=42
+                            text "←"
+                          button press=sendTerminalControl("\u{001B}[C") aria-label="Arrow right" testId="terminal-key-right" flex-shrink=0 min-width=42
+                            text "→"
+                          button press=sendTerminalControl("\u{001B}") aria-label="Escape" testId="terminal-key-escape" flex-shrink=0 min-width=52
+                            text "Esc"
+                          if terminalHost == "mac"
+                            button press=toggleTerminalModifier("meta") aria-label="Command modifier" aria-pressed=(terminalModifier == "meta") testId="terminal-modifier-meta" flex-shrink=0 min-width=52
+                              text "Cmd"
+                            button press=toggleTerminalModifier("ctrl") aria-label="Control modifier" aria-pressed=(terminalModifier == "ctrl") testId="terminal-modifier-ctrl" flex-shrink=0 min-width=52
+                              text "Ctrl"
+                          else
+                            button press=toggleTerminalModifier("ctrl") aria-label="Control modifier" aria-pressed=(terminalModifier == "ctrl") testId="terminal-modifier-ctrl" flex-shrink=0 min-width=52
+                              text "Ctrl"
+                            button press=toggleTerminalModifier("meta") aria-label="Alt modifier" aria-pressed=(terminalModifier == "meta") testId="terminal-modifier-meta" flex-shrink=0 min-width=52
+                              text "Alt"
+                          button press=sendTerminalControl("\u{0009}") aria-label="Tab" testId="terminal-key-tab" flex-shrink=0 min-width=52
+                            text "Tab"
+                          button press=clearTerminalOutput aria-label="Clear terminal" testId="terminal-key-clear" flex-shrink=0 min-width=64
+                            text "Clear"
+                          button press=sendTerminalControl("~") aria-label="Tilde" testId="terminal-key-tilde" flex-shrink=0 min-width=42
+                            text "~"
+                          button press=sendTerminalControl("|") aria-label="Pipe" testId="terminal-key-pipe" flex-shrink=0 min-width=42
+                            text "|"
+                          button press=sendTerminalControl("/") aria-label="Slash" testId="terminal-key-slash" flex-shrink=0 min-width=42
+                            text "/"
+                          button press=sendTerminalControl("-") aria-label="Dash" testId="terminal-key-dash" flex-shrink=0 min-width=42
+                            text "-"
+                    if terminalKeyboardVisible
+                      row gap=8 padding="8px 12px calc(env(safe-area-inset-bottom) + 8px)" background-color="terminal-surface"
+                        input value=terminalInput input=editTerminalInput key=terminalKey submit=sendTerminalInput focusin=terminalFocused focusout=terminalBlurred autofocus=terminalKeyboardVisible placeholder="Send input to terminal" aria-label="Terminal input" testId="terminal-input" flex=1 min-width=0 min-height=42 padding="0 12px" border-radius=12 background-color="input-fill" font-family="Menlo" font-size=14
+                        button press=sendTerminalInput disabled=(terminalInput == "") appearance="none" display="flex" align-items="center" justify-content="center" padding=0 width=42 height=42 border-radius=12 background-color=(terminalInput == "" ? "send-disabled" : "AccentColor") color="white" aria-label="Send terminal input" testId="terminal-send"
+                          image "symbol:sf/arrow.up"
+                    else
+                      button press=focusTerminal aria-label="Show keyboard" testId="terminal-show-keyboard" position="absolute" right=16 bottom="calc(env(safe-area-inset-bottom) + 16px)" width=48 height=48 border-radius=24 background-color="terminal-surface" color="terminal-foreground"
+                        image "symbol:sf/keyboard" font-size=20
               if e.name == "threadSettings"
                 column navigationKey=`${e.id}` data-workspace-header="settings-sheet" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="models-list" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -1300,8 +1534,41 @@ component T3Code
         button press=removeEnvironment destructive=true commandfor="remove-environment" command="close" testId="environment-remove-confirm"
           text "Remove"
       column id="terminal-menu" popover="auto" role="menu" aria-label="Terminal"
-        button role="menuitem" disabled=true
-          text "No project scripts"
+        for script in terminalMenu.scripts key=script.id
+          button role="menuitem" press=runTerminalScript(activeThreadId, script.id) popovertarget="terminal-menu" popovertargetaction="hide" disabled=(not terminalMenu.canOperate)
+            image (script.icon == "test" ? "symbol:sf/testtube.2" : script.icon == "lint" ? "symbol:sf/checkmark.seal" : script.icon == "configure" ? "symbol:sf/wrench.and.screwdriver" : script.icon == "build" ? "symbol:sf/hammer" : script.icon == "debug" ? "symbol:sf/ladybug" : "symbol:sf/play.fill")
+            text script.label
+            text script.command
+        if terminalMenu.scripts.length == 0
+          button role="menuitem" disabled=true
+            image "symbol:sf/play"
+            text "No project scripts"
+            text "This project has no saved scripts yet"
+        for session in terminalMenu.sessions key=session.terminalId
+          button role="menuitem" press=openTerminal(activeThreadId, session.terminalId) popovertarget="terminal-menu" popovertargetaction="hide"
+            image "symbol:sf/terminal"
+            text session.displayLabel
+            text `${session.status == "running" ? (session.hasRunningSubprocess ? "Task running" : "Ready") : session.status == "starting" ? "Starting" : session.status == "exited" ? "Exited" : "Error"} · ${terminalBasename(session.cwd)}`
+        button role="menuitem" press=openNewTerminal(activeThreadId) popovertarget="terminal-menu" popovertargetaction="hide" disabled=(not terminalMenu.canOperate)
+          image "symbol:sf/plus"
+          text "Open new terminal"
+          text `Start another shell in ${terminalMenu.workspaceRoot == "" ? "this workspace" : terminalBasename(terminalMenu.workspaceRoot)}`
+      column id="terminal-options-menu" popover="auto" role="menu" aria-label="Terminal options"
+        button role="menuitem" popovertarget="terminal-text-size-menu"
+          image "symbol:sf/textformat.size"
+          text "Text size"
+        for session in terminalMenu.sessions key=`option-${session.terminalId}`
+          button role="menuitemradio" aria-checked=(session.terminalId == (threadRoute.name == "terminal" ? threadRoute.params.terminalId : "")) press=openTerminal(activeThreadId, session.terminalId) popovertarget="terminal-options-menu" popovertargetaction="hide"
+            image "symbol:sf/terminal"
+            text session.displayLabel
+        button role="menuitem" press=openNewTerminal(activeThreadId) popovertarget="terminal-options-menu" popovertargetaction="hide" disabled=(not terminalMenu.canOperate)
+          image "symbol:sf/plus"
+          text "Open new terminal"
+      column id="terminal-text-size-menu" popover="auto" role="menu" aria-label="Text size"
+        button role="menuitem" press=decreaseTerminalFont popovertarget="terminal-text-size-menu" popovertargetaction="hide" disabled=(terminalFontSize <= 6)
+          text `A- ${max(6, terminalFontSize - 0.5)} pt`
+        button role="menuitem" press=increaseTerminalFont popovertarget="terminal-text-size-menu" popovertargetaction="hide" disabled=(terminalFontSize >= 14)
+          text `A+ ${min(14, terminalFontSize + 0.5)} pt`
       column id="git-menu" popover="auto" role="menu" aria-label="Git controls"
         button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide"
           image "symbol:sf/text.bubble"

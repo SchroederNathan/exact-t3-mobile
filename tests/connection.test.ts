@@ -2782,3 +2782,209 @@ test("loads only the requested checkpoint diff without requiring turn-control pe
   );
   await expect(loading).resolves.toBe("@@ -1 +1 @@\n-old\n+new");
 });
+
+test("terminal metadata and attach streams drive output, write, and clear", async () => {
+  const { session, requests } = settingsSession(false);
+  const shellRequest = requests.find((request) => request.tag === "orchestration.subscribeShell")!;
+  session.receive(
+    JSON.stringify({
+      _tag: "Chunk",
+      requestId: shellRequest.id,
+      values: [
+        {
+          kind: "snapshot",
+          snapshot: {
+            projects: [
+              {
+                id: "project",
+                title: "Workspace",
+                workspaceRoot: "/workspace",
+                scripts: [
+                  {
+                    id: "dev",
+                    name: "Dev",
+                    command: "bun dev",
+                    icon: "play",
+                    stopOnSettle: true,
+                  },
+                ],
+              },
+            ],
+            threads: [{ id: "thread", projectId: "project" }],
+          },
+        },
+      ],
+    }),
+  );
+  const metadataRequest = requests.find((request) => request.tag === "subscribeTerminalMetadata")!;
+  session.receive(
+    JSON.stringify({
+      _tag: "Chunk",
+      requestId: metadataRequest.id,
+      values: [
+        {
+          type: "snapshot",
+          terminals: [
+            {
+              threadId: "thread",
+              terminalId: "term-1",
+              cwd: "/workspace",
+              worktreePath: null,
+              status: "running",
+              hasRunningSubprocess: false,
+              label: "",
+              updatedAt: "2026-11-12T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(session.terminalSessions("thread")[0]).toMatchObject({
+    terminalId: "term-1",
+    displayLabel: "Terminal 1",
+    status: "running",
+  });
+
+  const attached = session.attachTerminal("thread", "term-1", {
+    cwd: "/workspace",
+    worktreePath: "",
+    cols: 80,
+    rows: 24,
+  });
+  expect(attached.status).toBe("running");
+  const attachRequest = requests.find((request) => request.tag === "terminal.attach")!;
+  session.receive(
+    JSON.stringify({
+      _tag: "Chunk",
+      requestId: attachRequest.id,
+      values: [
+        {
+          type: "snapshot",
+          snapshot: {
+            threadId: "thread",
+            terminalId: "term-1",
+            cwd: "/workspace",
+            worktreePath: null,
+            status: "running",
+            history: "ready\n",
+            label: "",
+            updatedAt: "2026-11-12T00:00:01Z",
+          },
+        },
+        { type: "output", threadId: "thread", terminalId: "term-1", data: "\u001b[31mred\u001b[0m\n" },
+      ],
+    }),
+  );
+  expect(session.terminal("thread", "term-1")).toMatchObject({
+    output: "ready\nred\n",
+    status: "running",
+  });
+
+  const writing = session.writeTerminal("thread", "term-1", "pwd\r");
+  const writeRequest = requests.find((request) => request.tag === "terminal.write")!;
+  expect(writeRequest.payload).toEqual({ threadId: "thread", terminalId: "term-1", data: "pwd\r" });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: writeRequest.id, exit: { _tag: "Success", value: {} } }));
+  await expect(writing).resolves.toEqual({ ok: true, error: "" });
+
+  const clearing = session.clearTerminal("thread", "term-1");
+  const clearRequest = requests.find((request) => request.tag === "terminal.clear")!;
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: clearRequest.id, exit: { _tag: "Success", value: {} } }));
+  await expect(clearing).resolves.toEqual({ ok: true, error: "" });
+  expect(session.terminal("thread", "term-1")?.output).toBe("");
+
+  const launched = session.runTerminalScript("thread", "dev");
+  const openRequest = requests.findLast((request) => request.tag === "terminal.open")!;
+  expect(openRequest.payload).toMatchObject({
+    threadId: "thread",
+    terminalId: "term-2",
+    cwd: "/workspace",
+    env: { T3CODE_PROJECT_ROOT: "/workspace" },
+    stopOnSettle: true,
+  });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: openRequest.id, exit: { _tag: "Success", value: {} } }));
+  await Promise.resolve();
+  await Promise.resolve();
+  const scriptWrite = requests.findLast((request) => request.tag === "terminal.write")!;
+  expect(scriptWrite.payload).toMatchObject({
+    threadId: "thread",
+    terminalId: "term-2",
+    data: " bun dev\r",
+  });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: scriptWrite.id, exit: { _tag: "Success", value: {} } }));
+  await expect(launched).resolves.toEqual({ ok: true, error: "", terminalId: "term-2" });
+});
+
+test("project scripts reuse the default terminal when no shell is running", async () => {
+  const { session, requests } = settingsSession(false);
+  const shellRequest = requests.find((request) => request.tag === "orchestration.subscribeShell")!;
+  session.receive(
+    JSON.stringify({
+      _tag: "Chunk",
+      requestId: shellRequest.id,
+      values: [
+        {
+          kind: "snapshot",
+          snapshot: {
+            projects: [
+              {
+                id: "project",
+                title: "Workspace",
+                workspaceRoot: "/workspace",
+                scripts: [
+                  {
+                    id: "setup",
+                    name: "Setup",
+                    command: "bun setup",
+                    runOnWorktreeCreate: true,
+                    runOnSettle: true,
+                  },
+                ],
+              },
+            ],
+            threads: [{ id: "thread", projectId: "project" }],
+          },
+        },
+      ],
+    }),
+  );
+  const metadataRequest = requests.find((request) => request.tag === "subscribeTerminalMetadata")!;
+  session.receive(
+    JSON.stringify({
+      _tag: "Chunk",
+      requestId: metadataRequest.id,
+      values: [
+        {
+          type: "snapshot",
+          terminals: [
+            {
+              threadId: "thread",
+              terminalId: "term-1",
+              cwd: "/workspace",
+              worktreePath: null,
+              status: "exited",
+              hasRunningSubprocess: false,
+              label: "",
+              updatedAt: "2026-11-12T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(session.terminalProjectScripts("thread")[0]).toMatchObject({
+    label: "Setup (setup, on settle)",
+    runOnWorktreeCreate: true,
+    runOnSettle: true,
+  });
+  const launched = session.runTerminalScript("thread", "setup");
+  const openRequest = requests.findLast((request) => request.tag === "terminal.open")!;
+  expect(openRequest.payload.terminalId).toBe("term-1");
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: openRequest.id, exit: { _tag: "Success", value: {} } }));
+  await Promise.resolve();
+  await Promise.resolve();
+  const writeRequest = requests.findLast((request) => request.tag === "terminal.write")!;
+  expect(writeRequest.payload).toMatchObject({ terminalId: "term-1", data: " bun setup\r" });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: writeRequest.id, exit: { _tag: "Success", value: {} } }));
+  await expect(launched).resolves.toEqual({ ok: true, error: "", terminalId: "term-1" });
+});
