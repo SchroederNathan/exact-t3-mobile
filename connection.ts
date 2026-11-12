@@ -76,6 +76,83 @@ export interface ForceStopResult {
   sharedWithThreadIds: string[];
 }
 
+/** A compact, UI-facing projection of the server's VCS status response. */
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  url: string;
+  baseBranch: string;
+  headBranch: string;
+  state: "open" | "closed" | "merged";
+  isDraft: boolean;
+  updatedAt: string;
+}
+
+export interface MobilePullRequestSummary {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed" | "merged";
+  repository: string;
+  branch: string;
+  baseBranch: string;
+  author: string;
+  updatedAt: string;
+}
+
+export interface PullRequestListItem extends PullRequestSummary {
+  threadId: string;
+  projectId: string;
+}
+
+export interface GitStatus {
+  cwd: string;
+  isRepo: boolean;
+  canWrite: boolean;
+  refName: string | null;
+  isDefaultRef: boolean;
+  hasWorkingTreeChanges: boolean;
+  hasUpstream: boolean;
+  hasPrimaryRemote: boolean;
+  aheadCount: number;
+  behindCount: number;
+  aheadOfDefaultCount: number;
+  branchChanges: { baseRef: string; insertions: number; deletions: number } | null;
+  workingTree: { files: { path: string; insertions: number; deletions: number }[] };
+  pr: PullRequestSummary | null;
+  pullRequest: PullRequestSummary | null;
+  unavailableReason: string;
+}
+
+export type GitAction =
+  | "commit"
+  | "push"
+  | "create_pr"
+  | "commit_push"
+  | "commit_push_pr";
+
+export type GitOperationState =
+  | { status: "idle" }
+  | {
+      status: "running";
+      actionId: string;
+      action: GitAction;
+      phase: "branch" | "commit" | "push" | "pr" | "";
+      message: string;
+    }
+  | { status: "succeeded"; actionId: string; action: GitAction; result: ObjectValue }
+  | { status: "failed"; actionId: string; action: GitAction; error: string };
+
+export interface GitActionInput {
+  actionId: string;
+  action: GitAction;
+  commitMessage?: string;
+  featureBranch?: boolean;
+  filePaths?: string[];
+  projectId?: string;
+}
+
 export function object(value: unknown): ObjectValue {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as ObjectValue)
@@ -499,6 +576,184 @@ function upsertSwitchingRecord<T extends { id: string }>(rows: T[], value: T): T
   return index < 0 ? [...rows, value] : rows.map((row, at) => (at === index ? value : row));
 }
 
+/** Normalize an untrusted refreshStatus payload before it reaches the view. */
+export function normalizeGitStatus(value: unknown): GitStatus {
+  const raw = object(value);
+  const branchChanges = object(raw.branchChanges);
+  const tree = object(raw.workingTree);
+  const files = records(tree.files).map((file) => ({
+    path: string(file.path),
+    insertions: Number(file.insertions ?? 0),
+    deletions: Number(file.deletions ?? 0),
+  }));
+  const ref = string(raw.refName) || string(raw.branch) || string(raw.currentRef);
+  const pr = normalizePullRequestSummary(raw.pr ?? raw.pullRequest);
+  return {
+    cwd: string(raw.cwd),
+    isRepo: raw.isRepo === true,
+    canWrite: raw.canWrite !== false && raw.readOnly !== true,
+    refName: ref || null,
+    isDefaultRef: raw.isDefaultRef === true || raw.isDefaultBranch === true,
+    hasWorkingTreeChanges: raw.hasWorkingTreeChanges === true || files.length > 0,
+    hasUpstream: raw.hasUpstream === true,
+    hasPrimaryRemote: raw.hasPrimaryRemote === true,
+    aheadCount: Number(raw.aheadCount ?? 0),
+    behindCount: Number(raw.behindCount ?? 0),
+    aheadOfDefaultCount: Number(raw.aheadOfDefaultCount ?? 0),
+    branchChanges:
+      Object.keys(branchChanges).length > 0
+        ? {
+            baseRef: string(branchChanges.baseRef),
+            insertions: Number(branchChanges.insertions ?? 0),
+            deletions: Number(branchChanges.deletions ?? 0),
+          }
+        : null,
+    workingTree: { files },
+    pr,
+    pullRequest: pr,
+    unavailableReason: raw.isRepo === true ? "" : "Not a git repository",
+  };
+}
+
+function normalizePullRequestSummary(value: unknown): PullRequestSummary | null {
+  if (value == null) return null;
+  const raw = object(value);
+  const number = Number(raw.number);
+  if (!Number.isSafeInteger(number) || number < 1 || !string(raw.url)) return null;
+  const state = string(raw.state);
+  return {
+    number,
+    title: string(raw.title) || `Pull request #${number}`,
+    url: string(raw.url),
+    baseBranch: string(raw.baseBranch) || string(raw.baseRef),
+    headBranch: string(raw.headBranch) || string(raw.headRef),
+    state: state === "closed" || state === "merged" ? state : "open",
+    isDraft: raw.isDraft === true,
+    updatedAt: string(raw.updatedAt),
+  };
+}
+
+export function pullRequestSummary(value: unknown): MobilePullRequestSummary {
+  const raw = object(value);
+  const number = Number(raw.number);
+  const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
+  const baseBranch = string(raw.baseBranch) || string(raw.baseRef);
+  const branch = string(raw.headBranch) || string(raw.headRef) || string(raw.branch);
+  const author = string(object(raw.author).login) || string(raw.author);
+  const state = string(raw.state);
+  return {
+    id: string(raw.id) || `${repository}:${number}`,
+    number: Number.isSafeInteger(number) ? number : 0,
+    title: string(raw.title),
+    url: string(raw.url),
+    state: state === "closed" || state === "merged" ? state : "open",
+    repository,
+    branch,
+    baseBranch,
+    author,
+    updatedAt: string(raw.updatedAt),
+  };
+}
+
+export type GitQuickAction =
+  | { kind: "run_action"; action: GitAction; disabled: boolean; hint: string }
+  | { kind: "run_pull"; action?: undefined; disabled: boolean; hint: string }
+  | { kind: "open_pr"; action?: undefined; disabled: boolean; hint: string; url: string }
+  | { kind: "show_hint"; action?: undefined; disabled: true; hint: string };
+
+export function gitQuickAction(
+  status: GitStatus,
+  busy: boolean,
+  canWrite: boolean,
+): GitQuickAction {
+  if (!status.isRepo)
+    return { kind: "show_hint", disabled: true, hint: "This workspace is not a git repository." };
+  if (busy) return { kind: "show_hint", disabled: true, hint: "A Git action is already running." };
+  const hasOpenPr = status.pullRequest?.state === "open";
+  if (!status.refName)
+    return {
+      kind: "show_hint",
+      disabled: true,
+      hint: "Create and checkout a branch before pushing or opening a pull request.",
+    };
+  if (!canWrite && !hasOpenPr)
+    return {
+      kind: "show_hint",
+      disabled: true,
+      hint: "This connection cannot change source control.",
+    };
+  const ahead = status.aheadCount > 0;
+  const behind = status.behindCount > 0;
+  if (status.hasWorkingTreeChanges) {
+    if (behind || (!status.hasUpstream && !status.hasPrimaryRemote))
+      return { kind: "run_action", action: "commit", disabled: false, hint: "Commit changes" };
+    if (hasOpenPr || status.isDefaultRef)
+      return { kind: "run_action", action: "commit_push", disabled: false, hint: "Commit and push changes" };
+    return {
+      kind: "run_action",
+      action: "commit_push_pr",
+      disabled: false,
+      hint: "Commit, push, and create a pull request",
+    };
+  }
+  if (!status.hasUpstream) {
+    if (!status.hasPrimaryRemote)
+      return hasOpenPr && !ahead
+        ? { kind: "open_pr", disabled: false, hint: "View pull request", url: status.pullRequest!.url }
+        : { kind: "show_hint", disabled: true, hint: 'Add an "origin" remote before pushing or creating a pull request.' };
+    if (!ahead)
+      return hasOpenPr
+        ? { kind: "open_pr", disabled: false, hint: "View pull request", url: status.pullRequest!.url }
+        : { kind: "show_hint", disabled: true, hint: "No local commits to push." };
+    if (hasOpenPr || status.isDefaultRef)
+      return { kind: "run_action", action: "push", disabled: false, hint: "Push changes" };
+    return { kind: "run_action", action: "create_pr", disabled: false, hint: "Push and create a pull request" };
+  }
+  if (ahead && behind)
+    return { kind: "show_hint", disabled: true, hint: "Branch has diverged. Rebase or merge before syncing." };
+  if (behind) return { kind: "run_pull", disabled: false, hint: "Pull latest changes" };
+  if (ahead)
+    return hasOpenPr || status.isDefaultRef
+      ? { kind: "run_action", action: "push", disabled: false, hint: "Push changes" }
+      : { kind: "run_action", action: "create_pr", disabled: false, hint: "Push and create a pull request" };
+  if (hasOpenPr)
+    return { kind: "open_pr", disabled: false, hint: "View pull request", url: status.pullRequest!.url };
+  return { kind: "show_hint", disabled: true, hint: "Branch is up to date. No action needed." };
+}
+
+export interface ReducedGitOperation {
+  status: "running" | "succeeded" | "failed";
+  operation: GitAction;
+  label: string;
+  error: string | null;
+  result?: ObjectValue;
+}
+
+export function reduceGitOperation(
+  previous: ReducedGitOperation | undefined,
+  event: {
+    type: "start" | "progress" | "success" | "error";
+    operation?: GitAction;
+    label?: string;
+    result?: ObjectValue;
+    error?: string;
+  },
+): ReducedGitOperation {
+  if (event.type === "start")
+    return {
+      status: "running",
+      operation: event.operation ?? previous?.operation ?? "commit",
+      label: event.label ?? "Running source control action",
+      error: null,
+    };
+  const operation = event.operation ?? previous?.operation ?? "commit";
+  if (event.type === "progress")
+    return { status: "running", operation, label: event.label ?? previous?.label ?? "Running source control action", error: null };
+  if (event.type === "success")
+    return { status: "succeeded", operation, label: previous?.label ?? "Completed source control action", error: null, result: event.result ?? {} };
+  return { status: "failed", operation, label: previous?.label ?? "Source control action failed", error: event.error ?? "Git action failed." };
+}
+
 export class DirectSession {
   readonly environment: Environment;
   private readonly serial = ++sessionSerial;
@@ -527,6 +782,12 @@ export class DirectSession {
   private switchingSnapshots = new Map<string, ReturnType<typeof switchingProjection>>();
   private switching: ReturnType<typeof switchingProjection> | undefined;
   private replies = new Map<string, (reply: Reply) => void>();
+  private gitStatusByThread = new Map<string, GitStatus>();
+  private gitOperations = new Map<
+    string,
+    { threadId: string; actionId: string; action: GitAction }
+  >();
+  private gitOperationStateByThread = new Map<string, GitOperationState>();
   private queries = new Map<
     string,
     { resolve: (value: ObjectValue) => void; reject: (error: Error) => void }
@@ -591,6 +852,203 @@ export class DirectSession {
       throw new Error("Too many requests are pending. Wait for them to finish.");
     const id = this.request(tag, payload);
     return new Promise((resolve, reject) => this.queries.set(id, { resolve, reject }));
+  }
+
+  private cwdForThread(threadId: string): string {
+    const shell = this.shells.get(threadId);
+    if (!shell) throw new Error("This thread is no longer available.");
+    const cwd =
+      string(shell.worktreePath) ||
+      string(this.projects.get(string(shell.projectId))?.workspaceRoot);
+    if (!cwd) throw new Error("This thread has no available workspace.");
+    return cwd;
+  }
+
+  private normalizePullRequest(value: unknown): PullRequestSummary | null {
+    return normalizePullRequestSummary(value);
+  }
+
+  private normalizeGitStatus(cwd: string, value: ObjectValue): GitStatus {
+    return { ...normalizeGitStatus({ ...value, cwd }), cwd };
+  }
+
+  gitStatus(threadId: string): GitStatus | null {
+    return this.gitStatusByThread.get(threadId) ?? null;
+  }
+
+  gitOperationState(threadId: string): GitOperationState {
+    return this.gitOperationStateByThread.get(threadId) ?? { status: "idle" };
+  }
+
+  async refreshGitStatus(threadId: string, localOnly = false): Promise<GitStatus> {
+    const cwd = this.cwdForThread(threadId);
+    try {
+      const result = await this.query("vcs.refreshStatus", { cwd, ...(localOnly ? { localOnly } : {}) });
+      const status = this.normalizeGitStatus(cwd, result);
+      this.gitStatusByThread.set(threadId, status);
+      return status;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Git status could not be loaded.";
+      const status: GitStatus = {
+        cwd,
+        isRepo: false,
+        canWrite: false,
+        refName: null,
+        isDefaultRef: false,
+        hasWorkingTreeChanges: false,
+        hasUpstream: false,
+        hasPrimaryRemote: false,
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 0,
+        branchChanges: null,
+        workingTree: { files: [] },
+        pr: null,
+        pullRequest: null,
+        unavailableReason: message,
+      };
+      this.gitStatusByThread.set(threadId, status);
+      throw error;
+    }
+  }
+
+  async pullGit(threadId: string): Promise<ObjectValue> {
+    const cwd = this.cwdForThread(threadId);
+    const result = await this.query("vcs.pull", { cwd });
+    await this.refreshGitStatus(threadId, true).catch(() => {});
+    return result;
+  }
+
+  async listGitRefs(
+    threadId: string,
+    options: {
+      query?: string;
+      cursor?: number;
+      includeMatchingRemoteRefs?: boolean;
+      refKind?: "all" | "local" | "remote";
+      refresh?: boolean;
+      limit?: number;
+    } = {},
+  ): Promise<ObjectValue> {
+    const cwd = this.cwdForThread(threadId);
+    return this.query("vcs.listRefs", {
+      cwd,
+      ...(options.query ? { query: options.query } : {}),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.includeMatchingRemoteRefs === undefined
+        ? {}
+        : { includeMatchingRemoteRefs: options.includeMatchingRemoteRefs }),
+      ...(options.refKind ? { refKind: options.refKind } : {}),
+      ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+    });
+  }
+
+  async switchGitRef(threadId: string, refName: string): Promise<ObjectValue> {
+    const cwd = this.cwdForThread(threadId);
+    const result = await this.query("vcs.switchRef", { cwd, refName });
+    await this.refreshGitStatus(threadId, true).catch(() => {});
+    return result;
+  }
+
+  async listPullRequests(): Promise<ObjectValue> {
+    return this.query("pullRequests.list", { state: "open", involvement: "all", limit: 100 });
+  }
+
+  async pullRequestDetail(projectId: string, repository: string, number: number): Promise<ObjectValue> {
+    return this.query("pullRequests.detail", {
+      projectId,
+      repository,
+      number,
+      allowStale: true,
+    });
+  }
+
+  async createGitRef(threadId: string, refName: string, switchRef = true): Promise<ObjectValue> {
+    const cwd = this.cwdForThread(threadId);
+    const result = await this.query("vcs.createRef", { cwd, refName, switchRef });
+    await this.refreshGitStatus(threadId, true).catch(() => {});
+    return result;
+  }
+
+  async createGitWorktree(threadId: string, baseRef: string, newRefName: string): Promise<ObjectValue> {
+    const shell = this.shells.get(threadId);
+    const project = this.projects.get(string(shell?.projectId));
+    const cwd = string(project?.workspaceRoot) || this.cwdForThread(threadId);
+    const result = await this.query("vcs.createWorktree", {
+      cwd,
+      refName: baseRef,
+      newRefName,
+      path: null,
+    });
+    await this.refreshGitStatus(threadId, true).catch(() => {});
+    return result;
+  }
+
+  async updateThreadMetadata(
+    threadId: string,
+    patch: {
+      branch?: string | null;
+      worktreePath?: string | null;
+      title?: string;
+      linkedPullRequest?: ObjectValue | null;
+    },
+  ): Promise<Reply> {
+    const id = this.request("orchestration.dispatchCommand", {
+      type: "thread.metadata.update",
+      commandId: crypto.randomUUID(),
+      threadId,
+      ...patch,
+    });
+    return new Promise((resolve) => this.replies.set(id, resolve));
+  }
+
+  async runGitAction(threadId: string, input: GitActionInput): Promise<ObjectValue> {
+    const cwd = this.cwdForThread(threadId);
+    const payload = {
+      actionId: input.actionId,
+      cwd,
+      action: input.action,
+      ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+      ...(input.featureBranch === undefined ? {} : { featureBranch: input.featureBranch }),
+      ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+      threadId,
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+    };
+    const id = this.request("git.runStackedAction", payload);
+    this.gitOperations.set(id, { threadId, actionId: input.actionId, action: input.action });
+    this.gitOperationStateByThread.set(threadId, {
+      status: "running",
+      actionId: input.actionId,
+      action: input.action,
+      phase: "",
+      message: "Starting source control action",
+    });
+    const query = new Promise<ObjectValue>((resolve, reject) => this.queries.set(id, { resolve, reject }));
+    try {
+      const value = await query;
+      const current = this.gitOperationStateByThread.get(threadId);
+      const result = current?.status === "succeeded" ? current.result : value;
+      this.gitOperationStateByThread.set(threadId, {
+        status: "succeeded",
+        actionId: input.actionId,
+        action: input.action,
+        result,
+      });
+      await this.refreshGitStatus(threadId, true).catch(() => {});
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Git action failed.";
+      this.gitOperationStateByThread.set(threadId, {
+        status: "failed",
+        actionId: input.actionId,
+        action: input.action,
+        error: message,
+      });
+      throw error;
+    } finally {
+      this.gitOperations.delete(id);
+    }
   }
 
   threadRefs() {
@@ -1822,6 +2280,9 @@ export class DirectSession {
     this.switching = undefined;
     this.threadRequest = "";
     this.socket = undefined;
+    this.gitOperations.clear();
+    this.gitStatusByThread.clear();
+    this.gitOperationStateByThread.clear();
     for (const history of this.transcripts.values()) history.disconnect();
     // Keep the transport error for pending commands while exposing the
     // reconnecting state to the catalog. A transient socket loss should not
@@ -1842,6 +2303,8 @@ export class DirectSession {
       );
       if (frame._tag === "Chunk") {
         for (const item of records(frame.values)) {
+          const git = this.gitOperations.get(id);
+          if (git) this.gitProgress(git, item);
           if (tool) this.toolFrame(tool, item);
           if (id === this.shellRequest) this.shell(item);
           if (this.threadRequest && id === this.threadRequest) this.transcript(item);
@@ -1978,6 +2441,43 @@ export class DirectSession {
       }
     }
     this.pruneTools();
+  }
+
+  private gitProgress(
+    operation: { threadId: string; actionId: string; action: GitAction },
+    item: ObjectValue,
+  ) {
+    const kind = string(item.kind);
+    const current = this.gitOperationStateByThread.get(operation.threadId);
+    if (!current || current.status !== "running" || current.actionId !== operation.actionId) return;
+    if (kind === "phase_started" || kind === "hook_started") {
+      const phase = string(item.phase);
+      this.gitOperationStateByThread.set(operation.threadId, {
+        ...current,
+        phase:
+          phase === "branch" || phase === "commit" || phase === "push" || phase === "pr"
+            ? phase
+            : current.phase,
+        message: string(item.label) || string(item.message) || current.message,
+      });
+    } else if (kind === "hook_output") {
+      const output = string(item.text) || string(item.output);
+      if (output) this.gitOperationStateByThread.set(operation.threadId, { ...current, message: output });
+    } else if (kind === "action_finished") {
+      this.gitOperationStateByThread.set(operation.threadId, {
+        status: "succeeded",
+        actionId: operation.actionId,
+        action: operation.action,
+        result: object(item.result),
+      });
+    } else if (kind === "action_failed") {
+      this.gitOperationStateByThread.set(operation.threadId, {
+        status: "failed",
+        actionId: operation.actionId,
+        action: operation.action,
+        error: string(item.message) || "Git action failed.",
+      });
+    }
   }
 
   private updateSwitching(event: ObjectValue) {
