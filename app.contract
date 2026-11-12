@@ -305,6 +305,29 @@ shape PullRequestDetail
   changedFiles: number
   checksState: string
 
+shape PullRequestComment
+  id: string
+  author: string
+  body: string
+  createdAt: string
+  kind: string
+  path: string
+  reviewState: string
+
+shape PullRequestCommit
+  id: string
+  subject: string
+  author: string
+  createdAt: string
+
+shape PullRequestActivity
+  ready: bool
+  error: string
+  comments: PullRequestComment[]
+  commits: PullRequestCommit[]
+  commentCount: number
+  commentsTruncated: bool
+
 shape Project
   id: string
   title: string
@@ -359,8 +382,9 @@ fn gitHasOpenPr(status: GitStatus): bool = match status.pullRequest { case some(
 fn gitPrLabel(status: GitStatus): string = match status.pullRequest { case some(pr) => `PR #${pr.number}`, case none => "" }
 fn gitStatusLabel(status: GitStatus): string = not status.isRepo ? "Not a repo" : (status.hasWorkingTreeChanges ? `${status.workingFiles.length} changed` : status.aheadCount == 0 and status.behindCount == 0 ? "Clean" : "") + (status.aheadCount > 0 ? `${status.hasWorkingTreeChanges ? " · " : ""}${status.aheadCount} ahead` : "") + (status.behindCount > 0 ? `${status.hasWorkingTreeChanges or status.aheadCount > 0 ? " · " : ""}${status.behindCount} behind` : "") + (gitHasOpenPr(status) ? `${status.hasWorkingTreeChanges or status.aheadCount > 0 or status.behindCount > 0 ? " · " : ""}${gitPrLabel(status)}` : "")
 fn gitQuickActionKind(status: GitStatus, busy: bool, writable: bool): string =
-  not status.isRepo ? "unavailable" : busy ? "busy" : not writable and not gitHasOpenPr(status) ? "read_only" : status.refName == "" ? "detached" : status.hasWorkingTreeChanges ? (status.behindCount > 0 or (not status.hasUpstream and not status.hasPrimaryRemote) ? "commit" : gitHasOpenPr(status) or status.isDefaultRef ? "commit_push" : "commit_push_pr") : not status.hasUpstream ? (not status.hasPrimaryRemote ? (gitHasOpenPr(status) and status.aheadCount == 0 ? "open_pr" : "no_origin") : status.aheadCount == 0 ? (gitHasOpenPr(status) ? "open_pr" : "no_commits") : gitHasOpenPr(status) or status.isDefaultRef ? "push" : "create_pr") : status.aheadCount > 0 and status.behindCount > 0 ? "diverged" : status.behindCount > 0 ? "pull" : status.aheadCount > 0 ? (gitHasOpenPr(status) or status.isDefaultRef ? "push" : "create_pr") : gitHasOpenPr(status) ? "open_pr" : "clean"
-fn gitQuickAction(status: GitStatus, busy: bool, writable: bool): string = gitQuickActionKind(status, busy, writable) == "unavailable" ? "Git unavailable" : gitQuickActionKind(status, busy, writable) == "busy" ? "Git busy" : gitQuickActionKind(status, busy, writable) == "read_only" ? "Source control is read-only" : gitQuickActionKind(status, busy, writable) == "detached" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit_push" ? "Commit & push" : gitQuickActionKind(status, busy, writable) == "commit_push_pr" ? "Commit, push & create PR" : gitQuickActionKind(status, busy, writable) == "push" ? "Push" : gitQuickActionKind(status, busy, writable) == "create_pr" ? "Push & create PR" : gitQuickActionKind(status, busy, writable) == "pull" ? "Pull latest" : gitQuickActionKind(status, busy, writable) == "open_pr" ? "View PR" : gitQuickActionKind(status, busy, writable) == "diverged" ? "Sync branch" : "Commit"
+  not status.isRepo ? "unavailable" : busy ? "busy" : status.refName == "" ? "detached" : status.hasWorkingTreeChanges ? (status.behindCount > 0 or (not status.hasUpstream and not status.hasPrimaryRemote) ? "commit" : gitHasOpenPr(status) or status.isDefaultRef ? "commit_push" : "commit_push_pr") : not status.hasUpstream ? (not status.hasPrimaryRemote ? (gitHasOpenPr(status) and status.aheadCount == 0 ? "open_pr" : "no_origin") : status.aheadCount == 0 ? (gitHasOpenPr(status) ? "open_pr" : "no_commits") : gitHasOpenPr(status) or status.isDefaultRef ? (status.isDefaultRef ? "commit_push" : "push") : "create_pr") : status.aheadCount > 0 and status.behindCount > 0 ? "diverged" : status.behindCount > 0 ? "pull" : status.aheadCount > 0 ? (gitHasOpenPr(status) or status.isDefaultRef ? (status.isDefaultRef ? "commit_push" : "push") : "create_pr") : gitHasOpenPr(status) ? "open_pr" : "clean"
+fn gitQuickAction(status: GitStatus, busy: bool, writable: bool): string = gitQuickActionKind(status, busy, writable) == "unavailable" ? "Git unavailable" : gitQuickActionKind(status, busy, writable) == "busy" ? "Commit" : gitQuickActionKind(status, busy, writable) == "detached" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit_push" ? (status.hasWorkingTreeChanges ? "Commit & push" : "Push") : gitQuickActionKind(status, busy, writable) == "commit_push_pr" ? "Commit, push & create PR" : gitQuickActionKind(status, busy, writable) == "push" ? "Push" : gitQuickActionKind(status, busy, writable) == "create_pr" ? "Push & create PR" : gitQuickActionKind(status, busy, writable) == "pull" ? "Pull" : gitQuickActionKind(status, busy, writable) == "open_pr" ? "View PR" : gitQuickActionKind(status, busy, writable) == "diverged" ? "Sync branch" : "Commit"
+fn gitQuickActionHint(status: GitStatus, busy: bool, writable: bool): string = gitQuickActionKind(status, busy, writable) == "detached" ? "Create and checkout a branch before pushing or opening a pull request." : gitQuickActionKind(status, busy, writable) == "no_origin" ? "Add an \"origin\" remote before pushing or creating a pull request." : gitQuickActionKind(status, busy, writable) == "no_commits" ? "No local commits to push." : gitQuickActionKind(status, busy, writable) == "diverged" ? "Branch has diverged from upstream. Rebase or merge first." : gitQuickActionKind(status, busy, writable) == "clean" ? "Branch is up to date. No action needed." : ""
 
 
 fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
@@ -449,6 +473,7 @@ component T3Code
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
   resource pullRequests = loadPullRequests() as shape PullRequests else empty()
   resource pullRequestDetail = loadPullRequestDetail(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestDetail else empty()
+  resource pullRequestActivity = loadPullRequestActivity(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestActivity else empty()
   state statusNow = 0
   derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
   resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
@@ -928,7 +953,7 @@ component T3Code
       nav = push(split ? threadNav : nav, path("gitCommit", activeThreadId))
 
   action openGitOverview
-    if activeThreadId != "" and gitStatus.isRepo and activeThreadHasMessage
+    if activeThreadId != "" and activeThreadHasMessage
       gitNewBranch = ""
       gitWorktreeBase = gitStatus.refName == "" ? "main" : gitStatus.refName
       gitWorktreeBranch = ""
@@ -1675,14 +1700,13 @@ component T3Code
                     else
                       section
                         for pull in pullRequests.items key=`${pull.projectId}:${pull.number}`
-                          row testId=`pull-${pull.projectId}-${pull.number}`
+                          row press=openPullRequest(pull.projectId, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.projectId}-${pull.number}`
                             column flex=1 min-width=0 gap=3
                               text `#${pull.number} ${pull.title}` font="-exact-body" line-clamp=2
                               text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                               text (pull.author != "" ? `by ${pull.author}` : "") font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                             text pull.state font="-exact-footnote" color=(pull.state == "open" ? "status-working" : "muted")
-                            button press=openPullRequest(pull.projectId, pull.number) appearance="none" padding=0 testId=`pull-open-${pull.projectId}-${pull.number}`
-                              text "View" color="foreground"
+                            text "View" color="foreground" testId=`pull-open-${pull.projectId}-${pull.number}`
               if e.name == "pullRequest"
                 column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1690,29 +1714,66 @@ component T3Code
                       image "symbol:back"
                     text (match selectedPullRequest { case some(pull) => `#${pull.number} ${pull.title}`, case none => "Pull request" }) role="heading" aria-level=2 line-clamp=1
                   scroll id="pull-request-detail" flex=1 min-height=0 padding=16
-                    match selectedPullRequest
-                      case some(pull)
-                        column gap=14
-                          text pull.title font-size=22 font-weight=700
-                          text `#${pull.number} · ${pull.state}${pull.isDraft ? " · Draft" : ""}` color="muted"
-                          text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` color="muted"
-                          if pending(pullRequestDetail)
-                            row align-items="center" gap=8
-                              progress width=16 height=16
-                              text "Loading pull request details…" color="muted" testId="pull-request-detail-loading"
-                          else if pullRequestDetail.error != ""
-                            text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
-                          else
-                            text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
-                            text `${pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles} changed file${(pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles) == 1 ? "" : "s"} · +${pullRequestDetail.additions > 0 ? pullRequestDetail.additions : pull.additions} −${pullRequestDetail.deletions > 0 ? pullRequestDetail.deletions : pull.deletions}` color="muted"
-                            text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
-                            if pullRequestDetail.body != ""
-                              text pullRequestDetail.body line-clamp=12 padding-top=6
-                          text `Updated ${pull.updatedAt}` font-size=13 color="muted"
-                          button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
-                            text "Open in source control"
-                      case none
-                        text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
+                    if pending(pullRequests)
+                      row align-items="center" gap=8
+                        progress width=16 height=16
+                        text "Loading pull requests…" color="muted" testId="pull-request-list-loading"
+                    else if pullRequests.error != ""
+                      text pullRequests.error color="danger" testId="pull-request-list-error"
+                    else
+                      match selectedPullRequest
+                        case some(pull)
+                          column gap=14
+                            text pull.title font-size=22 font-weight=700
+                            text `#${pull.number} · ${pull.state}${pull.isDraft ? " · Draft" : ""}` color="muted"
+                            text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` color="muted"
+                            if pending(pullRequestDetail)
+                              row align-items="center" gap=8
+                                progress width=16 height=16
+                                text "Loading pull request details…" color="muted" testId="pull-request-detail-loading"
+                            else if pullRequestDetail.error != ""
+                              text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
+                            else
+                              text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
+                              text `${pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles} changed file${(pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles) == 1 ? "" : "s"} · +${pullRequestDetail.additions > 0 ? pullRequestDetail.additions : pull.additions} −${pullRequestDetail.deletions > 0 ? pullRequestDetail.deletions : pull.deletions}` color="muted"
+                              text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
+                              if pullRequestDetail.body != ""
+                                text pullRequestDetail.body line-clamp=12 padding-top=6
+                            if pending(pullRequestActivity)
+                              row align-items="center" gap=8 padding-top=8
+                                progress width=16 height=16
+                                text "Loading activity…" color="muted" testId="pull-request-activity-loading"
+                            else if pullRequestActivity.error != ""
+                              text pullRequestActivity.error color="danger" testId="pull-request-activity-error"
+                            else
+                              if pullRequestActivity.commits.length > 0
+                                column gap=6 padding-top=8
+                                  text "Commits" font-size=17 font-weight=700
+                                  for commit in pullRequestActivity.commits key=commit.id
+                                    row align-items="flex-start" gap=8 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-commit-${commit.id}`
+                                      image "symbol:sf/arrow.triangle.branch" width=15 height=15 color="muted"
+                                      column flex=1 min-width=0 gap=2
+                                        text commit.subject line-clamp=2
+                                        text `${commit.author != "" ? `${commit.author} · ` : ""}${commit.createdAt}` font-size=13 color="muted" line-clamp=1
+                              if pullRequestActivity.comments.length > 0
+                                column gap=6 padding-top=8
+                                  text `Activity${pullRequestActivity.commentsTruncated ? " · Showing recent comments" : ""}` font-size=17 font-weight=700
+                                  for comment in pullRequestActivity.comments key=comment.id
+                                    column gap=3 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-comment-${comment.id}`
+                                      row align-items="center" gap=6
+                                        text (comment.author != "" ? comment.author : "Unknown reviewer") font-weight=700 line-clamp=1
+                                        text comment.kind font-size=12 color="muted"
+                                      if comment.path != ""
+                                        text comment.path font-size=12 color="muted" line-clamp=1
+                                      text comment.body white-space="pre-wrap" line-clamp=8
+                                      text comment.createdAt font-size=12 color="muted"
+                              if pullRequestActivity.commits.length == 0 and pullRequestActivity.comments.length == 0
+                                text "No activity yet." padding-top=8 color="muted" testId="pull-request-activity-empty"
+                            text `Updated ${pull.updatedAt}` font-size=13 color="muted"
+                            button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
+                              text "Open in source control"
+                        case none
+                          text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -1767,23 +1828,23 @@ component T3Code
       column id="terminal-menu" popover="auto" role="menu" aria-label="Terminal"
         button role="menuitem" disabled=true
           text "No project scripts"
-      column id="git-menu" popover="auto" role="menu" aria-label="Git controls"
+      column id="git-menu" popover="auto" position="absolute" position-area="bottom span-left" role="menu" aria-label="Git controls" width=320 max-width="92vw" padding=8 gap=2 background-color="screen"
         button role="menuitem" disabled=true testId="git-status-row"
           image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
           column flex=1 min-width=0 align-items="flex-start"
             text (pending(gitStatus) ? "Checking status" : gitBranchLabel(gitStatus)) line-clamp=1
             text (pending(gitStatus) ? "Checking status" : gitStatusLabel(gitStatus)) font-size=13 color="muted" testId="git-status"
-        button role="menuitem" press=runQuickGitAction disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
+        button role="menuitem" press=runQuickGitAction popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
           image (gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "pull" ? "symbol:sf/arrow.down.circle" : gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "commit" ? "symbol:sf/checkmark.circle" : "symbol:sf/arrow.up.circle")
           column flex=1 min-width=0 align-items="flex-start"
             text (pending(gitStatus) ? "Checking status" : gitQuickAction(gitStatus, gitBusy, gitWritable))
-            text (gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : "") font-size=13 color="muted"
-        button role="menuitem" press=inspect("git") disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
+            text (gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable)) font-size=13 color="muted"
+        button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
           image "symbol:sf/text.bubble"
           column flex=1 min-width=0 align-items="flex-start"
             text "Review changes"
             text (not activeThreadHasMessage ? "Available after the first message" : "Inspect changes, uncommitted edits, and turn diffs") font-size=13 color="muted"
-        button role="menuitem" press=inspect("git") disabled=(activeThreadId == "" or not activeThreadHasMessage) testId="git-more"
+        button role="menuitem" press=openGitOverview popovertarget="git-menu" popovertargetaction="hide" disabled=(activeThreadId == "" or not activeThreadHasMessage) testId="git-more"
           image "symbol:sf/ellipsis"
           column flex=1 min-width=0 align-items="flex-start"
             text "More"

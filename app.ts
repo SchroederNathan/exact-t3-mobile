@@ -1072,8 +1072,6 @@ const sources: Sources = {
       unavailableReason: id ? "Git status is unavailable." : "",
     };
     if (!id) return empty;
-    native?.watch("connections");
-    if (native?.available) syncNativeConnections(native);
     try {
       const identity = threadIdentity(id);
       const status = await awaitReply(
@@ -1117,8 +1115,6 @@ const sources: Sources = {
   loadGitRefs: async ([id], _store, _storage, native) => {
     const empty = { isRepo: false, hasPrimaryRemote: false, refs: [] };
     if (!id) return empty;
-    native?.watch("connections");
-    if (native?.available) syncNativeConnections(native);
     try {
       const identity = threadIdentity(id);
       const result = await awaitReply(
@@ -1205,8 +1201,6 @@ const sources: Sources = {
   loadGitOperation: ([id], _store, _storage, native) => {
     const empty = { status: "idle", actionId: "", action: "", label: "", error: "" };
     if (!id) return empty;
-    native?.watch("connections");
-    if (native?.available) syncNativeConnections(native);
     try {
       const identity = threadIdentity(id);
       const operation = sessionFor(identity.environmentId).gitOperationState(identity.threadId);
@@ -1300,8 +1294,6 @@ const sources: Sources = {
     }
   },
   loadPullRequests: async (_args, _store, _storage, native) => {
-    native?.watch("connections");
-    if (native?.available) syncNativeConnections(native);
     const sessions = [...connections.values()].map((entry) => entry.session);
     if (current && !sessions.includes(current)) sessions.push(current);
     if (!sessions.length) return { ready: true, error: "", items: [] };
@@ -1376,6 +1368,80 @@ const sources: Sources = {
       }
     }
     return { ...empty, error: "Pull request details are unavailable." };
+  },
+  loadPullRequestActivity: async ([projectId, numberText], _store, _storage, native) => {
+    const empty = {
+      ready: true,
+      error: "",
+      comments: [],
+      commits: [],
+      commentCount: 0,
+      commentsTruncated: false,
+    };
+    if (!projectId || !numberText) return empty;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || number < 1)
+      return { ...empty, error: "This pull request number is invalid." };
+    const sessions = [...connections.values()].map((entry) => entry.session);
+    if (current && !sessions.includes(current)) sessions.push(current);
+    for (const session of sessions) {
+      try {
+        const listed = await session.listPullRequests();
+        const entries = Array.isArray(listed.entries) ? listed.entries : [];
+        const entry = entries.find((candidate: unknown) => {
+          const raw = object(candidate);
+          return string(raw.projectId) === projectId && Number(raw.number) === number;
+        });
+        if (!entry) continue;
+        const raw = object(entry);
+        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
+        if (!repository) continue;
+        const activity = object(
+          await awaitReply(session.pullRequestActivity(projectId, repository, number), native),
+        );
+        const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
+          (candidate: unknown) => {
+            const value = object(candidate);
+            const author = object(value.author);
+            return {
+              id: string(value.id),
+              author: string(author.login) || string(author.name) || string(value.author),
+              body: string(value.body),
+              createdAt: string(value.createdAt),
+              kind: string(value.kind),
+              path: string(value.path),
+              reviewState: string(value.reviewState),
+            };
+          },
+        );
+        const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
+          (candidate: unknown) => {
+            const value = object(candidate);
+            const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
+            return {
+              id: string(value.oid) || string(value.id),
+              subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
+              author: string(author.login) || string(author.name),
+              createdAt: string(value.committedDate) || string(value.createdAt),
+            };
+          },
+        );
+        return {
+          ready: true,
+          error: "",
+          comments,
+          commits,
+          commentCount: Number(activity.commentCount ?? comments.length),
+          commentsTruncated: activity.commentsTruncated === true,
+        };
+      } catch (error) {
+        return {
+          ...empty,
+          error: error instanceof Error ? error.message : "Pull request activity could not be loaded.",
+        };
+      }
+    }
+    return { ...empty, error: "Pull request activity is unavailable." };
   },
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(

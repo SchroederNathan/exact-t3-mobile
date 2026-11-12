@@ -66,14 +66,29 @@ describe("thread Git domain state", () => {
       action: "commit_push_pr",
       disabled: false,
     });
+    expect(gitQuickAction(normalizeGitStatus({ ...base, isDefaultRef: true }), false, true)).toMatchObject({
+      kind: "run_action",
+      action: "commit_push",
+      disabled: false,
+    });
+    expect(gitQuickAction(normalizeGitStatus({ ...base, isDefaultRef: true, hasWorkingTreeChanges: false, aheadCount: 1 }), false, true)).toMatchObject({
+      kind: "run_action",
+      action: "commit_push",
+      disabled: false,
+    });
     expect(gitQuickAction(base, true, true)).toMatchObject({
       kind: "show_hint",
       disabled: true,
     });
     expect(gitQuickAction(base, false, false)).toMatchObject({
-      kind: "show_hint",
+      kind: "run_action",
       disabled: true,
       hint: expect.stringContaining("cannot change source control"),
+    });
+    expect(gitQuickAction(normalizeGitStatus({ ...base, refName: "", hasWorkingTreeChanges: false }), false, true)).toMatchObject({
+      kind: "show_hint",
+      disabled: true,
+      hint: expect.stringContaining("Create and checkout a branch"),
     });
 
     const behind = normalizeGitStatus({

@@ -676,24 +676,20 @@ export function gitQuickAction(
       disabled: true,
       hint: "Create and checkout a branch before pushing or opening a pull request.",
     };
-  if (!canWrite && !hasOpenPr)
-    return {
-      kind: "show_hint",
-      disabled: true,
-      hint: "This connection cannot change source control.",
-    };
+  const writeDisabled = !canWrite;
+  const writeHint = writeDisabled ? "This connection cannot change source control." : "";
   const ahead = status.aheadCount > 0;
   const behind = status.behindCount > 0;
   if (status.hasWorkingTreeChanges) {
     if (behind || (!status.hasUpstream && !status.hasPrimaryRemote))
-      return { kind: "run_action", action: "commit", disabled: false, hint: "Commit changes" };
+      return { kind: "run_action", action: "commit", disabled: writeDisabled, hint: writeHint || "Commit changes" };
     if (hasOpenPr || status.isDefaultRef)
-      return { kind: "run_action", action: "commit_push", disabled: false, hint: "Commit and push changes" };
+      return { kind: "run_action", action: "commit_push", disabled: writeDisabled, hint: writeHint || "Commit and push changes" };
     return {
       kind: "run_action",
       action: "commit_push_pr",
-      disabled: false,
-      hint: "Commit, push, and create a pull request",
+      disabled: writeDisabled,
+      hint: writeHint || "Commit, push, and create a pull request",
     };
   }
   if (!status.hasUpstream) {
@@ -706,16 +702,26 @@ export function gitQuickAction(
         ? { kind: "open_pr", disabled: false, hint: "View pull request", url: status.pullRequest!.url }
         : { kind: "show_hint", disabled: true, hint: "No local commits to push." };
     if (hasOpenPr || status.isDefaultRef)
-      return { kind: "run_action", action: "push", disabled: false, hint: "Push changes" };
-    return { kind: "run_action", action: "create_pr", disabled: false, hint: "Push and create a pull request" };
+      return {
+        kind: "run_action",
+        action: status.isDefaultRef ? "commit_push" : "push",
+        disabled: writeDisabled,
+        hint: writeHint || "Push changes",
+      };
+    return { kind: "run_action", action: "create_pr", disabled: writeDisabled, hint: writeHint || "Push and create a pull request" };
   }
   if (ahead && behind)
     return { kind: "show_hint", disabled: true, hint: "Branch has diverged. Rebase or merge before syncing." };
-  if (behind) return { kind: "run_pull", disabled: false, hint: "Pull latest changes" };
+  if (behind) return { kind: "run_pull", disabled: writeDisabled, hint: writeHint || "Pull latest changes" };
   if (ahead)
     return hasOpenPr || status.isDefaultRef
-      ? { kind: "run_action", action: "push", disabled: false, hint: "Push changes" }
-      : { kind: "run_action", action: "create_pr", disabled: false, hint: "Push and create a pull request" };
+      ? {
+          kind: "run_action",
+          action: status.isDefaultRef ? "commit_push" : "push",
+          disabled: writeDisabled,
+          hint: writeHint || "Push changes",
+        }
+      : { kind: "run_action", action: "create_pr", disabled: writeDisabled, hint: writeHint || "Push and create a pull request" };
   if (hasOpenPr)
     return { kind: "open_pr", disabled: false, hint: "View pull request", url: status.pullRequest!.url };
   return { kind: "show_hint", disabled: true, hint: "Branch is up to date. No action needed." };
@@ -957,6 +963,19 @@ export class DirectSession {
 
   async pullRequestDetail(projectId: string, repository: string, number: number): Promise<ObjectValue> {
     return this.query("pullRequests.detail", {
+      projectId,
+      repository,
+      number,
+      allowStale: true,
+    });
+  }
+
+  async pullRequestActivity(
+    projectId: string,
+    repository: string,
+    number: number,
+  ): Promise<ObjectValue> {
+    return this.query("pullRequests.activity", {
       projectId,
       repository,
       number,
