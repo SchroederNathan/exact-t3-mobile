@@ -71,6 +71,20 @@ export interface Inspection {
   body: string;
   items: { id: string; label: string; detail: string; kind: string }[];
 }
+
+const inspectionEntryCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function sortInspectionItems(
+  items: Inspection["items"],
+): Inspection["items"] {
+  return items.toSorted((left, right) => {
+    if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+    return inspectionEntryCollator.compare(left.label, right.label);
+  });
+}
 export interface ForceStopResult {
   outcome: "killed" | "released" | "releasing" | "shared";
   sharedWithThreadIds: string[];
@@ -652,12 +666,14 @@ export class DirectSession {
         error: "",
         title: "Files",
         body: `${cwd}${path ? `/${path}` : ""}${result.truncated === true ? "\nResults truncated." : ""}`,
-        items: records(result.entries).map((entry) => ({
-          id: string(entry.path),
-          label: string(entry.path).split("/").at(-1) || string(entry.path),
-          detail: entry.ignored === true ? "Ignored" : string(entry.path),
-          kind: string(entry.kind),
-        })),
+        items: sortInspectionItems(
+          records(result.entries).map((entry) => ({
+            id: string(entry.path),
+            label: string(entry.path).split("/").at(-1) || string(entry.path),
+            detail: entry.ignored === true ? "Ignored" : string(entry.path),
+            kind: string(entry.kind),
+          })),
+        ),
       };
     }
     if (kind === "git") {
