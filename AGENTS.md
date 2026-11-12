@@ -5,7 +5,7 @@ This repository is an active, personal clone of T3 Code's Expo mobile experience
 The sibling `t3-exact-ios` checkout is the upstream T3 Code reference. Use it to check server behavior and wire compatibility. Keep this client independent and do not import code from that checkout.
 
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
-# t3-75457f81-e4f8cef2765b8760: an Exact app
+# t3-05feaf95-ee5d32c389abb237: an Exact app
 
 `app.contract` is the view, `app.ts` its data module, `app.test.contract` its tests, `app.json`
 the manifest: set its `app.name` and `app.id` before the first build. The app uses the exact2

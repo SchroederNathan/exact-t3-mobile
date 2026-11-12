@@ -195,6 +195,18 @@ function sessionFor(environmentId: string): DirectSession {
   return session;
 }
 
+function sessionScope(value: unknown, scope: string): boolean {
+  const session = object(value);
+  if (session.authenticated !== true) return false;
+  const permissions = Array.isArray(session.permissions) ? session.permissions : undefined;
+  const scopes = Array.isArray(session.scopes) ? session.scopes : undefined;
+  if (permissions) return permissions.includes(scope);
+  if (scopes?.includes(scope)) return true;
+  // Older servers only expose orchestration scopes; terminal read inherited
+  // from terminal operate is the compatibility behavior used by Expo.
+  return scope === "terminal:read" && scopes?.includes("terminal:operate") === true;
+}
+
 async function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
   if (!native?.available) return operation;
   const receipt = crypto.randomUUID();
@@ -1102,6 +1114,7 @@ const sources: Sources = {
     }
     return { ...catalog, modelDraftRevision };
   },
+
   loadGitStatus: async ([id], _store, _storage, native) => {
     const empty = {
       cwd: "",
@@ -1494,6 +1507,172 @@ const sources: Sources = {
     }
     return { ...empty, error: "Pull request activity is unavailable." };
   },
+
+
+  loadTerminalAccess: async ([threadId], store) => {
+    if (!threadId) return { canRead: false, canOperate: false, error: "" };
+    try {
+      const identity = threadIdentity(threadId);
+      const session = sessionFor(identity.environmentId);
+      const token = credentials(store)[identity.environmentId];
+      if (!token) return { canRead: false, canOperate: false, error: "Reconnect to use terminal." };
+      const response = await readJson(`${session.environment.url}/api/auth/session`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return {
+        canRead: sessionScope(response, "terminal:read"),
+        canOperate: sessionScope(response, "terminal:operate"),
+        error: "",
+      };
+    } catch (error) {
+      return {
+        canRead: false,
+        canOperate: false,
+        error: error instanceof Error ? error.message : "Could not check terminal access.",
+      };
+    }
+  },
+  loadTerminalMenu: ([id, currentTerminalId, canRead, canOperate], _store, _storage, native) => {
+    if (!id)
+      return {
+        sessions: [],
+        scripts: [],
+        workspaceRoot: "",
+        canOpen: false,
+        canRead: false,
+        canOperate: false,
+      };
+    if (canRead !== true && canOperate !== true)
+      return {
+        sessions: [],
+        scripts: [],
+        workspaceRoot: "",
+        canOpen: false,
+        canRead: false,
+        canOperate: false,
+      };
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
+    try {
+      const identity = threadIdentity(id);
+      const session = sessionFor(identity.environmentId);
+      const current = currentTerminalId ? session.terminal(identity.threadId, currentTerminalId) : null;
+      const sessions = session
+        .terminalSessions(identity.threadId)
+        .filter((terminal) =>
+          terminal.status === "running" || terminal.status === "starting" || terminal.terminalId === currentTerminalId,
+        )
+        .concat(current && !session.terminalSessions(identity.threadId).some((terminal) => terminal.terminalId === current.terminalId) ? [current] : [])
+        .map((terminal) => ({
+          terminalId: terminal.terminalId,
+          cwd: terminal.cwd,
+          status: terminal.status,
+          hasRunningSubprocess: terminal.hasRunningSubprocess,
+          displayLabel: terminal.label || terminal.terminalId,
+          updatedAt: terminal.updatedAt,
+        }));
+      const scripts = session.terminalProjectScripts(identity.threadId).map((script) => ({
+        id: script.id,
+        label: script.label,
+        command: script.command,
+        icon: script.icon,
+      }));
+      const workspaceRoot = session.terminalWorkspace(identity.threadId)?.cwd ?? "";
+      return {
+        sessions,
+        scripts,
+        workspaceRoot,
+        canOpen: session.terminalWorkspace(identity.threadId) !== null && canOperate === true,
+        canRead: canRead === true,
+        canOperate: canOperate === true,
+      };
+    } catch {
+      return {
+        sessions: [],
+        scripts: [],
+        workspaceRoot: "",
+        canOpen: false,
+        canRead: false,
+        canOperate: false,
+      };
+    }
+  },
+  loadTerminal: ([id, terminalId, canRead, canOperate], _store, _storage, native) => {
+    const empty = {
+      threadId: id,
+      terminalId,
+      cwd: "",
+      status: "error",
+      output: "",
+      error: "",
+      hasRunningSubprocess: false,
+      displayLabel: terminalId,
+      updatedAt: "",
+    };
+    if (!id || !terminalId) return empty;
+    if (canRead !== true && canOperate !== true)
+      return { ...empty, error: "This connection does not have permission to view terminals." };
+    native?.watch("connections");
+    if (native?.available) syncNativeConnections(native);
+    try {
+      const identity = threadIdentity(id);
+      const session = sessionFor(identity.environmentId);
+      const workspace = session.terminalWorkspace(identity.threadId);
+      const terminal =
+        canOperate === true
+          ? session.attachTerminal(
+              identity.threadId,
+              terminalId,
+              workspace ? { cwd: workspace.cwd, worktreePath: workspace.worktreePath } : undefined,
+            )
+          : session.observeTerminal(identity.threadId, terminalId);
+      return {
+        threadId: id,
+        terminalId,
+        cwd: terminal.cwd,
+        status: terminal.status,
+        output: terminal.output,
+        error: terminal.error,
+        hasRunningSubprocess: terminal.hasRunningSubprocess,
+        displayLabel: terminal.label || terminalId,
+        updatedAt: terminal.updatedAt,
+      };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "The terminal could not be opened." };
+    }
+  },
+  writeTerminal: async ([id, terminalId, data], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(sessionFor(identity.environmentId).writeTerminal(identity.threadId, terminalId, data), native);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not write to terminal." };
+    }
+  },
+  clearTerminal: async ([id, terminalId], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(sessionFor(identity.environmentId).clearTerminal(identity.threadId, terminalId), native);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not clear terminal." };
+    }
+  },
+  runTerminalScript: async ([id, scriptId], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      return await awaitReply(
+        sessionFor(identity.environmentId).runTerminalScript(identity.threadId, scriptId),
+        native,
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Could not start project script.",
+        terminalId: "",
+      };
+    }
+  },
+
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(
       ["update-environment", id, JSON.stringify({ label, url })],

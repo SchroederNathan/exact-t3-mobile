@@ -72,6 +72,47 @@ export interface Inspection {
   items: { id: string; label: string; detail: string; kind: string }[];
 }
 
+/** A server terminal session projected for the Exact view. */
+export interface TerminalSession {
+  threadId: string;
+  terminalId: string;
+  cwd: string;
+  worktreePath: string;
+  status: "starting" | "running" | "exited" | "error" | "closed";
+  hasRunningSubprocess: boolean;
+  label: string;
+  displayLabel: string;
+  updatedAt: string;
+  output: string;
+  error: string;
+}
+
+function terminalLabel(terminalId: string, label: string): string {
+  const trimmed = label.trim();
+  if (trimmed) return trimmed;
+  const number = /^term(?:inal)?-(\d+)(?:-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})?$/i.exec(terminalId)?.[1];
+  return number ? `Terminal ${number}` : terminalId;
+}
+
+export interface ProjectScript {
+  id: string;
+  label: string;
+  command: string;
+  icon: string;
+  runOnWorktreeCreate: boolean;
+  runOnSettle: boolean;
+  stopOnSettle: boolean;
+}
+
+function projectScriptLabel(script: ObjectValue, fallback: string): string {
+  const name = string(script.name) || string(script.label) || string(script.id) || fallback;
+  const roles = [
+    script.runOnWorktreeCreate === true ? "setup" : "",
+    script.runOnSettle === true ? "on settle" : "",
+  ].filter(Boolean);
+  return roles.length > 0 ? `${name} (${roles.join(", ")})` : name;
+}
+
 const inspectionEntryCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -788,6 +829,7 @@ export class DirectSession {
   private socket: StreamSocket | undefined;
   private nextId = 0;
   private shellRequest = "";
+  private terminalMetadataRequest = "";
   private configRequest = "";
   private threadRequest = "";
   private selected = "";
@@ -797,6 +839,10 @@ export class DirectSession {
   private faviconRequests = new Map<string, string>();
   private favicons = new Map<string, { revision: string; url: string }>();
   private shells = new Map<string, ObjectValue>();
+  private terminals = new Map<string, TerminalSession>();
+  private terminalOutputStates = new Map<string, TerminalOutputState>();
+  private terminalRequests = new Map<string, { threadId: string; terminalId: string }>();
+  private terminalRequestIds = new Map<string, string>();
   private shellLive = false;
   private transcripts = new Map<string, ThreadHistory>();
   private switchingSnapshots = new Map<string, ReturnType<typeof switchingProjection>>();
@@ -873,6 +919,7 @@ export class DirectSession {
     const id = this.request(tag, payload);
     return new Promise((resolve, reject) => this.queries.set(id, { resolve, reject }));
   }
+
 
   private cwdForThread(threadId: string): string {
     const shell = this.shells.get(threadId);
@@ -1084,6 +1131,257 @@ export class DirectSession {
     }
   }
 
+
+
+  private terminalKey(threadId: string, terminalId: string): string {
+    return `${threadId}\u0000${terminalId}`;
+  }
+
+  private terminalSummary(value: unknown, previous?: TerminalSession): TerminalSession | null {
+    const summary = object(value);
+    const threadId = string(summary.threadId) || previous?.threadId || "";
+    const terminalId = string(summary.terminalId) || previous?.terminalId || "";
+    if (!threadId || !terminalId) return null;
+    return {
+      threadId,
+      terminalId,
+      cwd: string(summary.cwd) || previous?.cwd || "",
+      worktreePath: string(summary.worktreePath) || previous?.worktreePath || "",
+      status: (string(summary.status) || previous?.status || "starting") as TerminalSession["status"],
+      hasRunningSubprocess:
+        typeof summary.hasRunningSubprocess === "boolean"
+          ? summary.hasRunningSubprocess
+          : (previous?.hasRunningSubprocess ?? false),
+      label: terminalLabel(terminalId, string(summary.label) || previous?.label || ""),
+      displayLabel: terminalLabel(
+        terminalId,
+        string(summary.label) || previous?.displayLabel || previous?.label || "",
+      ),
+      updatedAt: string(summary.updatedAt) || previous?.updatedAt || "",
+      output: previous?.output || "",
+      error: previous?.error || "",
+    };
+  }
+
+  terminalSessions(threadId: string): TerminalSession[] {
+    return [...this.terminals.values()]
+      .filter((terminal) => terminal.threadId === threadId)
+      .sort((left, right) =>
+        left.terminalId.localeCompare(right.terminalId, undefined, { numeric: true }),
+      )
+      .map((terminal) => ({ ...terminal }));
+  }
+
+  terminal(threadId: string, terminalId: string): TerminalSession | null {
+    const value = this.terminals.get(this.terminalKey(threadId, terminalId));
+    return value ? { ...value } : null;
+  }
+
+  terminalWorkspace(threadId: string): { cwd: string; worktreePath: string; projectRoot: string } | null {
+    const thread = this.shells.get(threadId);
+    if (!thread) return null;
+    const project = this.projects.get(string(thread.projectId));
+    const worktreePath = string(thread.worktreePath);
+    const cwd = worktreePath || string(project?.workspaceRoot);
+    return cwd ? { cwd, worktreePath, projectRoot: string(project?.workspaceRoot) } : null;
+  }
+
+  terminalProjectScripts(threadId: string): ProjectScript[] {
+    const thread = this.shells.get(threadId);
+    const project = thread ? this.projects.get(string(thread.projectId)) : undefined;
+    const projectScripts = records(project?.scripts);
+    const settings = object(this.config.settings);
+    const projectId = string(project?.id);
+    const projectOverride = object(object(settings.projectSettingsOverrides)[projectId]).defaultProjectScripts;
+    const defaultScripts = records(settings.defaultProjectScripts);
+    // Match Expo's project-script resolution, including the newer folded
+    // settings and the legacy per-project override map.
+    const scripts =
+      projectOverride !== undefined
+        ? records(projectOverride)
+        : settings.projectSettingsFolded === true
+          ? defaultScripts
+          : (() => {
+              const legacy = object(settings.projectScriptOverrides)[projectId];
+              if (legacy === null) return defaultScripts;
+              if (legacy !== undefined) return records(legacy);
+              return projectScripts.length > 0 ? projectScripts : defaultScripts;
+            })();
+    return scripts.map((script, index) => ({
+      id: string(script.id) || `script-${index + 1}`,
+      label: projectScriptLabel(script, `Script ${index + 1}`),
+      command: string(script.command),
+      icon: string(script.icon) || "play",
+      runOnWorktreeCreate: script.runOnWorktreeCreate === true,
+      runOnSettle: script.runOnSettle === true,
+      stopOnSettle: script.stopOnSettle === true,
+    }));
+  }
+
+  attachTerminal(
+    threadId: string,
+    terminalId: string,
+    input: { cwd?: string; worktreePath?: string; cols?: number; rows?: number } = {},
+  ): TerminalSession {
+    const key = this.terminalKey(threadId, terminalId);
+    const current = this.terminals.get(key);
+    if (!this.terminalRequestIds.has(key) && this.socket?.readyState === 1) {
+      const requestId = this.request("terminal.attach", {
+        threadId,
+        terminalId,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(input.worktreePath ? { worktreePath: input.worktreePath } : {}),
+        ...(input.cols ? { cols: input.cols } : {}),
+        ...(input.rows ? { rows: input.rows } : {}),
+        restartIfNotRunning: true,
+      });
+      this.terminalRequestIds.set(key, requestId);
+      this.terminalRequests.set(requestId, { threadId, terminalId });
+    }
+    const next =
+      current && (current.status === "exited" || current.status === "closed" || current.status === "error")
+        ? { ...current, status: "starting" as const, error: "" }
+        : current ??
+      ({
+        threadId,
+        terminalId,
+        cwd: input.cwd ?? this.terminalWorkspace(threadId)?.cwd ?? "",
+        worktreePath: input.worktreePath ?? this.terminalWorkspace(threadId)?.worktreePath ?? "",
+        status: "starting",
+        hasRunningSubprocess: false,
+        label: terminalLabel(terminalId, ""),
+        displayLabel: terminalLabel(terminalId, ""),
+        updatedAt: "",
+        output: "",
+        error: "",
+      } satisfies TerminalSession);
+    this.terminals.set(key, next);
+    if (!this.terminalOutputStates.has(key)) this.terminalOutputStates.set(key, EMPTY_TERMINAL_OUTPUT);
+    return { ...next };
+  }
+
+  observeTerminal(threadId: string, terminalId: string): TerminalSession {
+    const key = this.terminalKey(threadId, terminalId);
+    const current = this.terminals.get(key);
+    if (!this.terminalRequestIds.has(key) && this.socket?.readyState === 1) {
+      const requestId = this.request("terminal.observe", { threadId, terminalId });
+      this.terminalRequestIds.set(key, requestId);
+      this.terminalRequests.set(requestId, { threadId, terminalId });
+    }
+    const next =
+      current ??
+      ({
+        threadId,
+        terminalId,
+        cwd: "",
+        worktreePath: "",
+        status: "starting",
+        hasRunningSubprocess: false,
+        label: terminalLabel(terminalId, ""),
+        displayLabel: terminalLabel(terminalId, ""),
+        updatedAt: "",
+        output: "",
+        error: "",
+      } satisfies TerminalSession);
+    this.terminals.set(key, next);
+    if (!this.terminalOutputStates.has(key)) this.terminalOutputStates.set(key, EMPTY_TERMINAL_OUTPUT);
+    return { ...next };
+  }
+
+  async openTerminal(
+    threadId: string,
+    terminalId: string,
+    cwd: string,
+    worktreePath: string,
+    cols = 80,
+    rows = 24,
+    env: Record<string, string> = {},
+    stopOnSettle = false,
+  ): Promise<Reply> {
+    try {
+      await this.query("terminal.open", {
+        threadId,
+        terminalId,
+        cwd,
+        worktreePath: worktreePath || null,
+        cols,
+        rows,
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+        ...(stopOnSettle ? { stopOnSettle: true } : {}),
+      });
+      this.attachTerminal(threadId, terminalId, { cwd, worktreePath, cols, rows });
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not open terminal." };
+    }
+  }
+
+  async writeTerminal(threadId: string, terminalId: string, data: string): Promise<Reply> {
+    try {
+      await this.query("terminal.write", { threadId, terminalId, data });
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not write to terminal." };
+    }
+  }
+
+  async resizeTerminal(threadId: string, terminalId: string, cols: number, rows: number): Promise<Reply> {
+    try {
+      await this.query("terminal.resize", { threadId, terminalId, cols, rows });
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not resize terminal." };
+    }
+  }
+
+  async clearTerminal(threadId: string, terminalId: string): Promise<Reply> {
+    try {
+      await this.query("terminal.clear", { threadId, terminalId });
+      const key = this.terminalKey(threadId, terminalId);
+      this.terminalOutputStates.set(key, EMPTY_TERMINAL_OUTPUT);
+      const current = this.terminals.get(key);
+      if (current) this.terminals.set(key, { ...current, output: "" });
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not clear terminal." };
+    }
+  }
+
+  async runTerminalScript(threadId: string, scriptId: string): Promise<Reply & { terminalId: string }> {
+    const script = this.terminalProjectScripts(threadId).find((entry) => entry.id === scriptId);
+    const workspace = this.terminalWorkspace(threadId);
+    if (!script || !workspace) return { ok: false, error: "This project script is unavailable.", terminalId: "" };
+    const sessions = this.terminalSessions(threadId);
+    const ids = sessions.map((entry) => entry.terminalId);
+    const hasRunningTerminal = sessions.some(
+      (entry) => entry.status === "running" || entry.status === "starting",
+    );
+    let terminalId = "term-1";
+    if (hasRunningTerminal) {
+      let index = 1;
+      while (ids.includes(`term-${index}`)) index += 1;
+      terminalId = `term-${index}`;
+    }
+    const opened = await this.openTerminal(
+      threadId,
+      terminalId,
+      workspace.cwd,
+      workspace.worktreePath,
+      80,
+      24,
+      {
+        ...(workspace.projectRoot ? { T3CODE_PROJECT_ROOT: workspace.projectRoot } : {}),
+        ...(workspace.worktreePath ? { T3CODE_WORKTREE_PATH: workspace.worktreePath } : {}),
+      },
+      script.stopOnSettle,
+    );
+    if (!opened.ok) return { ...opened, terminalId };
+    // A leading space keeps the command out of Bash/zsh history when the host
+    // enables HIST_IGNORE_SPACE, and carriage return matches the native PTY.
+    return { ...(await this.writeTerminal(threadId, terminalId, ` ${script.command}\r`)), terminalId };
+  }
+
+
   threadRefs() {
     return [...this.shells]
       .filter(([, thread]) => !thread.deletedAt)
@@ -1216,6 +1514,11 @@ export class DirectSession {
     this.clearToolPanels();
     for (const history of this.transcripts.values()) history.disconnect();
     this.shellLive = false;
+    this.terminalMetadataRequest = "";
+    this.terminals.clear();
+    this.terminalRequests.clear();
+    this.terminalRequestIds.clear();
+    this.terminalOutputStates.clear();
     this.switching = undefined;
     this.threadRequest = "";
     this.configReady = false;
@@ -1226,6 +1529,11 @@ export class DirectSession {
       workspaceSnapshotsOnDemand: true,
       providerCatalogsOnDemand: true,
     });
+    try {
+      this.terminalMetadataRequest = this.request("subscribeTerminalMetadata", {});
+    } catch {
+      this.terminalMetadataRequest = "";
+    }
   }
 
   select(threadId: string) {
@@ -2318,6 +2626,11 @@ export class DirectSession {
     this.shellRequest = "";
     this.switching = undefined;
     this.threadRequest = "";
+    this.terminalMetadataRequest = "";
+    this.terminals.clear();
+    this.terminalRequests.clear();
+    this.terminalRequestIds.clear();
+    this.terminalOutputStates.clear();
     this.socket = undefined;
     this.gitOperations.clear();
     this.gitStatusByThread.clear();
@@ -2331,6 +2644,80 @@ export class DirectSession {
     this.replies.clear();
     for (const query of this.queries.values()) query.reject(new Error(reason));
     this.queries.clear();
+  }
+
+  private applyTerminalSummary(value: unknown) {
+    const summary = this.terminalSummary(value);
+    if (!summary) return;
+    const key = this.terminalKey(summary.threadId, summary.terminalId);
+    const current = this.terminals.get(key);
+    this.terminals.set(key, this.terminalSummary(value, current) ?? summary);
+  }
+
+  private applyTerminalEvent(value: unknown, requestId: string) {
+    const event = object(value);
+    const target = this.terminalRequests.get(requestId);
+    const threadId = string(event.threadId) || target?.threadId || "";
+    const terminalId = string(event.terminalId) || target?.terminalId || "";
+    if (!threadId || !terminalId) return;
+    const key = this.terminalKey(threadId, terminalId);
+    const current =
+      this.terminals.get(key) ??
+      ({
+        threadId,
+        terminalId,
+        cwd: "",
+        worktreePath: "",
+        status: "starting",
+        hasRunningSubprocess: false,
+        label: terminalLabel(terminalId, ""),
+        displayLabel: terminalLabel(terminalId, ""),
+        updatedAt: "",
+        output: "",
+        error: "",
+      } satisfies TerminalSession);
+    const type = string(event.type);
+    let next = current;
+    if (type === "snapshot" || type === "started" || type === "restarted") {
+      const snapshot = object(event.snapshot ?? event);
+      const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, string(snapshot.history));
+      this.terminalOutputStates.set(key, state);
+      next = {
+        ...current,
+        ...(this.terminalSummary(snapshot, current) ?? {}),
+        status: (string(snapshot.status) || "running") as TerminalSession["status"],
+        output: terminalOutputPlainText(state.text),
+        error: "",
+      };
+    } else if (type === "output") {
+      const output = string(event.data);
+      const state = appendTerminalOutput(
+        this.terminalOutputStates.get(key) ?? EMPTY_TERMINAL_OUTPUT,
+        output,
+      );
+      this.terminalOutputStates.set(key, state);
+      next = { ...current, output: terminalOutputPlainText(state.text), error: "" };
+    } else if (type === "cleared") {
+      this.terminalOutputStates.set(key, EMPTY_TERMINAL_OUTPUT);
+      next = { ...current, output: "", error: "" };
+    } else if (type === "exited") {
+      next = { ...current, status: "exited", hasRunningSubprocess: false, error: "" };
+    } else if (type === "closed") {
+      next = { ...current, status: "closed", hasRunningSubprocess: false };
+    } else if (type === "error") {
+      next = { ...current, status: "error", error: string(event.message) || "Terminal error" };
+    } else if (type === "activity") {
+      next = {
+        ...current,
+        hasRunningSubprocess:
+          typeof event.hasRunningSubprocess === "boolean"
+            ? event.hasRunningSubprocess
+            : current.hasRunningSubprocess,
+        label: string(event.label) || current.label,
+        status: current.status === "starting" ? "running" : current.status,
+      };
+    }
+    this.terminals.set(key, next);
   }
 
   receive(data: string) {
@@ -2347,6 +2734,18 @@ export class DirectSession {
           if (tool) this.toolFrame(tool, item);
           if (id === this.shellRequest) this.shell(item);
           if (this.threadRequest && id === this.threadRequest) this.transcript(item);
+          if (id === this.terminalMetadataRequest) {
+            if (item.type === "snapshot") {
+              this.terminals.clear();
+              this.terminalOutputStates.clear();
+              for (const terminal of records(item.terminals)) this.applyTerminalSummary(terminal);
+            } else if (item.type === "upsert") this.applyTerminalSummary(item.terminal);
+            else if (item.type === "remove") {
+              this.terminals.delete(this.terminalKey(string(item.threadId), string(item.terminalId)));
+              this.terminalOutputStates.delete(this.terminalKey(string(item.threadId), string(item.terminalId)));
+            }
+          }
+          if (this.terminalRequests.has(id)) this.applyTerminalEvent(item, id);
           if (id === this.configRequest) {
             if (item.type === "snapshot") {
               this.config = object(item.config);
@@ -2370,6 +2769,12 @@ export class DirectSession {
         }
         const exit = object(frame.exit);
         const error = exit._tag === "Success" ? "" : failure(exit);
+        const terminalRequest = this.terminalRequests.get(id);
+        if (terminalRequest) {
+          if (error) this.applyTerminalEvent({ ...terminalRequest, type: "error", message: error }, id);
+          this.terminalRequests.delete(id);
+          this.terminalRequestIds.delete(this.terminalKey(terminalRequest.threadId, terminalRequest.terminalId));
+        }
         if (tool) this.toolExit(tool, exit, error);
         if (threadEnded) {
           const history = this.transcripts.get(this.selected);
