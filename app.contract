@@ -609,7 +609,9 @@ component T3Code
     threadScrollEndPending = true
     threadScrollEndRetried = false
     threadScrollEndPendingScope = threadScrollScope
-    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+    // Let the native smooth jump own the offset. Following the end here would
+    // snap the virtualized list before the requested animation can run.
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=false, away=false, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
     scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
@@ -617,7 +619,7 @@ component T3Code
   action retryScrollToEnd
     threadScrollEndRetried = true
     threadScrollEndPendingScope = threadScrollScope
-    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=false, away=false, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
     scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
