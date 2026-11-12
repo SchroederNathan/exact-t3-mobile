@@ -2,7 +2,7 @@ use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAtte
 use MediaBatch, MediaImage from "./media-image.contract"
 use TurnReview, TurnReviewContent from "./turn-review.contract"
 use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail from "./attachments.contract"
-use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette from "./markdown.contract"
+use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
@@ -1194,9 +1194,13 @@ component T3Code
                         row align-items="flex-start" gap=12 padding="0 12px" background-color=(line.id == linkedFile.targetLine ? "thread-selected" : "transparent") testId=`file-line-${line.id}`
                           text line.id color="muted" font-family="Menlo" font-size=12 width=42 text-align="right" line-height="23px"
                           text user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            if line.id == linkedFile.targetLine and line.focus != ""
+                              text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                              text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
+                              text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            else
+                              for run in line.runs key=run.id
+                                text run.text white-space="pre-wrap" color=syntaxColor(run.kind, "foreground") font-family="Menlo" font-size=14.4 line-height="23px"
               if e.name == "turnReview"
                 column navigationKey=`${e.id}` navigationScroll="turn-review-lines" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
