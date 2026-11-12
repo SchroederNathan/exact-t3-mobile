@@ -2,7 +2,7 @@ use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAtte
 use MediaBatch, MediaImage from "./media-image.contract"
 use TurnReview, TurnReviewContent from "./turn-review.contract"
 use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail from "./attachments.contract"
-use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette from "./markdown.contract"
+use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
@@ -242,6 +242,7 @@ fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match fi
 fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
+fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
 
 
 fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
@@ -511,7 +512,7 @@ component T3Code
   action persistReconciledModels
     send persistedModelSettings = persistModelSettings()
 
-  task inspector when current.name == "inspector" and selectedThread(catalog, current.params.id).length > 0 key=`${current.id}:${current.params.kind}`
+  task inspector when current.name == "inspector" and selectedThread(catalog, current.params.id).length > 0 key=`${current.id}:${current.params.kind}:${inspectorPath}`
     after(1, loadInspector)
 
   action openModelSettings
@@ -566,7 +567,7 @@ component T3Code
 
 
   action loadInspector
-    send inspected = inspectThread(current.params.id, current.params.kind, "")
+    send inspected = inspectThread(current.params.id, current.params.kind, inspectorPath)
 
   task regroup when needsRegroup key=`${split}:${nav.tab}:${nav.next}:${current.id}`
     after(1, regroupNow)
@@ -755,8 +756,13 @@ component T3Code
     nav = push(split ? threadNav : nav, path("inspector", activeThreadId, kind))
 
   action inspectEntry(id: string, kind: string)
-    inspectorPath = id
-    send inspected = inspectThread(activeThreadId, kind == "directory" ? "files" : "file", id)
+    if kind == "directory"
+      inspectorPath = id
+    else if kind == "file"
+      nav = push(split ? threadNav : nav, path("linkedFile", activeThreadId, id, "0", "0"))
+
+  action inspectParent
+    inspectorPath = parentDirectory(inspectorPath)
 
   action sendMessage
     if canSend and activeThreadId != ""
@@ -1188,9 +1194,13 @@ component T3Code
                         row align-items="flex-start" gap=12 padding="0 12px" background-color=(line.id == linkedFile.targetLine ? "thread-selected" : "transparent") testId=`file-line-${line.id}`
                           text line.id color="muted" font-family="Menlo" font-size=12 width=42 text-align="right" line-height="23px"
                           text user-select="text" white-space="pre-wrap" overflow-wrap="break-word" flex=1 min-width=0 color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
-                            text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            if line.id == linkedFile.targetLine and line.focus != ""
+                              text line.prefix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                              text line.focus white-space="pre-wrap" color="foreground" background-color="send-disabled" font-family="Menlo" font-size=14.4 line-height="23px"
+                              text line.suffix white-space="pre-wrap" color="foreground" font-family="Menlo" font-size=14.4 line-height="23px"
+                            else
+                              for run in line.runs key=run.id
+                                text run.text white-space="pre-wrap" color=syntaxColor(run.kind, "foreground") font-family="Menlo" font-size=14.4 line-height="23px"
               if e.name == "turnReview"
                 column navigationKey=`${e.id}` navigationScroll="turn-review-lines" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1200,7 +1210,12 @@ component T3Code
               if e.name == "inspector"
                 column navigationKey=`${e.id}` navigationScroll="inspector" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
+                    if e.params.kind == "files" and inspectorPath != ""
+                      button press=inspectParent buttonStyle="glass" aria-label="Back to parent folder" testId="files-parent"
+                        image "symbol:sf/chevron.left"
                     text (e.params.kind == "git" ? "Source control" : "Files") role="heading" aria-level=2
+                    if e.params.kind == "files" and inspectorPath != ""
+                      text inspectorPath font-size=13 color="muted"
                   scroll id="inspector" flex=1 min-height=0 padding=16
                     if pending(inspected)
                       text "Loading…" color="muted"
@@ -1214,9 +1229,9 @@ component T3Code
                               text result.title font-size=21 font-weight=700
                               text result.body user-select="text" white-space="pre-wrap" font-size=14 line-height="21px" color="muted"
                               for item in result.items key=item.id
-                                button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left"
+                                button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left" testId=`inspector-entry-${item.id}`
                                   row align-items="center" gap=10
-                                    image (item.kind == "directory" ? "symbol:sf/folder" : "symbol:sf/document") width=20 height=20
+                                    image (item.kind == "directory" ? "symbol:sf/folder" : item.kind == "file" ? "symbol:sf/doc.text" : "symbol:sf/info.circle") width=20 height=20
                                     column flex=1 min-width=0 gap=3
                                       text item.label font-size=16
                                       if item.detail != ""

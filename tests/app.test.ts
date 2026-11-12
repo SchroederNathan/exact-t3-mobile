@@ -1090,12 +1090,32 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     frame: { tag: "projects.listEntries", payload: { cwd: "/b" } },
   });
   reply("b", String(inspect.frame.id), {
-    entries: [{ path: "file.ts", kind: "file" }],
+    entries: [
+      { path: "file.ts", kind: "file" },
+      { path: "src", kind: "directory" },
+    ],
     truncated: false,
   });
   await load();
   expect((await inspection).items).toEqual([
+    { id: "src", label: "src", detail: "src", kind: "directory" },
     { id: "file.ts", label: "file.ts", detail: "file.ts", kind: "file" },
+  ]);
+
+  const nestedInspection = answer("inspectThread", ["b:t", "files", "src"], store, storage, native);
+  const nestedInspect = sent.at(-1)!;
+  expect(nestedInspect.frame).toMatchObject({
+    tag: "projects.listEntries",
+    payload: { cwd: "/b", directoryPath: "src" },
+  });
+  reply("b", String(nestedInspect.frame.id), {
+    entries: [{ path: "src/deep", kind: "directory" }, { path: "src/needle.ts", kind: "file" }],
+    truncated: false,
+  });
+  await load();
+  expect((await nestedInspection).items).toEqual([
+    { id: "src/deep", label: "deep", detail: "src/deep", kind: "directory" },
+    { id: "src/needle.ts", label: "needle.ts", detail: "src/needle.ts", kind: "file" },
   ]);
 
   expect(

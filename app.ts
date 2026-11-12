@@ -1,6 +1,6 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
-import { CodeHighlights } from "./code-highlight";
+import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection } from "./drafts";
@@ -59,6 +59,50 @@ let current: DirectSession | undefined;
 let attachmentFilesCleaned = false;
 let savedEnvironments: Promise<Environment[]> | undefined;
 let nextGeneration = 0;
+
+function fileLanguage(path: string): string {
+  const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
+  return ({
+    bash: "bash",
+    c: "c",
+    css: "css",
+    go: "go",
+    h: "c",
+    html: "html",
+    java: "java",
+    js: "javascript",
+    jsx: "javascript",
+    json: "json",
+    md: "markdown",
+    markdown: "markdown",
+    py: "python",
+    rs: "rust",
+    sh: "bash",
+    ts: "typescript",
+    tsx: "tsx",
+    yaml: "yaml",
+    yml: "yaml",
+  } as Record<string, string>)[extension] ?? "";
+}
+
+function fileLineRuns(body: string, runs: CodeRun[]): CodeRun[][] {
+  const lines: CodeRun[][] = [[]];
+  const append = (line: CodeRun[], text: string, kind: number) => {
+    if (!text) return;
+    const previous = line.at(-1);
+    if (previous?.kind === kind) previous.text += text;
+    else line.push({ id: String(line.length), text, kind });
+  };
+  for (const run of runs) {
+    const parts = run.text.split("\n");
+    for (const [index, part] of parts.entries()) {
+      append(lines.at(-1)!, part, run.kind);
+      if (index < parts.length - 1) lines.push([]);
+    }
+  }
+  while (lines.length < body.split("\n").length) lines.push([]);
+  return lines;
+}
 const connections = new Map<
   string,
   {
@@ -1271,6 +1315,20 @@ const sources: Sources = {
         native,
       );
       const rows = inspection.body.split("\n");
+      const language = fileLanguage(path);
+      let runs = codeRuns(inspection.body, {});
+      if (language && native?.available) {
+        try {
+          const highlighted = await codeHighlights.load(
+            [{ id: path, body: inspection.body, language, pending: false }],
+            (code, language) => native.later({ op: "markdown.highlight", code, language }),
+          );
+          runs = highlighted[0]?.runs ?? runs;
+        } catch {
+          // Plain source remains usable when the native highlighter is unavailable.
+        }
+      }
+      const runsByLine = fileLineRuns(inspection.body, runs);
       const target = Math.max(0, Math.min(rows.length, Number(line) || 0));
       return {
         path,
@@ -1296,6 +1354,7 @@ const sources: Sources = {
             id: String(index + 1),
             number: index + 1,
             text,
+            runs: runsByLine[index] ?? [],
             prefix: text.slice(0, offset),
             focus,
             suffix: text.slice(offset + focus.length),

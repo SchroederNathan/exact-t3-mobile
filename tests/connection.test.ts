@@ -1913,8 +1913,8 @@ describe("direct T3 connection", () => {
           _tag: "Success",
           value: {
             entries: [
-              { path: "src/nested", kind: "directory" },
               { path: "src/app.ts", kind: "file" },
+              { path: "src/nested", kind: "directory" },
             ],
             truncated: true,
           },
