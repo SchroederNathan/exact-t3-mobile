@@ -42,6 +42,7 @@ import {
   threadIdFromUrl,
   type Catalog,
   type Environment,
+  pullRequestSummary,
 } from "./connection";
 
 export const grants =
@@ -244,7 +245,8 @@ function syncNativeConnections(native: NativeModule) {
         session.receive(string(event.data));
       } else if (event.type === "close" || event.type === "error") {
         connection.open = false;
-        session.disconnected(string(event.reason) || "Disconnected");
+        const reason = string(event.reason) || "Disconnected";
+        session.disconnected(reason, event.recoverable === true ? "Reconnecting" : reason);
       }
     } catch (error) {
       connection.open = false;
@@ -294,7 +296,11 @@ function nativeCatalog(
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
       if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
-      return { ...connections.get(environment.id)!.session.environment };
+      const connection = connections.get(environment.id)!;
+      return {
+        ...connection.session.environment,
+        ...(connection.open && !connection.session.shellReady() ? { status: "Connecting" } : {}),
+      };
     }),
     projects: [...connections.values()].flatMap(({ session }) => session.projectList()),
     threads: [...connections.values()]
@@ -964,7 +970,10 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadEnvironmentRecords: (_args, _store, storage) => loadEnvironments(storage),
+  loadEnvironmentState: async (_args, _store, storage) => ({
+    loaded: true,
+    items: await loadEnvironments(storage),
+  }),
   loadControlAccess: async ([environmentId, key, _retry], store) => {
     if (!environmentId || !key) return { key, allowed: false, error: "" };
     try {
@@ -1092,6 +1101,398 @@ const sources: Sources = {
       if (composerSettings.reconcile(id, live, live != null)) modelDraftRevision++;
     }
     return { ...catalog, modelDraftRevision };
+  },
+  loadGitStatus: async ([id], _store, _storage, native) => {
+    const empty = {
+      cwd: "",
+      isRepo: false,
+      canWrite: false,
+      refName: "",
+      isDefaultRef: false,
+      hasWorkingTreeChanges: false,
+      hasUpstream: false,
+      hasPrimaryRemote: false,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: 0,
+      branchBaseRef: "",
+      branchInsertions: 0,
+      branchDeletions: 0,
+      workingFiles: [],
+      pullRequest: null,
+      unavailableReason: id ? "Git status is unavailable." : "",
+    };
+    if (!id) return empty;
+    try {
+      const identity = threadIdentity(id);
+      const status = await awaitReply(
+        sessionFor(identity.environmentId).refreshGitStatus(identity.threadId),
+        native,
+      );
+      return {
+        cwd: status.cwd,
+        isRepo: status.isRepo,
+        canWrite: status.canWrite,
+        refName: status.refName ?? "",
+        isDefaultRef: status.isDefaultRef,
+        hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+        hasUpstream: status.hasUpstream,
+        hasPrimaryRemote: status.hasPrimaryRemote,
+        aheadCount: status.aheadCount,
+        behindCount: status.behindCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+        branchBaseRef: status.branchChanges?.baseRef ?? "",
+        branchInsertions: status.branchChanges?.insertions ?? 0,
+        branchDeletions: status.branchChanges?.deletions ?? 0,
+        workingFiles: status.workingTree.files,
+        pullRequest: status.pullRequest
+          ? {
+              number: status.pullRequest.number,
+              title: status.pullRequest.title,
+              url: status.pullRequest.url,
+              baseBranch: status.pullRequest.baseBranch,
+              headBranch: status.pullRequest.headBranch,
+              state: status.pullRequest.state,
+              isDraft: status.pullRequest.isDraft,
+              updatedAt: status.pullRequest.updatedAt,
+            }
+          : null,
+        unavailableReason: status.unavailableReason,
+      };
+    } catch (error) {
+      return { ...empty, unavailableReason: error instanceof Error ? error.message : empty.unavailableReason };
+    }
+  },
+  loadGitRefs: async ([id], _store, _storage, native) => {
+    const empty = { isRepo: false, hasPrimaryRemote: false, refs: [] };
+    if (!id) return empty;
+    try {
+      const identity = threadIdentity(id);
+      const result = await awaitReply(
+        sessionFor(identity.environmentId).listGitRefs(identity.threadId, {
+          includeMatchingRemoteRefs: true,
+          refKind: "all",
+          limit: 100,
+          refresh: true,
+        }),
+        native,
+      );
+      const rawRefs = Array.isArray(result.refs) ? result.refs : [];
+      return {
+        isRepo: result.isRepo === true,
+        hasPrimaryRemote: result.hasPrimaryRemote === true,
+        refs: rawRefs.map((entry: unknown) => {
+          const ref = object(entry);
+          return {
+            name: string(ref.name),
+            isRemote: ref.isRemote === true,
+            remoteName: string(ref.remoteName),
+            upstreamRef: string(ref.upstreamRef),
+            current: ref.current === true,
+            isDefault: ref.isDefault === true,
+            worktreePath: string(ref.worktreePath),
+          };
+        }),
+      };
+    } catch {
+      return empty;
+    }
+  },
+  switchGitRef: async ([id, refName], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      await awaitReply(sessionFor(identity.environmentId).switchGitRef(identity.threadId, refName), native);
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The branch could not be switched." };
+    }
+  },
+  createGitBranch: async ([id, refName], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      const session = sessionFor(identity.environmentId);
+      const result = await awaitReply(session.createGitRef(identity.threadId, refName, true), native);
+      const branch = object(result);
+      await awaitReply(
+        session.updateThreadMetadata(identity.threadId, {
+          branch: string(branch.refName) || refName,
+        }),
+        native,
+      );
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The branch could not be created." };
+    }
+  },
+  createGitWorktree: async ([id, baseBranch, newBranch], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      const session = sessionFor(identity.environmentId);
+      const result = await awaitReply(
+        session.createGitWorktree(identity.threadId, baseBranch, newBranch),
+        native,
+      );
+      const worktree = object(result.worktree);
+      const worktreePath = string(worktree.path);
+      const worktreeRef = string(worktree.refName) || newBranch;
+      if (worktreePath) {
+        await awaitReply(
+          session.updateThreadMetadata(identity.threadId, {
+            branch: worktreeRef,
+            worktreePath,
+          }),
+          native,
+        );
+      }
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "The worktree could not be created." };
+    }
+  },
+  loadGitOperation: ([id], _store, _storage, native) => {
+    const empty = { status: "idle", actionId: "", action: "", label: "", error: "" };
+    if (!id) return empty;
+    try {
+      const identity = threadIdentity(id);
+      const operation = sessionFor(identity.environmentId).gitOperationState(identity.threadId);
+      return {
+        status: operation.status,
+        actionId: operation.status === "idle" ? "" : operation.actionId,
+        action: operation.status === "idle" ? "" : operation.action,
+        label:
+          operation.status === "running"
+            ? operation.message
+            : operation.status === "succeeded"
+              ? "Source control action completed"
+              : operation.status === "failed"
+                ? "Source control action failed"
+                : "",
+        error: operation.status === "failed" ? operation.error : "",
+      };
+    } catch {
+      return empty;
+    }
+  },
+  pullGit: async ([id], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      await awaitReply(sessionFor(identity.environmentId).pullGit(identity.threadId), native);
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Pull failed." };
+    }
+  },
+  runGitAction: async ([id, action, message, featureBranch, filePaths], _store, _storage, native) => {
+    const actionId = crypto.randomUUID();
+    try {
+      const identity = threadIdentity(id);
+      const result = await awaitReply(
+        sessionFor(identity.environmentId).runGitAction(identity.threadId, {
+          actionId,
+          action: action as "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr",
+          ...(message ? { commitMessage: message } : {}),
+          ...(featureBranch ? { featureBranch: true } : {}),
+          ...(filePaths.length ? { filePaths } : {}),
+        }),
+        native,
+      );
+      const branch = object(result.branch);
+      const commit = object(result.commit);
+      const push = object(result.push);
+      const pr = object(result.pr);
+      const toast = object(result.toast);
+      return {
+        ok: true,
+        error: "",
+        actionId,
+        action,
+        result: {
+          branchStatus: string(branch.status),
+          branchName: string(branch.name),
+          commitStatus: string(commit.status),
+          commitSha: string(commit.commitSha),
+          commitSubject: string(commit.subject),
+          pushStatus: string(push.status),
+          pushBranch: string(push.branch),
+          prStatus: string(pr.status),
+          prUrl: string(pr.url),
+          prNumber: Number(pr.number ?? 0),
+          toastTitle: string(toast.title),
+          toastDescription: string(toast.description),
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Git action failed.",
+        actionId,
+        action,
+        result: {
+          branchStatus: "",
+          branchName: "",
+          commitStatus: "",
+          commitSha: "",
+          commitSubject: "",
+          pushStatus: "",
+          pushBranch: "",
+          prStatus: "",
+          prUrl: "",
+          prNumber: 0,
+          toastTitle: "",
+          toastDescription: "",
+        },
+      };
+    }
+  },
+  loadPullRequests: async (_args, _store, _storage, native) => {
+    const sessions = [...connections.values()].map((entry) => entry.session);
+    if (current && !sessions.includes(current)) sessions.push(current);
+    if (!sessions.length) return { ready: true, error: "", items: [] };
+    const responses = await Promise.allSettled(
+      sessions.map((session) => session.listPullRequests()),
+    );
+    const items = responses.flatMap((response) =>
+      response.status === "fulfilled"
+        ? (Array.isArray(response.value.entries) ? response.value.entries : []).map((entry: unknown) => {
+            const raw = object(entry);
+            const summary = pullRequestSummary(raw);
+            return {
+              number: summary.number,
+              title: summary.title,
+              url: summary.url,
+              state: summary.state,
+              isDraft: raw.isDraft === true,
+              repository: summary.repository,
+              baseBranch: summary.baseBranch,
+              headBranch: summary.branch,
+              updatedAt: summary.updatedAt,
+              projectId: string(raw.projectId),
+              author: summary.author,
+              body: string(raw.body) || string(raw.description),
+              additions: Number(raw.additions ?? raw.addedLines ?? 0),
+              deletions: Number(raw.deletions ?? raw.deletedLines ?? 0),
+              changedFiles: Number(raw.changedFiles ?? raw.changedFileCount ?? 0),
+            };
+          })
+        : [],
+    );
+    const failures = responses
+      .filter((response): response is PromiseRejectedResult => response.status === "rejected")
+      .map((response) => (response.reason instanceof Error ? response.reason.message : "Pull requests could not be loaded."));
+    return { ready: true, error: failures.join("\n"), items };
+  },
+  loadPullRequestDetail: async ([projectId, numberText], _store, _storage, native) => {
+    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "" };
+    if (!projectId || !numberText) return empty;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || number < 1) return { ...empty, error: "This pull request number is invalid." };
+    const sessions = [...connections.values()].map((entry) => entry.session);
+    if (current && !sessions.includes(current)) sessions.push(current);
+    for (const session of sessions) {
+      try {
+        const listed = await session.listPullRequests();
+        const entries = Array.isArray(listed.entries) ? listed.entries : [];
+        const entry = entries.find((candidate: unknown) => {
+          const raw = object(candidate);
+          return string(raw.projectId) === projectId && Number(raw.number) === number;
+        });
+        if (!entry) continue;
+        const raw = object(entry);
+        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
+        if (!repository) continue;
+        const detail = await awaitReply(session.pullRequestDetail(projectId, repository, number), native);
+        const value = object(detail);
+        const authorValue = object(value.author);
+        const checks = object(value.checks);
+        return {
+          ready: true,
+          error: "",
+          body: string(value.body) || string(value.description),
+          author: string(authorValue.login) || string(authorValue.name) || string(value.author),
+          additions: Number(value.additions ?? raw.additions ?? 0),
+          deletions: Number(value.deletions ?? raw.deletions ?? 0),
+          changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
+          checksState: string(value.checksState) || string(checks.state),
+        };
+      } catch (error) {
+        return { ...empty, error: error instanceof Error ? error.message : "Pull request details could not be loaded." };
+      }
+    }
+    return { ...empty, error: "Pull request details are unavailable." };
+  },
+  loadPullRequestActivity: async ([projectId, numberText], _store, _storage, native) => {
+    const empty = {
+      ready: true,
+      error: "",
+      comments: [],
+      commits: [],
+      commentCount: 0,
+      commentsTruncated: false,
+    };
+    if (!projectId || !numberText) return empty;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || number < 1)
+      return { ...empty, error: "This pull request number is invalid." };
+    const sessions = [...connections.values()].map((entry) => entry.session);
+    if (current && !sessions.includes(current)) sessions.push(current);
+    for (const session of sessions) {
+      try {
+        const listed = await session.listPullRequests();
+        const entries = Array.isArray(listed.entries) ? listed.entries : [];
+        const entry = entries.find((candidate: unknown) => {
+          const raw = object(candidate);
+          return string(raw.projectId) === projectId && Number(raw.number) === number;
+        });
+        if (!entry) continue;
+        const raw = object(entry);
+        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
+        if (!repository) continue;
+        const activity = object(
+          await awaitReply(session.pullRequestActivity(projectId, repository, number), native),
+        );
+        const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
+          (candidate: unknown) => {
+            const value = object(candidate);
+            const author = object(value.author);
+            return {
+              id: string(value.id),
+              author: string(author.login) || string(author.name) || string(value.author),
+              body: string(value.body),
+              createdAt: string(value.createdAt),
+              kind: string(value.kind),
+              path: string(value.path),
+              reviewState: string(value.reviewState),
+            };
+          },
+        );
+        const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
+          (candidate: unknown) => {
+            const value = object(candidate);
+            const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
+            return {
+              id: string(value.oid) || string(value.id),
+              subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
+              author: string(author.login) || string(author.name),
+              createdAt: string(value.committedDate) || string(value.createdAt),
+            };
+          },
+        );
+        return {
+          ready: true,
+          error: "",
+          comments,
+          commits,
+          commentCount: Number(activity.commentCount ?? comments.length),
+          commentsTruncated: activity.commentsTruncated === true,
+        };
+      } catch (error) {
+        return {
+          ...empty,
+          error: error instanceof Error ? error.message : "Pull request activity could not be loaded.",
+        };
+      }
+    }
+    return { ...empty, error: "Pull request activity is unavailable." };
   },
   updateEnvironment: ([id, label, url], store, storage, native) =>
     sources.command(

@@ -22,11 +22,15 @@ routes nav
     newThread "/threads/new"
     thread "/threads/:id"
       inspector "/threads/:id/inspect/:kind"
+      gitOverview "/threads/:id/git"
+      gitCommit "/threads/:id/git/commit"
+      gitConfirm "/threads/:id/git/confirm"
       linkedFile "/threads/:id/file/:file/:line/:column"
       turnReview "/threads/:id/review/:turn"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
   tab pullRequests "/pulls"
+    pullRequest "/pulls/:project/:number"
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
@@ -103,6 +107,10 @@ shape Environment
   status: string
   enabled: bool
   machineSymbol: string
+
+shape EnvironmentState
+  loaded: bool
+  items: Environment[]
 
 shape ToolSummary
   id: string
@@ -193,6 +201,137 @@ shape Thread
   markdownRevision: number
   controls: ThreadControls
 
+shape GitFile
+  path: string
+  insertions: number
+  deletions: number
+
+shape GitPullRequest
+  number: number
+  title: string
+  url: string
+  baseBranch: string
+  headBranch: string
+  state: string
+  isDraft: bool
+  updatedAt: string
+
+shape GitStatus
+  cwd: string
+  isRepo: bool
+  canWrite: bool
+  refName: string
+  isDefaultRef: bool
+  hasWorkingTreeChanges: bool
+  hasUpstream: bool
+  hasPrimaryRemote: bool
+  aheadCount: number
+  behindCount: number
+  aheadOfDefaultCount: number
+  branchBaseRef: string
+  branchInsertions: number
+  branchDeletions: number
+  workingFiles: GitFile[]
+  pullRequest: option<GitPullRequest>
+  unavailableReason: string
+
+shape GitOperation
+  status: string
+  actionId: string
+  action: string
+  label: string
+  error: string
+
+shape GitActionResult
+  branchStatus: string
+  branchName: string
+  commitStatus: string
+  commitSha: string
+  commitSubject: string
+  pushStatus: string
+  pushBranch: string
+  prStatus: string
+  prUrl: string
+  prNumber: number
+  toastTitle: string
+  toastDescription: string
+
+shape GitActionReply
+  ok: bool
+  error: string
+  actionId: string
+  action: string
+  result: GitActionResult
+
+shape PullRequest
+  number: number
+  title: string
+  url: string
+  state: string
+  isDraft: bool
+  repository: string
+  baseBranch: string
+  headBranch: string
+  updatedAt: string
+  projectId: string
+  author: string
+  body: string
+  additions: number
+  deletions: number
+  changedFiles: number
+
+shape GitRef
+  name: string
+  isRemote: bool
+  remoteName: string
+  upstreamRef: string
+  current: bool
+  isDefault: bool
+  worktreePath: string
+
+shape GitRefs
+  isRepo: bool
+  hasPrimaryRemote: bool
+  refs: GitRef[]
+
+shape PullRequests
+  ready: bool
+  error: string
+  items: PullRequest[]
+
+shape PullRequestDetail
+  ready: bool
+  error: string
+  body: string
+  author: string
+  additions: number
+  deletions: number
+  changedFiles: number
+  checksState: string
+
+shape PullRequestComment
+  id: string
+  author: string
+  body: string
+  createdAt: string
+  kind: string
+  path: string
+  reviewState: string
+
+shape PullRequestCommit
+  id: string
+  subject: string
+  author: string
+  createdAt: string
+
+shape PullRequestActivity
+  ready: bool
+  error: string
+  comments: PullRequestComment[]
+  commits: PullRequestCommit[]
+  commentCount: number
+  commentsTruncated: bool
+
 shape Project
   id: string
   title: string
@@ -243,6 +382,14 @@ fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thr
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
+fn gitBranchLabel(status: GitStatus): string = status.refName == "" ? "Detached HEAD" : status.refName
+fn gitHasOpenPr(status: GitStatus): bool = match status.pullRequest { case some(pr) => pr.state == "open", case none => false }
+fn gitPrLabel(status: GitStatus): string = match status.pullRequest { case some(pr) => `PR #${pr.number}`, case none => "" }
+fn gitStatusLabel(status: GitStatus): string = not status.isRepo ? "Not a repo" : (status.hasWorkingTreeChanges ? `${status.workingFiles.length} changed` : status.aheadCount == 0 and status.behindCount == 0 ? "Clean" : "") + (status.aheadCount > 0 ? `${status.hasWorkingTreeChanges ? " · " : ""}${status.aheadCount} ahead` : "") + (status.behindCount > 0 ? `${status.hasWorkingTreeChanges or status.aheadCount > 0 ? " · " : ""}${status.behindCount} behind` : "") + (gitHasOpenPr(status) ? `${status.hasWorkingTreeChanges or status.aheadCount > 0 or status.behindCount > 0 ? " · " : ""}${gitPrLabel(status)}` : "")
+fn gitQuickActionKind(status: GitStatus, busy: bool, writable: bool): string =
+  not status.isRepo ? "unavailable" : busy ? "busy" : status.refName == "" ? "detached" : status.hasWorkingTreeChanges ? (status.behindCount > 0 or (not status.hasUpstream and not status.hasPrimaryRemote) ? "commit" : gitHasOpenPr(status) or status.isDefaultRef ? "commit_push" : "commit_push_pr") : not status.hasUpstream ? (not status.hasPrimaryRemote ? (gitHasOpenPr(status) and status.aheadCount == 0 ? "open_pr" : "no_origin") : status.aheadCount == 0 ? (gitHasOpenPr(status) ? "open_pr" : "no_commits") : gitHasOpenPr(status) or status.isDefaultRef ? (status.isDefaultRef ? "commit_push" : "push") : "create_pr") : status.aheadCount > 0 and status.behindCount > 0 ? "diverged" : status.behindCount > 0 ? "pull" : status.aheadCount > 0 ? (gitHasOpenPr(status) or status.isDefaultRef ? (status.isDefaultRef ? "commit_push" : "push") : "create_pr") : gitHasOpenPr(status) ? "open_pr" : "clean"
+fn gitQuickAction(status: GitStatus, busy: bool, writable: bool): string = gitQuickActionKind(status, busy, writable) == "unavailable" ? "Git unavailable" : gitQuickActionKind(status, busy, writable) == "busy" ? "Commit" : gitQuickActionKind(status, busy, writable) == "detached" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit" ? "Commit" : gitQuickActionKind(status, busy, writable) == "commit_push" ? (status.hasWorkingTreeChanges ? "Commit & push" : "Push") : gitQuickActionKind(status, busy, writable) == "commit_push_pr" ? "Commit, push & create PR" : gitQuickActionKind(status, busy, writable) == "push" ? "Push" : gitQuickActionKind(status, busy, writable) == "create_pr" ? "Push & create PR" : gitQuickActionKind(status, busy, writable) == "pull" ? "Pull" : gitQuickActionKind(status, busy, writable) == "open_pr" ? "View PR" : gitQuickActionKind(status, busy, writable) == "diverged" ? "Sync branch" : "Commit"
+fn gitQuickActionHint(status: GitStatus, busy: bool, writable: bool): string = gitQuickActionKind(status, busy, writable) == "detached" ? "Create and checkout a branch before pushing or opening a pull request." : gitQuickActionKind(status, busy, writable) == "no_origin" ? "Add an \"origin\" remote before pushing or creating a pull request." : gitQuickActionKind(status, busy, writable) == "no_commits" ? "No local commits to push." : gitQuickActionKind(status, busy, writable) == "diverged" ? "Branch has diverged from upstream. Rebase or merge first." : gitQuickActionKind(status, busy, writable) == "clean" ? "Branch is up to date. No action needed." : ""
 
 
 fn matchingModels(group: ProviderGroup, query: string, showLegacy: bool, selectedId: string, favoritesOnly: bool): Model[] = group.models.filter(model => (showLegacy or not model.isLegacy or model.id == selectedId or model.isFavorite) and (not favoritesOnly or model.isFavorite) and (query.trim() == "" or model.label.toLowerCase().includes(query.trim().toLowerCase()) or model.slug.toLowerCase().includes(query.trim().toLowerCase()) or group.label.toLowerCase().includes(query.trim().toLowerCase())))
@@ -315,8 +462,23 @@ component T3Code
   derive shownModelGroups = settings.groups.filter(group => (modelProviderFilter == "" or modelProviderFilter == "@favorites" or group.id == modelProviderFilter) and matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites").length > 0)
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
-  resource environmentRecords = loadEnvironmentRecords() as shape Environment[] else empty()
-  resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentRecords) with time.epochAtZero as shape Catalog else empty()
+  resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
+  resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
+  state gitCommitMessage = ""
+  state gitExcludedFiles: string[] = []
+  state gitConfirmAction = ""
+  state gitConfirmIncludesCommit = false
+  state gitReadOnly = false
+  state gitNewBranch = ""
+  state gitWorktreeBase = ""
+  state gitWorktreeBranch = ""
+  state gitStatusRevision = 0
+  resource gitStatus = loadGitStatus(activeThreadId, gitStatusRevision) as shape GitStatus else empty()
+  resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
+  resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
+  resource pullRequests = loadPullRequests() as shape PullRequests else empty()
+  resource pullRequestDetail = loadPullRequestDetail(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestDetail else empty()
+  resource pullRequestActivity = loadPullRequestActivity(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestActivity else empty()
   state statusNow = 0
   derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
   resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
@@ -325,12 +487,12 @@ component T3Code
   action updateStatusClock
     statusNow = performanceNow()
   mutation regrouped as shape NavigationChange then afterRegroup
-  mutation changed as shape Reply refreshes environmentRecords, catalog
+  mutation changed as shape Reply refreshes environmentState, catalog
   mutation sent as shape SendReply then afterSend
   mutation created as shape CreatedThread then afterCreate
-  mutation paired as shape Reply refreshes environmentRecords, catalog then afterPair
-  mutation savedEnvironment as shape Reply refreshes environmentRecords, catalog then afterEnvironmentSave
-  mutation removed as shape Reply refreshes environmentRecords, catalog then afterEnvironmentRemove
+  mutation paired as shape Reply refreshes environmentState, catalog then afterPair
+  mutation savedEnvironment as shape Reply refreshes environmentState, catalog then afterEnvironmentSave
+  mutation removed as shape Reply refreshes environmentState, catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
   mutation lifecycleChanged as shape Reply refreshes catalog
   state lifecycleThreadId = ""
@@ -338,6 +500,11 @@ component T3Code
   derive lifecycleError = match lifecycleChanged { case some(reply) => lifecycleThreadId == activeThreadId ? reply.error : "", case none => "" }
   mutation visited as shape Reply queue
   mutation earlierHistory as shape Reply refreshes catalog
+  mutation pulled as shape Reply refreshes gitStatus, gitOperation then afterGitAction
+  mutation gitRefChanged as shape Reply refreshes gitRefs, gitStatus, gitOperation
+  mutation gitBranchCreated as shape Reply refreshes gitRefs, gitStatus, gitOperation
+  mutation gitWorktreeCreated as shape Reply refreshes gitRefs, gitStatus, gitOperation, catalog
+  mutation gitActionResult as shape GitActionReply refreshes gitStatus, gitOperation, pullRequests then afterGitAction
   derive historyError = failed(earlierHistory) ? "Earlier messages could not be loaded." : match earlierHistory { case some(reply) => reply.error, case none => "" }
   derive environmentError = failed(savedEnvironment) ? "The environment could not be updated." : match savedEnvironment { case some(reply) => reply.error, case none => "" }
   derive changeError = failed(changed) ? "The connection could not be changed." : match changed { case some(reply) => reply.error, case none => "" }
@@ -345,6 +512,7 @@ component T3Code
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
+  derive selectedPullRequest = match first(pullRequests.items.filter(item => item.projectId == current.params.project and `${item.number}` == current.params.number)) { case some(item) => some(item), case none => none }
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
   derive split = device.split
@@ -352,7 +520,7 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "inspector" or threadRoute.name == "gitOverview" or threadRoute.name == "gitCommit" or threadRoute.name == "gitConfirm" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
@@ -366,12 +534,20 @@ component T3Code
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
   derive composerExpanded = composer != "" and (composer.includes("\n") or composerWide)
   derive activeModelRevision = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.modelRevision, case none => "" }
   derive composerError = match sent { case some(reply) => reply.id == activeThreadId and not pending(sent) ? reply.error : "", case none => "" }
   derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend)
+  derive gitWritable = not gitReadOnly and gitStatus.canWrite
+  derive gitBusy = pending(gitActionResult) or pending(pulled) or pending(gitRefChanged) or pending(gitBranchCreated) or pending(gitWorktreeCreated) or gitOperation.status == "running"
+  derive gitError = match gitActionResult { case some(reply) => reply.error, case none => match pulled { case some(reply) => reply.error, case none => match gitRefChanged { case some(reply) => reply.error, case none => match gitBranchCreated { case some(reply) => reply.error, case none => match gitWorktreeCreated { case some(reply) => reply.error, case none => gitOperation.error } } } } }
+  derive activeThreadHasMessage = threadFeed(selectedThread(catalog, activeThreadId)).filter(row => row.message != none).length > 0
+  derive selectedGitFiles = gitStatus.workingFiles.filter(file => not gitExcludedFiles.includes(file.path))
+  derive selectedGitInsertions = sum(selectedGitFiles.map(file => file.insertions))
+  derive selectedGitDeletions = sum(selectedGitFiles.map(file => file.deletions))
 
   task visitObservation key=`${activeThreadId}:${visitShell.ready}:${visitShell.supported}:${visitShell.at}:${visitShell.watermark}:${visitShell.seen}:${visitShell.urgent}`
     after(1, observeVisit)
@@ -427,10 +603,12 @@ component T3Code
             scrollIntoView("thread-messages", anchor, offset=port.y - row.y, behavior="instant")
 
   action scrollToEnd
-    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+    // Keep the island mounted while the native scroll animation is running.
+    // The scroll observer clears `away` once the list settles at its end.
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=true, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
-    scrollIntoView("thread-messages", lastRow, block="end")
+    scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
 
   action toggleTool(threadId: string, rowId: string)
     preserveThreadDisclosure(threadId, rowId)
@@ -674,6 +852,16 @@ component T3Code
     let followed = go(base, url)
     nav = followed.next == base.next ? followed : open(base, url)
 
+  action openPullRequest(projectId: string, number: number)
+    nav = push(nav, path("pullRequest", projectId, `${number}`))
+
+  action backPullRequest
+    nav = back(nav)
+
+  action openPullRequestUrl(url: string)
+    if url != ""
+      openURL(url)
+
   action openThread(url: string)
     cancelForkNavigation()
     clearForceStopDialogs()
@@ -755,6 +943,110 @@ component T3Code
     inspectorPath = ""
     nav = push(split ? threadNav : nav, path("inspector", activeThreadId, kind))
 
+  action ignoreGitStatus
+
+  action editGitCommitMessage(value: string)
+    gitCommitMessage = value
+
+  action toggleGitFile(path: string)
+    gitExcludedFiles = gitExcludedFiles.includes(path) ? gitExcludedFiles.filter(value => value != path) : gitExcludedFiles.concat([path])
+
+  action toggleAllGitFiles
+    gitExcludedFiles = gitExcludedFiles.length == 0 ? gitStatus.workingFiles.map(file => file.path) : []
+
+  action openGitCommit
+    if activeThreadId != "" and gitStatus.isRepo and gitWritable and not gitBusy
+      gitCommitMessage = ""
+      gitExcludedFiles = []
+      nav = push(split ? threadNav : nav, path("gitCommit", activeThreadId))
+
+  action openGitOverview
+    if activeThreadId != "" and activeThreadHasMessage
+      gitNewBranch = ""
+      gitWorktreeBase = gitStatus.refName == "" ? "main" : gitStatus.refName
+      gitWorktreeBranch = ""
+      nav = push(split ? threadNav : nav, path("gitOverview", activeThreadId))
+
+  action refreshGitOverview
+    if not gitBusy
+      gitStatusRevision = gitStatusRevision + 1
+
+  action editGitNewBranch(value: string)
+    gitNewBranch = value
+
+  action editGitWorktreeBase(value: string)
+    gitWorktreeBase = value
+
+  action editGitWorktreeBranch(value: string)
+    gitWorktreeBranch = value
+
+  action createGitBranch
+    if activeThreadId != "" and gitWritable and not gitBusy and gitNewBranch.trim() != ""
+      send gitBranchCreated = createGitBranch(activeThreadId, gitNewBranch.trim())
+
+  action createGitWorktree
+    if activeThreadId != "" and gitWritable and not gitBusy and gitWorktreeBase.trim() != "" and gitWorktreeBranch.trim() != ""
+      send gitWorktreeCreated = createGitWorktree(activeThreadId, gitWorktreeBase.trim(), gitWorktreeBranch.trim())
+
+  action requestGitAction(action: string, includesCommit: bool)
+    if activeThreadId != "" and gitStatus.isRepo and gitWritable and not gitBusy
+      if gitStatus.isDefaultRef and (action == "push" or action == "create_pr" or action == "commit_push" or action == "commit_push_pr")
+        gitConfirmAction = action
+        gitConfirmIncludesCommit = includesCommit
+        nav = push(split ? threadNav : nav, path("gitConfirm", activeThreadId))
+      else
+        runGit(action, gitCommitMessage, false, selectedGitFiles.map(file => file.path))
+
+  action confirmGitAction(featureBranch: bool)
+    nav = back(nav)
+    runGit(gitConfirmAction, gitCommitMessage, featureBranch, selectedGitFiles.map(file => file.path))
+
+  action submitGitCommit(featureBranch: bool)
+    nav = back(nav)
+    runGit("commit", gitCommitMessage, featureBranch, selectedGitFiles.map(file => file.path))
+
+  action cancelGitRoute
+    nav = back(nav)
+
+  action afterGitAction
+    if gitError.toLowerCase().includes("permission") or gitError.toLowerCase().includes("scope") or gitError.toLowerCase().includes("not authorized")
+      gitReadOnly = true
+
+  action runQuickGitAction
+    let kind = gitQuickActionKind(gitStatus, gitBusy, gitWritable)
+    if kind == "pull"
+      pullLatest()
+    else if kind == "open_pr"
+      match gitStatus.pullRequest
+        case some(pr)
+          openURL(pr.url)
+        case none
+          inspect("git")
+    else if kind == "commit"
+      requestGitAction("commit", true)
+    else if kind == "commit_push"
+      requestGitAction("commit_push", true)
+    else if kind == "commit_push_pr"
+      requestGitAction("commit_push_pr", true)
+    else if kind == "push"
+      requestGitAction("push", false)
+    else if kind == "create_pr"
+      requestGitAction("create_pr", false)
+    else
+      inspect("git")
+
+  action pullLatest
+    if activeThreadId != "" and gitStatus.isRepo and gitWritable and gitStatus.behindCount > 0 and gitOperation.status != "running"
+      send pulled = pullGit(activeThreadId)
+
+  action switchGitRef(name: string)
+    if activeThreadId != "" and gitWritable and not gitBusy and name != ""
+      send gitRefChanged = switchGitRef(activeThreadId, name)
+
+  action runGit(action: string, message: string, featureBranch: bool, files: string[])
+    if activeThreadId != "" and gitStatus.isRepo and gitWritable and gitOperation.status != "running"
+      send gitActionResult = runGitAction(activeThreadId, action, message, featureBranch, files)
+
   action inspectEntry(id: string, kind: string)
     if kind == "directory"
       inspectorPath = id
@@ -820,9 +1112,13 @@ component T3Code
                     if duoFolded
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="workspace-compose"
                         image "symbol:compose"
-                  if failed(environmentRecords) or failed(catalog)
+                  if failed(environmentState) or failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
-                  else if catalog.environments.length == 0 and not pending(catalog) and not pending(environmentRecords)
+                  else if catalogLoading
+                    column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
+                      text "Loading threads…" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="loading-threads"
+                      text "Loading projects and threads from the saved environment." font-size=16 line-height="24px" color="muted" text-align="center"
+                  else if catalog.environments.length == 0 and not pending(catalog) and not pending(environmentState)
                     column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
                       text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
                       text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
@@ -856,7 +1152,7 @@ component T3Code
                     text "Environments" role="heading" aria-level=2
                     button press=addEnvironment buttonStyle="glass" aria-label="Add environment" testId=`environment-add-${e.name}`
                       image "symbol:add"
-                  if failed(environmentRecords) or failed(catalog)
+                  if failed(environmentState) or failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load environments", message="Check the connection and try again.")
                   else
                     EnvironmentList(scrollId=`environments-${e.id}`, catalog=catalog, toggleEnvironment=toggleEnvironment, manageEnvironment=manageEnvironment)
@@ -944,9 +1240,6 @@ component T3Code
                     if split
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="thread-compose"
                         image "symbol:compose"
-                    if split
-                      button press=inspect("files") aria-label="Show inspector" testId="thread-inspector"
-                        image "symbol:sf/sidebar.right"
                     button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
                       image "symbol:sf/terminal"
                     button aria-label="Git controls" popovertarget="git-menu" testId="thread-git"
@@ -1217,6 +1510,53 @@ component T3Code
                     if e.params.kind == "files" and inspectorPath != ""
                       text inspectorPath font-size=13 color="muted"
                   scroll id="inspector" flex=1 min-height=0 padding=16
+                    if e.params.kind == "git" and gitStatus.isRepo and gitStatus.workingFiles.length > 0
+                      button press=openGitCommit disabled=gitBusy appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-commit"
+                        image "symbol:sf/checkmark.circle" width=20 height=20
+                        column flex=1 min-width=0 gap=3
+                          text "Commit changes" font-size=16
+                          text `${gitStatus.workingFiles.length} changed file${gitStatus.workingFiles.length == 1 ? "" : "s"}` font-size=13 color="muted"
+                    if e.params.kind == "git" and gitStatus.isRepo and gitStatus.behindCount > 0
+                      button press=pullLatest disabled=gitBusy appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-pull"
+                        image "symbol:sf/arrow.down.circle" width=20 height=20
+                        column flex=1 min-width=0 gap=3
+                          text "Pull latest" font-size=16
+                          text `${gitStatus.behindCount} commit${gitStatus.behindCount == 1 ? "" : "s"} behind upstream` font-size=13 color="muted"
+                    if e.params.kind == "git" and gitStatus.isRepo and gitStatus.aheadCount > 0
+                      button press=requestGitAction("push", false) disabled=(gitBusy or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-push"
+                        image "symbol:sf/arrow.up.circle" width=20 height=20
+                        column flex=1 min-width=0 gap=3
+                          text "Push changes" font-size=16
+                          text `${gitStatus.aheadCount} commit${gitStatus.aheadCount == 1 ? "" : "s"} ahead` font-size=13 color="muted"
+                    if e.params.kind == "git" and gitStatus.isRepo and gitStatus.aheadCount > 0 and gitStatus.pullRequest == none
+                      button press=requestGitAction("create_pr", false) disabled=(gitBusy or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-create-pr"
+                        image "symbol:sf/arrow.up.right.circle" width=20 height=20
+                        column flex=1 min-width=0 gap=3
+                          text "Create pull request" font-size=16
+                          text "Publish this branch for review" font-size=13 color="muted"
+                    if e.params.kind == "git" and gitStatus.isRepo
+                      text "Branches & worktrees" font-size=17 font-weight=700 padding-top=18 padding-bottom=4
+                      if pending(gitRefs)
+                        text "Loading branches…" color="muted" testId="git-branches-loading"
+                      else if gitRefs.refs.length == 0
+                        text "No branches available" color="muted" testId="git-branches-empty"
+                      else
+                        for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
+                          button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-ref-${ref.name}`
+                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            column flex=1 min-width=0 gap=3
+                              text ref.name line-clamp=1
+                              text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "") font-size=13 color="muted" line-clamp=1
+                      if gitStatus.pullRequest != none
+                        match gitStatus.pullRequest
+                          case some(pr)
+                            button press=openPullRequestUrl(pr.url) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId="git-linked-pr"
+                              image "symbol:sf/arrow.up.right.square" width=18 height=18
+                              column flex=1 min-width=0 gap=3
+                                text `View pull request #${pr.number}`
+                                text pr.title font-size=13 color="muted" line-clamp=1
+                          case none
+                            view
                     if pending(inspected)
                       text "Loading…" color="muted"
                     else
@@ -1238,16 +1578,225 @@ component T3Code
                                         text item.detail font-size=13 color="muted"
                         case none
                           view
+              if e.name == "gitOverview"
+                column navigationKey=`${e.id}` navigationScroll="git-overview" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
+                  header
+                    button press=cancelGitRoute aria-label="Close Git overview" testId="git-overview-cancel"
+                      image "symbol:close"
+                    column flex=1 min-width=0 align-items="flex-start"
+                      text gitBranchLabel(gitStatus) role="heading" aria-level=2 line-clamp=1
+                      text gitStatusLabel(gitStatus) font-size=13 color="muted" line-clamp=1
+                    button press=refreshGitOverview disabled=gitBusy aria-label="Refresh repository status" testId="git-overview-refresh"
+                      image "symbol:sf/arrow.clockwise"
+                  scroll id="git-overview" flex=1 min-height=0 padding=16
+                    if gitError != ""
+                      text gitError color="danger" padding-bottom=12 testId="git-overview-error"
+                    if pending(gitStatus)
+                      row align-items="center" gap=8 padding=12
+                        progress width=18 height=18
+                        text "Checking repository status…" color="muted" testId="git-overview-loading"
+                    else
+                      section
+                        text "Source control" font-size=17 font-weight=700 padding-bottom=4
+                        if gitStatus.workingFiles.length > 0
+                          button press=openGitCommit disabled=(gitBusy or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-overview-commit"
+                            image "symbol:sf/checkmark.circle" width=20 height=20
+                            column flex=1 min-width=0 gap=3
+                              text "Commit changes"
+                              text `${gitStatus.workingFiles.length} file${gitStatus.workingFiles.length == 1 ? "" : "s"} changed` font-size=13 color="muted"
+                        if gitStatus.behindCount > 0
+                          button press=pullLatest disabled=(gitBusy or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-overview-pull"
+                            image "symbol:sf/arrow.down.circle" width=20 height=20
+                            column flex=1 min-width=0 gap=3
+                              text "Pull latest"
+                              text `${gitStatus.behindCount} commit${gitStatus.behindCount == 1 ? "" : "s"} behind upstream` font-size=13 color="muted"
+                        if gitStatus.aheadCount > 0
+                          button press=requestGitAction("push", false) disabled=(gitBusy or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-overview-push"
+                            image "symbol:sf/arrow.up.circle" width=20 height=20
+                            column flex=1 min-width=0 gap=3
+                              text "Push changes"
+                              text `${gitStatus.aheadCount} commit${gitStatus.aheadCount == 1 ? "" : "s"} ahead` font-size=13 color="muted"
+                        button press=inspect("git") disabled=(gitBusy or not gitStatus.isRepo) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-overview-review"
+                          image "symbol:sf/text.bubble" width=20 height=20
+                          column flex=1 min-width=0 align-items="flex-start"
+                            text "Review changes"
+                            text "Inspect changes, uncommitted edits, and turn diffs" font-size=13 color="muted"
+                      section
+                        text "Branches & worktrees" font-size=17 font-weight=700 padding-top=18 padding-bottom=4
+                        column gap=8 background-color="card" padding=12 border-radius=12
+                          text "New branch" font-weight=600
+                          input value=gitNewBranch input=editGitNewBranch placeholder="feature/mobile-polish" aria-label="New branch name" testId="git-new-branch"
+                          button press=createGitBranch disabled=(gitBusy or not gitWritable or gitNewBranch.trim() == "") buttonStyle="filled" testId="git-create-branch"
+                            text (gitBusy ? "Creating…" : "Create & checkout")
+                        column gap=8 background-color="card" padding=12 border-radius=12
+                          text "New worktree" font-weight=600
+                          input value=gitWorktreeBase input=editGitWorktreeBase placeholder="main" aria-label="Worktree base branch" testId="git-worktree-base"
+                          input value=gitWorktreeBranch input=editGitWorktreeBranch placeholder="feature/mobile-thread" aria-label="Worktree branch name" testId="git-worktree-branch"
+                          button press=createGitWorktree disabled=(gitBusy or not gitWritable or gitWorktreeBase.trim() == "" or gitWorktreeBranch.trim() == "") buttonStyle="filled" testId="git-create-worktree"
+                            text (gitBusy ? "Creating…" : "Create worktree")
+                      if pending(gitRefs)
+                        text "Loading branches…" color="muted" testId="git-overview-branches-loading"
+                      else if gitRefs.refs.filter(item => not item.isRemote).length == 0
+                        text "No local branches found." color="muted" testId="git-overview-branches-empty"
+                      else
+                        for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
+                          button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-overview-ref-${ref.name}`
+                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            column flex=1 min-width=0 gap=3
+                              text ref.name line-clamp=1
+                              text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "Local branch") font-size=13 color="muted" line-clamp=1
+                      if gitStatus.pullRequest != none
+                        section
+                          text "Linked pull request" font-size=17 font-weight=700 padding-top=18 padding-bottom=4
+                          match gitStatus.pullRequest
+                            case some(pr)
+                              button press=openPullRequestUrl(pr.url) appearance="none" display="flex" align-items="center" gap=10 padding="12px 0" width="100%" text-align="left" testId="git-overview-linked-pr"
+                                image "symbol:sf/arrow.up.right.square" width=18 height=18
+                                column flex=1 min-width=0 gap=3
+                                  text `#${pr.number} ${pr.title}` line-clamp=2
+                                  text `${pr.headBranch} → ${pr.baseBranch} · ${pr.state}` font-size=13 color="muted" line-clamp=1
+                            case none
+                              view
+              if e.name == "gitCommit"
+                column navigationKey=`${e.id}` navigationScroll="git-commit-sheet" navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
+                  header
+                    button press=cancelGitRoute aria-label="Cancel commit" testId="git-commit-cancel"
+                      image "symbol:close"
+                    text "Commit changes" role="heading" aria-level=2
+                  scroll id="git-commit-sheet" flex=1 min-height=0 padding=16
+                    if gitStatus.isDefaultRef
+                      text "You’re on the default branch. You can create a new branch when committing." color="status-warning" padding-bottom=12 testId="git-default-branch"
+                    text "Commit message" font-weight=500
+                    input value=gitCommitMessage input=editGitCommitMessage placeholder="Describe your changes…" aria-label="Commit message" testId="git-commit-message" min-height=90 padding=12 background-color="card" border-radius=12
+                    text "Leave empty to generate a message automatically." font-size=13 color="muted" padding-bottom=12
+                    text "Changed files" font-weight=700
+                    row align-items="center" justify-content="space-between" gap=10
+                      column flex=1 min-width=0 gap=3
+                        text `${selectedGitFiles.length} of ${gitStatus.workingFiles.length} selected · +${selectedGitInsertions} −${selectedGitDeletions}` font-size=13 color="muted"
+                      if gitStatus.workingFiles.length > 0
+                        button press=toggleAllGitFiles appearance="none" padding="4px 0" testId="git-toggle-all"
+                          text (gitExcludedFiles.length == 0 ? "Deselect all" : "Select all") color="foreground"
+                    for file in gitStatus.workingFiles key=file.path
+                      button press=toggleGitFile(file.path) role="checkbox" aria-checked=(not gitExcludedFiles.includes(file.path)) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" testId=`git-file-${file.path}`
+                        image (gitExcludedFiles.includes(file.path) ? "symbol:sf/circle" : "symbol:checkmark.circle.fill") width=18 height=18
+                        text file.path flex=1 min-width=0 line-clamp=1
+                        text `+${file.insertions} −${file.deletions}` font-size=13 color="muted"
+                    if gitStatus.workingFiles.length == 0
+                      text "No changed files to commit." color="muted" padding="12px 0"
+                    button press=submitGitCommit(false) disabled=(gitBusy or not gitWritable or selectedGitFiles.length == 0) buttonStyle="filled" testId="git-commit-submit"
+                      text (gitBusy ? "Committing…" : "Commit changes")
+                    button press=submitGitCommit(true) disabled=(gitBusy or not gitWritable or selectedGitFiles.length == 0) appearance="none" padding=12 testId="git-commit-branch"
+                      text "Commit on a new branch"
+              if e.name == "gitConfirm"
+                column navigationKey=`${e.id}` navigationPresentation="modal" background-color="screen" position="absolute" inset=0 display="flex" flex-direction="column"
+                  header
+                    button press=cancelGitRoute aria-label="Cancel" testId="git-confirm-cancel"
+                      image "symbol:close"
+                    text "Confirm source control action" role="heading" aria-level=2
+                  column padding=20 gap=14
+                    text `You’re on the default branch (${gitStatus.refName}).` font-size=17 font-weight=700
+                    text "Publishing changes from the default branch can make review harder. Continue or create a feature branch first." color="muted"
+                    button press=confirmGitAction(false) disabled=gitBusy buttonStyle="filled" testId="git-confirm-continue"
+                      text (gitBusy ? "Running…" : "Continue")
+                    button press=confirmGitAction(true) disabled=gitBusy appearance="none" padding=12 testId="git-confirm-branch"
+                      text (gitConfirmIncludesCommit ? "Feature branch & commit" : "Feature branch & continue")
               if e.name == "pullRequests"
                 column navigationKey=`${e.id}` navigationScroll="pulls" data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Pull Requests" role="heading" aria-level=2
                   list id="pulls" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    section
-                      row
-                        text "No pull requests yet" font="-exact-body"
-                      footer
-                        text "Pull requests linked to your threads will appear here." font="-exact-footnote" color="-exact-secondary-label"
+                    if pending(pullRequests)
+                      section
+                        row
+                          progress width=18 height=18
+                          text "Loading pull requests…" font="-exact-body" testId="pulls-loading"
+                    else if pullRequests.error != ""
+                      section
+                        row
+                          text pullRequests.error color="danger" testId="pulls-error"
+                    else if pullRequests.items.length == 0
+                      section
+                        row
+                          text "No pull requests yet" font="-exact-body" testId="pulls-empty"
+                        footer
+                          text "Pull requests linked to your threads will appear here." font="-exact-footnote" color="-exact-secondary-label"
+                    else
+                      section
+                        for pull in pullRequests.items key=`${pull.projectId}:${pull.number}`
+                          row press=openPullRequest(pull.projectId, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.projectId}-${pull.number}`
+                            column flex=1 min-width=0 gap=3
+                              text `#${pull.number} ${pull.title}` font="-exact-body" line-clamp=2
+                              text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+                              text (pull.author != "" ? `by ${pull.author}` : "") font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+                            text pull.state font="-exact-footnote" color=(pull.state == "open" ? "status-working" : "muted")
+                            text "View" color="foreground" testId=`pull-open-${pull.projectId}-${pull.number}`
+              if e.name == "pullRequest"
+                column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    button press=backPullRequest aria-label="Back" testId="pull-request-back"
+                      image "symbol:back"
+                    text (match selectedPullRequest { case some(pull) => `#${pull.number} ${pull.title}`, case none => "Pull request" }) role="heading" aria-level=2 line-clamp=1
+                  scroll id="pull-request-detail" flex=1 min-height=0 padding=16
+                    if pending(pullRequests)
+                      row align-items="center" gap=8
+                        progress width=16 height=16
+                        text "Loading pull requests…" color="muted" testId="pull-request-list-loading"
+                    else if pullRequests.error != ""
+                      text pullRequests.error color="danger" testId="pull-request-list-error"
+                    else
+                      match selectedPullRequest
+                        case some(pull)
+                          column gap=14
+                            text pull.title font-size=22 font-weight=700
+                            text `#${pull.number} · ${pull.state}${pull.isDraft ? " · Draft" : ""}` color="muted"
+                            text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` color="muted"
+                            if pending(pullRequestDetail)
+                              row align-items="center" gap=8
+                                progress width=16 height=16
+                                text "Loading pull request details…" color="muted" testId="pull-request-detail-loading"
+                            else if pullRequestDetail.error != ""
+                              text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
+                            else
+                              text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
+                              text `${pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles} changed file${(pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles) == 1 ? "" : "s"} · +${pullRequestDetail.additions > 0 ? pullRequestDetail.additions : pull.additions} −${pullRequestDetail.deletions > 0 ? pullRequestDetail.deletions : pull.deletions}` color="muted"
+                              text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
+                              if pullRequestDetail.body != ""
+                                text pullRequestDetail.body line-clamp=12 padding-top=6
+                            if pending(pullRequestActivity)
+                              row align-items="center" gap=8 padding-top=8
+                                progress width=16 height=16
+                                text "Loading activity…" color="muted" testId="pull-request-activity-loading"
+                            else if pullRequestActivity.error != ""
+                              text pullRequestActivity.error color="danger" testId="pull-request-activity-error"
+                            else
+                              if pullRequestActivity.commits.length > 0
+                                column gap=6 padding-top=8
+                                  text "Commits" font-size=17 font-weight=700
+                                  for commit in pullRequestActivity.commits key=commit.id
+                                    row align-items="flex-start" gap=8 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-commit-${commit.id}`
+                                      image "symbol:sf/arrow.triangle.branch" width=15 height=15 color="muted"
+                                      column flex=1 min-width=0 gap=2
+                                        text commit.subject line-clamp=2
+                                        text `${commit.author != "" ? `${commit.author} · ` : ""}${commit.createdAt}` font-size=13 color="muted" line-clamp=1
+                              if pullRequestActivity.comments.length > 0
+                                column gap=6 padding-top=8
+                                  text `Activity${pullRequestActivity.commentsTruncated ? " · Showing recent comments" : ""}` font-size=17 font-weight=700
+                                  for comment in pullRequestActivity.comments key=comment.id
+                                    column gap=3 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-comment-${comment.id}`
+                                      row align-items="center" gap=6
+                                        text (comment.author != "" ? comment.author : "Unknown reviewer") font-weight=700 line-clamp=1
+                                        text comment.kind font-size=12 color="muted"
+                                      if comment.path != ""
+                                        text comment.path font-size=12 color="muted" line-clamp=1
+                                      text comment.body white-space="pre-wrap" line-clamp=8
+                                      text comment.createdAt font-size=12 color="muted"
+                              if pullRequestActivity.commits.length == 0 and pullRequestActivity.comments.length == 0
+                                text "No activity yet." padding-top=8 color="muted" testId="pull-request-activity-empty"
+                            text `Updated ${pull.updatedAt}` font-size=13 color="muted"
+                            button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
+                              text "Open in source control"
+                        case none
+                          text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -1303,9 +1852,26 @@ component T3Code
         button role="menuitem" disabled=true
           text "No project scripts"
       column id="git-menu" popover="auto" role="menu" aria-label="Git controls"
-        button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide"
+        button role="menuitem" press=ignoreGitStatus disabled=true testId="git-status-row"
+          image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
+          column flex=1 min-width=0 align-items="flex-start"
+            text (pending(gitStatus) ? "Checking status" : gitBranchLabel(gitStatus)) line-clamp=1
+            text (pending(gitStatus) ? "Checking status" : gitStatusLabel(gitStatus)) font-size=13 color="muted" testId="git-status"
+        button role="menuitem" press=runQuickGitAction disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
+          image (gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "pull" ? "symbol:sf/arrow.down.circle" : gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "commit" ? "symbol:sf/checkmark.circle" : "symbol:sf/arrow.up.circle")
+          column flex=1 min-width=0 align-items="flex-start"
+            text (pending(gitStatus) ? "Checking status" : gitQuickAction(gitStatus, gitBusy, gitWritable))
+            text (gitError != "" ? gitError : gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable)) font-size=13 color="muted"
+        button role="menuitem" press=inspect("git") disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
           image "symbol:sf/text.bubble"
-          text "Review changes"
+          column flex=1 min-width=0 align-items="flex-start"
+            text "Review changes"
+            text (not activeThreadHasMessage ? "Available after the first message" : "Inspect changes, uncommitted edits, and turn diffs") font-size=13 color="muted"
+        button role="menuitem" press=openGitOverview disabled=(activeThreadId == "" or not activeThreadHasMessage) testId="git-more"
+          image "symbol:sf/ellipsis"
+          column flex=1 min-width=0 align-items="flex-start"
+            text "More"
+            text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details") font-size=13 color="muted"
       workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail ? "flex" : "none")
       row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail ? "flex" : "none")
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1

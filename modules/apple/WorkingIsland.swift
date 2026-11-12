@@ -201,6 +201,8 @@ private final class WorkingIslandView: UIView {
     if !installedEffects {
       if #available(iOS 26.0, *), hasGlass {
         let effect = UIGlassContainerEffect()
+        // The lenses stay separate at rest and begin blending as the arrow
+        // folds into the status capsule.
         effect.spacing = 12
         container.effect = effect
       }
@@ -215,7 +217,10 @@ private final class WorkingIslandView: UIView {
       self.capsule.alpha = self.hasStatus ? 1 : 0
       self.arrowButton.alpha = self.showArrow ? 1 : 0
       self.configureGlass(self.capsule, visible: self.hasStatus, interactive: self.reconnect || self.hasAction, radius: height / 2)
-      self.configureGlass(self.arrow, visible: self.showArrow, interactive: true, radius: height / 2)
+      // Keep the arrow's glass lens alive while it folds into the status
+      // capsule. Only the chevron fades; the shared container then blends the
+      // two lenses into one continuous island before the arrow view is hidden.
+      self.configureGlass(self.arrow, visible: self.showArrow || self.hasStatus, interactive: true, radius: height / 2)
       self.layoutContent()
     }
     installedEffects = true
