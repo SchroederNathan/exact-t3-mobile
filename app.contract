@@ -612,9 +612,7 @@ component T3Code
     threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
-    // Match the native scroll-to-end action: do not leave the observer racing
-    // an animation while the island is deciding whether it should be visible.
-    scrollIntoView("thread-messages", lastRow, block="end", behavior="instant")
+    scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
 
   action retryScrollToEnd
     threadScrollEndRetried = true
@@ -622,7 +620,7 @@ component T3Code
     threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
-    scrollIntoView("thread-messages", lastRow, block="end", behavior="instant")
+    scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
 
   action toggleTool(threadId: string, rowId: string)
     preserveThreadDisclosure(threadId, rowId)
