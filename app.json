@@ -28,13 +28,8 @@
   "host": {
     "ios": {
       "minimumOS": "17.0",
-      "deviceFamily": [
-        "iphone",
-        "ipad"
-      ],
-      "link": [
-        "-lc++"
-      ],
+      "deviceFamily": ["iphone", "ipad"],
+      "link": ["-lc++"],
       "localNetworking": "Connect to your T3 Code environments on your local network."
     }
   },
@@ -43,23 +38,8 @@
       "ios": "0"
     }
   },
-  "data": [
-    "workspace-header",
-    "search-placement",
-    "brand-stage",
-    "hides-back",
-    "sidebar"
-  ],
+  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar"],
   "commands": {
-    "prepare-ios": [
-      "python3",
-      "native/highlight/build.py",
-      "--install"
-    ]
-  },
-  "extra": {
-    "eas": {
-      "projectId": "837b02f9-1fd9-4d75-a060-1e8e6b35f563"
-    }
+    "prepare-ios": ["python3", "native/highlight/build.py", "--install"]
   }
 }

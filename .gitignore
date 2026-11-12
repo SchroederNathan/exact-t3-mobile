@@ -6,6 +6,7 @@
 /app.contract.d.ts
 /.exact/
 /.env.local
+/.env.eas-simulator
 /release/credentials.json
 /release/credentials/
 /native/highlight/vendor/

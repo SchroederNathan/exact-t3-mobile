@@ -146,6 +146,27 @@ test "accepted sends preserve other drafts and newer edits across relaunch"
   clock settle
   expect text "composer" == "Beta draft during Alpha send"
 
+test "scroll-to-bottom hides the island after a long jump" on ios
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-activity-mixed"
+  clock data
+  clock settle
+  tap "thread-messages" drag 0 500
+  clock settle
+  expect state threadScroll.away == true
+  expect tree has "scroll-to-bottom"
+  tap "scroll-to-bottom"
+  clock settle
+  expect state threadScroll.away == false
+  expect tree missing "scroll-to-bottom"
+
 test "two environments stay independent through filtering and connection management"
   clock data
   tap "empty-add-environment"
