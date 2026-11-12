@@ -178,7 +178,8 @@ test("native environments aggregate colliding IDs and keep commands and connecti
   };
   let activeThread = "b:t";
   const load = async (selected = "") => {
-    const environments = await answer("loadEnvironmentRecords", [], store, storage, native);
+    const environmentState = await answer("loadEnvironmentState", [], store, storage, native);
+    const environments = environmentState.items;
     return answer(
       "loadCatalog",
       [selected, activeThread, environments, 0],
@@ -1561,7 +1562,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     beforeEdit.filter(({ id }) => id === "b"),
   );
 
-  const environments = await answer("loadEnvironmentRecords", [], store, storage, native);
+  const environments = (await answer("loadEnvironmentState", [], store, storage, native)).items;
   const fallback = await answer("loadCatalog", ["b", "b:t", environments, 0], store, storage, null);
   expect(fallback.environments.map(({ id, status }) => ({ id, status }))).toEqual([
     { id: "b", status: "Use the native transport" },

@@ -1263,6 +1263,10 @@ export class DirectSession {
       : "";
   }
 
+  shellReady() {
+    return this.shellLive;
+  }
+
   installControlAccess(key: string, session: unknown): boolean {
     if (!key || key !== this.controlAccessKey()) return false;
     return (this.controlGrant = controlAccess(session));

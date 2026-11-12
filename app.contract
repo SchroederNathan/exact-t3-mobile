@@ -108,6 +108,10 @@ shape Environment
   enabled: bool
   machineSymbol: string
 
+shape EnvironmentState
+  loaded: bool
+  items: Environment[]
+
 shape ToolSummary
   id: string
   category: string
@@ -457,8 +461,8 @@ component T3Code
   derive shownModelGroups = settings.groups.filter(group => (modelProviderFilter == "" or modelProviderFilter == "@favorites" or group.id == modelProviderFilter) and matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites").length > 0)
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
-  resource environmentRecords = loadEnvironmentRecords() as shape Environment[] else empty()
-  resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentRecords) with time.epochAtZero as shape Catalog else empty()
+  resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
+  resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
   state gitConfirmAction = ""
@@ -482,12 +486,12 @@ component T3Code
   action updateStatusClock
     statusNow = performanceNow()
   mutation regrouped as shape NavigationChange then afterRegroup
-  mutation changed as shape Reply refreshes environmentRecords, catalog
+  mutation changed as shape Reply refreshes environmentState, catalog
   mutation sent as shape SendReply then afterSend
   mutation created as shape CreatedThread then afterCreate
-  mutation paired as shape Reply refreshes environmentRecords, catalog then afterPair
-  mutation savedEnvironment as shape Reply refreshes environmentRecords, catalog then afterEnvironmentSave
-  mutation removed as shape Reply refreshes environmentRecords, catalog then afterEnvironmentRemove
+  mutation paired as shape Reply refreshes environmentState, catalog then afterPair
+  mutation savedEnvironment as shape Reply refreshes environmentState, catalog then afterEnvironmentSave
+  mutation removed as shape Reply refreshes environmentState, catalog then afterEnvironmentRemove
   mutation inspected as shape Inspection
   mutation lifecycleChanged as shape Reply refreshes catalog
   state lifecycleThreadId = ""
@@ -529,6 +533,7 @@ component T3Code
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
   derive composerExpanded = composer != "" and (composer.includes("\n") or composerWide)
@@ -1099,9 +1104,13 @@ component T3Code
                     if duoFolded
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="workspace-compose"
                         image "symbol:compose"
-                  if failed(environmentRecords) or failed(catalog)
+                  if failed(environmentState) or failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load threads", message="Check the connection and try again.")
-                  else if catalog.environments.length == 0 and not pending(catalog) and not pending(environmentRecords)
+                  else if catalogLoading
+                    column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
+                      text "Loading threads…" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="loading-threads"
+                      text "Loading projects and threads from the saved environment." font-size=16 line-height="24px" color="muted" text-align="center"
+                  else if catalog.environments.length == 0 and not pending(catalog) and not pending(environmentState)
                     column flex=1 align-items="center" justify-content="center" padding="122px 60px 128px" gap=7
                       text (catalog.environments.length == 0 ? "No environments connected" : "No threads yet") font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
                       text (catalog.environments.length == 0 ? "Add an environment to load projects and start coding sessions." : "Start a new thread to begin coding.") font-size=16 line-height="24px" color="muted" text-align="center"
@@ -1135,7 +1144,7 @@ component T3Code
                     text "Environments" role="heading" aria-level=2
                     button press=addEnvironment buttonStyle="glass" aria-label="Add environment" testId=`environment-add-${e.name}`
                       image "symbol:add"
-                  if failed(environmentRecords) or failed(catalog)
+                  if failed(environmentState) or failed(catalog)
                     EmptyState(symbol="symbol:alert", title="Can’t load environments", message="Check the connection and try again.")
                   else
                     EnvironmentList(scrollId=`environments-${e.id}`, catalog=catalog, toggleEnvironment=toggleEnvironment, manageEnvironment=manageEnvironment)

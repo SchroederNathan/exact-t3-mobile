@@ -252,7 +252,11 @@ function nativeCatalog(
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
       if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
-      return { ...connections.get(environment.id)!.session.environment };
+      const connection = connections.get(environment.id)!;
+      return {
+        ...connection.session.environment,
+        ...(connection.open && !connection.session.shellReady() ? { status: "Connecting" } : {}),
+      };
     }),
     projects: [...connections.values()].flatMap(({ session }) => session.projectList()),
     threads: [...connections.values()]
@@ -922,7 +926,10 @@ const sources: Sources = {
       return { kind: "phone", rail: false, split: false };
     }
   },
-  loadEnvironmentRecords: (_args, _store, storage) => loadEnvironments(storage),
+  loadEnvironmentState: async (_args, _store, storage) => ({
+    loaded: true,
+    items: await loadEnvironments(storage),
+  }),
   loadControlAccess: async ([environmentId, key, _retry], store) => {
     if (!environmentId || !key) return { key, allowed: false, error: "" };
     try {
