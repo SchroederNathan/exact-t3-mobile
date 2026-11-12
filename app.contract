@@ -1234,9 +1234,6 @@ component T3Code
                     if split
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="thread-compose"
                         image "symbol:compose"
-                    if split
-                      button press=inspect("files") aria-label="Show inspector" testId="thread-inspector"
-                        image "symbol:sf/sidebar.right"
                     button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
                       image "symbol:sf/terminal"
                     button aria-label="Git controls" popovertarget="git-menu" testId="thread-git"
