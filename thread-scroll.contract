@@ -10,6 +10,9 @@ fn threadScrollField(fields: string[], index: number): string = match fields.at(
 members T3Code
   state threadScroll = ThreadScrollPosition(scope="", following=true, away=false, key=none, offset=0)
   state threadScrollRevision = 0
+  state threadScrollEndPending = false
+  state threadScrollEndRetried = false
+  state threadScrollEndPendingScope = ""
   derive threadScrollScope = `${activeThreadId}:${threadRoute.id}`
   derive threadFollowing = threadScroll.scope != threadScrollScope or threadScroll.following
   derive threadAway = threadScroll.scope == threadScrollScope and threadScroll.away
@@ -25,5 +28,25 @@ members T3Code
       let moving = threadScrollField(fields, 5) == "true"
       let settled = threadScrollField(fields, 1) == "settled" and threadScrollField(fields, 6) == "true"
       let atEnd = threadScrollField(fields, 7) == "true"
+      let endRequestPending = threadScrollEndPendingScope == threadScrollScope and threadScrollEndPending
+      let retryExhausted = settled and endRequestPending and threadScrollEndRetried and not atEnd
       let savedScroll = threadScroll.scope == threadScrollScope ? threadScroll : ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
-      threadScroll = ThreadScrollPosition(savedScroll, following=moving ? false : settled ? atEnd : savedScroll.following, away=not atEnd)
+      // Keep the island hidden while a requested jump is settling. UIKit can
+      // report one intermediate frame at the old offset before the smooth
+      // scroll reaches its end; exposing the island again in that frame makes
+      // a successful jump look like it failed. If the retry is exhausted away
+      // from the end, restore it so the user can try again.
+      threadScroll = ThreadScrollPosition(savedScroll, following=moving ? false : settled ? atEnd : savedScroll.following, away=endRequestPending and not retryExhausted ? false : not atEnd)
+      if settled and atEnd
+        threadScrollEndPending = false
+        threadScrollEndRetried = false
+        threadScrollEndPendingScope = ""
+      else if settled and threadScrollEndPendingScope == threadScrollScope and threadScrollEndPending and not threadScrollEndRetried
+        // A collection correction is ignored by UIKit while a drag or
+        // deceleration owns the scroll view. Reissue the jump once that
+        // motion has settled so the button works mid-scroll as well.
+        retryScrollToEnd()
+      else if retryExhausted
+        threadScrollEndPending = false
+        threadScrollEndRetried = false
+        threadScrollEndPendingScope = ""

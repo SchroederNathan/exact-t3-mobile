@@ -1,13 +1,23 @@
 import Foundation
 
 struct ThreadScrollGeometry: Equatable {
+  /// Lists can land a fraction of a point short of their clamped end after a
+  /// native animation. Treat that small residual as the end so the floating
+  /// control does not linger over the composer.
+  // A programmatic scroll targets the last row's frame, while the list also
+  // owns bottom padding for the composer. Accept that inset-sized residual as
+  // the end so the island does not linger after a successful jump.
+  private static let endTolerance = 64.0
+
   let contentHeight: Double
   let viewportHeight: Double
   let scrollOffset: Double
   let viewportWidth: Double
   let userScrolling: Bool
 
-  var isAtEnd: Bool { viewportHeight > 0 && contentHeight - viewportHeight - scrollOffset <= 1 }
+  var isAtEnd: Bool {
+    viewportHeight > 0 && contentHeight - viewportHeight - scrollOffset <= Self.endTolerance
+  }
 }
 
 struct ThreadScrollProbe {
@@ -159,6 +169,7 @@ private final class ThreadScrollObserverView: UIView {
         scroll = found
         observations = [
           found.observe(\.contentSize) { [weak self] _, _ in MainActor.assumeIsolated { self?.changed() } },
+          found.observe(\.contentOffset) { [weak self] _, _ in MainActor.assumeIsolated { self?.changed(motion: true) } },
           found.observe(\.bounds) { [weak self] _, _ in MainActor.assumeIsolated { self?.changed() } },
           found.observe(\.contentInset) { [weak self] _, _ in MainActor.assumeIsolated { self?.changed() } },
           found.observe(\.adjustedContentInset) { [weak self] _, _ in MainActor.assumeIsolated { self?.changed() } },

@@ -603,9 +603,21 @@ component T3Code
             scrollIntoView("thread-messages", anchor, offset=port.y - row.y, behavior="instant")
 
   action scrollToEnd
-    // Keep the island mounted while the native scroll animation is running.
-    // The scroll observer clears `away` once the list settles at its end.
-    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=true, key=none, offset=0)
+    // Hide the island for the requested jump. The scroll observer keeps it
+    // hidden through intermediate frames and restores it if both attempts
+    // settle away from the end.
+    threadScrollEndPending = true
+    threadScrollEndRetried = false
+    threadScrollEndPendingScope = threadScrollScope
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
+    threadScrollRevision = threadScrollRevision + 1
+    let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
+    scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
+
+  action retryScrollToEnd
+    threadScrollEndRetried = true
+    threadScrollEndPendingScope = threadScrollScope
+    threadScroll = ThreadScrollPosition(scope=threadScrollScope, following=true, away=false, key=none, offset=0)
     threadScrollRevision = threadScrollRevision + 1
     let lastRow = match threadRows(selectedThread(catalog, activeThreadId), expandedTools, activeThreadId).map(item => match item { case some(row) => row.id, case none => "history" }).at(-1) { case some(key) => key, case none => "history" }
     scrollIntoView("thread-messages", lastRow, block="end", behavior="smooth")
