@@ -1,5 +1,5 @@
 {
-  "$schema": "../exact2-origin-main/scripts/app.schema.json",
+  "$schema": "../../../expo-exact/scripts/app.schema.json",
   "name": "T3 Code Exact iOS",
   "short_name": "T3 Code",
   "id": "com.exact.t3code.ios",
