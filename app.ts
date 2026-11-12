@@ -200,7 +200,8 @@ function syncNativeConnections(native: NativeModule) {
         session.receive(string(event.data));
       } else if (event.type === "close" || event.type === "error") {
         connection.open = false;
-        session.disconnected(string(event.reason) || "Disconnected");
+        const reason = string(event.reason) || "Disconnected";
+        session.disconnected(reason, event.recoverable === true ? "Reconnecting" : reason);
       }
     } catch (error) {
       connection.open = false;

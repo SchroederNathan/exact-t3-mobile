@@ -187,13 +187,14 @@ test("native environments aggregate colliding IDs and keep commands and connecti
       catalogNative,
     );
   };
-  const emit = (id: string, type: string, data = "", reason = "") => {
+  const emit = (id: string, type: string, data = "", reason = "", recoverable = false) => {
     events.push({
       id,
       generation: connections.find((entry) => entry.id === id)?.generation ?? 1,
       type,
       data,
       reason,
+      ...(recoverable ? { recoverable: true } : {}),
     });
   };
   const chunk = (id: string, requestId: string, value: object) =>
@@ -1236,7 +1237,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     storage,
     native,
   );
-  emit("b", "close", "", "Connection lost");
+  emit("b", "close", "", "Connection lost", true);
   const disconnected = await load();
   expect(await interrupted).toEqual({
     id: "b:t",
@@ -1246,7 +1247,7 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     error: "Connection lost",
   });
   expect(receipts.size).toBe(0);
-  expect(disconnected.environments.find(({ id }) => id === "b")?.status).toBe("Connection lost");
+  expect(disconnected.environments.find(({ id }) => id === "b")?.status).toBe("Reconnecting");
   const reconnecting = connections.find(({ id }) => id === "b")!.generation;
   await answer("command", ["reconnect", "b", ""], store, storage, native);
   activeThread = "b:t";

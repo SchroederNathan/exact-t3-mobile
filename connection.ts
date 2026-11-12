@@ -1812,7 +1812,7 @@ export class DirectSession {
     return new Promise((resolve) => this.replies.set(id, resolve));
   }
 
-  disconnected(reason: string) {
+  disconnected(reason: string, status = reason) {
     this.controlEpoch++;
     this.controlGrant = false;
     this.clearToolPanels();
@@ -1823,7 +1823,10 @@ export class DirectSession {
     this.threadRequest = "";
     this.socket = undefined;
     for (const history of this.transcripts.values()) history.disconnect();
-    this.environment.status = reason;
+    // Keep the transport error for pending commands while exposing the
+    // reconnecting state to the catalog. A transient socket loss should not
+    // turn an in-flight send into the misleading generic "Reconnecting" error.
+    this.environment.status = status;
     for (const resolve of this.replies.values()) resolve({ ok: false, error: reason });
     this.replies.clear();
     for (const query of this.queries.values()) query.reject(new Error(reason));

@@ -7,6 +7,7 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     let id: String
     let generation: Int
     let origin: URL
+    var token: String
     var ticket: URLSessionDataTask?
     var socket: URLSessionWebSocketTask?
     var opened = false
@@ -16,21 +17,31 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     var recoverable = false
     var recoveryAvailable = false
     var recoveryRequested = false
+    var retryAttempt = 0
+    var retryAfterLiveLoss = false
+    var openedAt: Date?
+    var retryWorkItem: DispatchWorkItem?
+    var stabilityWorkItem: DispatchWorkItem?
     var probe: UUID?
     var probeTimeout: DispatchWorkItem?
     var outgoing: [String] = []
     var outgoingBytes = 0
 
-    init(id: String, generation: Int, origin: URL) {
+    init(id: String, generation: Int, origin: URL, token: String) {
       self.id = id
       self.generation = generation
       self.origin = origin
+      self.token = token
     }
 
     func stop() {
       ended = true
       opened = false
       cancelProbe()
+      retryWorkItem?.cancel()
+      retryWorkItem = nil
+      stabilityWorkItem?.cancel()
+      stabilityWorkItem = nil
       ticket?.cancel()
       socket?.cancel(with: .goingAway, reason: nil)
       outgoing.removeAll()
@@ -55,6 +66,7 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
   private var bufferedBytes = 0
   private var session: URLSession?
   private var lifecycleObservers: [NSObjectProtocol] = []
+  private var active = true
   private let maximumBytes = 8 * 1024 * 1024
 
   init(changed: @escaping () -> Void) {
@@ -100,10 +112,20 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
       for (id, generation, origin, token) in inputs {
         if let existing = connections[id], existing.generation == generation, existing.origin == origin,
            !existing.recoveryRequested { continue }
-        connections[id]?.stop()
-        let connection = Connection(id: id, generation: generation, origin: origin)
+        let previous = connections[id]
+        let preservingRetry = previous?.recoveryRequested == true
+        let delay = preservingRetry ? previous.map(retryDelay(for:)) ?? 0 : 0
+        previous?.stop()
+        let connection = Connection(id: id, generation: generation, origin: origin, token: token)
+        if preservingRetry, let previous {
+          // Preserve the backoff across the replacement triggered by a transient
+          // failure. Without this, every failed retry starts from zero and can
+          // spin the server and battery while the environment is unavailable.
+          connection.retryAttempt = previous.retryAttempt
+        }
+        connection.recoveryAvailable = active
         connections[id] = connection
-        connect(connection, token: token)
+        connect(connection, delay: delay)
       }
       let drained = events.filter { event in
         guard let id = event["id"] as? String, let generation = event["generation"] as? Int else { return false }
@@ -193,22 +215,35 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
   }
 
   private func resignedActive() {
+    active = false
     for connection in connections.values {
       connection.recoveryAvailable = false
       connection.recoveryRequested = false
+      connection.retryWorkItem?.cancel()
+      connection.retryWorkItem = nil
       connection.cancelProbe()
     }
   }
 
   private func becameActive() {
+    active = true
     for connection in connections.values {
       connection.recoveryAvailable = true
       if connection.ended {
         if connection.recoverable {
+          // Foregrounding is an explicit wakeup. Match the supervisor's
+          // wakeup behavior by abandoning stale backoff accumulated while the
+          // app was away and trying the environment immediately.
+          connection.retryAttempt = 0
           connection.recoveryAvailable = false
           connection.recoveryRequested = true
           changed()
         }
+      } else if !connection.opened && connection.ticket == nil && connection.socket == nil {
+        // A delayed retry may have been canceled while the app was in the
+        // background. Start it now rather than waiting for another sync.
+        connection.retryAttempt = 0
+        connect(connection)
       } else if connection.opened, let socket = connection.socket {
         connection.cancelProbe()
         let probe = UUID()
@@ -240,11 +275,46 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     return connection
   }
 
-  private func connect(_ connection: Connection, token: String) {
-    if session == nil { session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main) }
+  private func retryDelay(for connection: Connection) -> TimeInterval {
+    guard connection.retryAttempt > 0 else { return 0 }
+    // A live session gets a quick first retry for brief Wi-Fi or server blips.
+    // Initial ticket failures use a one-second base; later failures double up
+    // to five minutes. Small jitter keeps several environments from reconnecting
+    // in lockstep.
+    if connection.retryAfterLiveLoss && connection.retryAttempt == 1 {
+      return 0.25 * Double.random(in: 0.5...1.0)
+    }
+    let ceiling = min(300, 1.0 * pow(2, Double(min(connection.retryAttempt, 18))))
+    return ceiling * Double.random(in: 0.5...1.0)
+  }
+
+  private func connect(_ connection: Connection, delay: TimeInterval = 0) {
+    guard current(connection) else { return }
+    let start = DispatchWorkItem { [weak self, weak connection] in
+      guard let self, let connection, self.current(connection) else { return }
+      connection.retryWorkItem = nil
+      self.startTicket(connection)
+    }
+    connection.retryWorkItem = start
+    if delay > 0 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: start)
+    } else {
+      start.perform()
+    }
+  }
+
+  private func startTicket(_ connection: Connection) {
+    if session == nil {
+      // Keep custom URLProtocol handlers from intercepting the ticket request or
+      // WebSocket upgrade. The upstream Expo client uses the same isolation for
+      // its native URLSession transport.
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = []
+      session = URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
+    }
     var request = URLRequest(url: connection.origin.appendingPathComponent("api/auth/websocket-ticket/rpc"))
     request.httpMethod = "POST"
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("Bearer \(connection.token)", forHTTPHeaderField: "Authorization")
     request.timeoutInterval = 30
     let task = session!.dataTask(with: request) { [weak self, weak connection] data, response, error in
       DispatchQueue.main.async {
@@ -278,9 +348,23 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
     connections[connection.id] === connection && !connection.ended
   }
 
-  private func enqueue(_ connection: Connection, type: String, data: String = "", reason: String = "") {
+  private func enqueue(
+    _ connection: Connection,
+    type: String,
+    data: String = "",
+    reason: String = "",
+    recoverable: Bool = false
+  ) {
     let wasEmpty = events.isEmpty
-    events.append(["id": connection.id, "generation": connection.generation, "type": type, "data": data, "reason": reason])
+    var event: [String: Any] = [
+      "id": connection.id,
+      "generation": connection.generation,
+      "type": type,
+      "data": data,
+      "reason": reason,
+    ]
+    if type == "close" { event["recoverable"] = recoverable }
+    events.append(event)
     bufferedBytes += data.utf8.count
     if wasEmpty { changed() }
   }
@@ -304,13 +388,16 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
 
   private func finish(_ connection: Connection, reason: String, recoverable: Bool = false) {
     guard current(connection) else { return }
+    let liveLoss = connection.opened
     connection.stop()
     connection.recoverable = recoverable
-    if connection.recoveryAvailable && recoverable {
+    connection.retryAfterLiveLoss = recoverable && liveLoss
+    if active && connection.recoveryAvailable && recoverable {
+      connection.retryAttempt += 1
       connection.recoveryAvailable = false
       connection.recoveryRequested = true
     }
-    enqueue(connection, type: "close", reason: reason)
+    enqueue(connection, type: "close", reason: reason, recoverable: recoverable)
   }
 
   private func receive(_ connection: Connection) {
@@ -364,6 +451,19 @@ final class WorkspaceConnections: NSObject, URLSessionWebSocketDelegate, @unchec
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
     guard let connection = connections.values.first(where: { $0.socket === webSocketTask }), current(connection) else { return }
     connection.opened = true
+    connection.retryAfterLiveLoss = false
+    let openedAt = Date()
+    connection.openedAt = openedAt
+    connection.stabilityWorkItem?.cancel()
+    let stable = DispatchWorkItem { [weak self, weak connection] in
+      guard let self, let connection, self.current(connection), connection.opened,
+            connection.openedAt == openedAt else { return }
+      connection.retryAttempt = 0
+      connection.stabilityWorkItem = nil
+    }
+    connection.stabilityWorkItem = stable
+    DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: stable)
+    connection.recoveryAvailable = active
     enqueue(connection, type: "open")
   }
 
