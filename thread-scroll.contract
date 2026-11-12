@@ -36,7 +36,8 @@ members T3Code
       // scroll reaches its end; exposing the island again in that frame makes
       // a successful jump look like it failed. If the retry is exhausted away
       // from the end, restore it so the user can try again.
-      threadScroll = ThreadScrollPosition(savedScroll, following=moving ? false : settled ? atEnd : savedScroll.following, away=endRequestPending and not retryExhausted ? false : not atEnd)
+      let observedAway = moving ? not atEnd : settled ? not atEnd : savedScroll.away
+      threadScroll = ThreadScrollPosition(savedScroll, following=moving ? false : settled ? atEnd : savedScroll.following, away=endRequestPending and not retryExhausted ? false : observedAway)
       if settled and atEnd
         threadScrollEndPending = false
         threadScrollEndRetried = false

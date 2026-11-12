@@ -1262,7 +1262,7 @@ component T3Code
                       image "symbol:sf/folder"
                   column flex=1 min-height=0 min-width=0
                     column flex=1 min-height=0 min-width=0 position="relative"
-                      list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
+                      list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12) scroll-padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
                         for item in threadRows(selectedThread(catalog, e.params.id), expandedTools, e.params.id) key=(match item { case some(row) => row.id, case none => "history" })
                           column width="100%" box-sizing="border-box"
                             match item
