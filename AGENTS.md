@@ -5,24 +5,25 @@ This repository is an active, personal clone of T3 Code's Expo mobile experience
 The sibling `t3-exact-ios` checkout is the upstream T3 Code reference. Use it to check server behavior and wire compatibility. Keep this client independent and do not import code from that checkout.
 
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
-# exact-t3-mobile: an Exact app
+# t3-75457f81-e4f8cef2765b8760: an Exact app
 
 `app.contract` is the view, `app.ts` its data module, `app.test.contract` its tests, `app.json`
 the manifest: set its `app.name` and `app.id` before the first build. The app uses the exact2
-checkout at `../exact2-origin-main` by path (`EXACT2` overrides it).
+checkout at `../../../expo-exact` by path (`EXACT2` overrides it).
 
 This file is already in your instructions. Start from the nearest pattern: `bun exact.mjs
-pattern` lists them and `pattern <name>` writes one, tested. ../exact2-origin-main/docs/start-here-site.md (a site) or
-../exact2-origin-main/docs/start-here.md is the only required reading. `bun exact.mjs contract vocab <name>` answers a
+pattern` lists them and `pattern <name>` writes one, tested. ../../../expo-exact/docs/start-here-site.md (a site) or
+../../../expo-exact/docs/start-here.md is the only required reading. `bun exact.mjs contract vocab <name>` answers a
 name (none: the card); `bun exact.mjs docs <heading words>` a guide's
 section. Run `bun exact.mjs verify` when the features work, and `verify ios|android` at the end for a
-phone app. `bun exact.mjs help` lists the verbs, and your own in app.json `"commands"`.
+phone app. When an iPhone app is ready for the person to try, run `bun exact.mjs share` and give
+them the link it prints; run it again after each change they should see. `bun exact.mjs help` lists the verbs, and your own in app.json `"commands"`.
 `bun exact.mjs update` refreshes files. A native verb (`ios`, `mac`, `linux`, `android`,
 `windows`) names its platform in app.json the first time it runs and builds it in a generated
 workspace; `update --without <platform>` stops it.
-`bun ../exact2-origin-main/scripts/exact.mjs setup --check` names what a native build lacks.
+`bun ../../../expo-exact/scripts/exact.mjs setup --check` names what a native build lacks.
 Shared data: `exact new <path> --snapback`, or `bun exact.mjs snapback` here.
-Install `snapback4@0.4.33` above; ../exact2-origin-main/snapback4/README.md has setup and server commands.
+Install `snapback4@0.4.33` above; ../../../expo-exact/snapback4/README.md has setup and server commands.
 
 Generated, so don't edit: `exact.mjs` and this block.
 
