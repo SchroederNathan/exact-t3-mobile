@@ -109,9 +109,9 @@ final class WorkspaceContainer: UITabBarController, UITabBarControllerDelegate {
 }
 
 private final class WorkspaceColumn: UIViewController {
-  private let stack: UINavigationController
+  private let stack: UIViewController
 
-  init(_ stack: UINavigationController) {
+  init(_ stack: UIViewController) {
     self.stack = stack
     super.init(nibName: nil, bundle: nil)
   }
@@ -129,8 +129,8 @@ private final class WorkspaceColumn: UIViewController {
 }
 
 private final class WorkspacePair: UIViewController {
-  private let primary: UINavigationController
-  private let secondary: UINavigationController
+  private let primary: UIViewController
+  private let secondary: UIViewController
   private let split = UISplitViewController(style: .doubleColumn)
   private var mounted: UIViewController?
   var showsSplit = false {
@@ -140,7 +140,7 @@ private final class WorkspacePair: UIViewController {
     didSet { if sidebarHidden != oldValue { updateDisplayMode() } }
   }
 
-  init(primary: UINavigationController, secondary: UINavigationController) {
+  init(primary: UIViewController, secondary: UIViewController) {
     self.primary = primary
     self.secondary = secondary
     super.init(nibName: nil, bundle: nil)
@@ -190,7 +190,8 @@ private final class WorkspacePair: UIViewController {
       split.setViewController(secondary, for: .secondary)
     }
     // The list's search toolbar follows its top route; a route moved between stacks left it hidden.
-    primary.setToolbarHidden(primary.topViewController?.toolbarItems?.isEmpty ?? true, animated: false)
+    let toolbarItems = (primary as? UINavigationController)?.topViewController?.toolbarItems
+    (primary as? UINavigationController)?.setToolbarHidden(toolbarItems?.isEmpty ?? true, animated: false)
     mounted = next
     addChild(next)
     next.view.frame = view.bounds
