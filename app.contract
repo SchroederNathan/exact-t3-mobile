@@ -1425,9 +1425,6 @@ component T3Code
                     if split
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="thread-compose"
                         image "symbol:compose"
-                    if split
-                      button press=inspect("files") aria-label="Show inspector" testId="thread-inspector"
-                        image "symbol:sf/sidebar.right"
                     if terminalMenu.canRead or terminalMenu.canOperate
                       button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
                         image "symbol:sf/terminal"
@@ -2138,24 +2135,20 @@ component T3Code
       column id="git-menu" popover="auto" role="menu" aria-label="Git controls"
         button role="menuitem" press=ignoreGitStatus disabled=true testId="git-status-row"
           image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
-          column flex=1 min-width=0 align-items="flex-start"
-            text (pending(gitStatus) ? "Checking status" : gitBranchLabel(gitStatus)) line-clamp=1
-            text (pending(gitStatus) ? "Checking status" : gitStatusLabel(gitStatus)) font-size=13 color="muted" testId="git-status"
-        button role="menuitem" press=runQuickGitAction disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
+          text (pending(gitStatus) ? "Checking status" : gitBranchLabel(gitStatus))
+          text (pending(gitStatus) ? "Checking status" : gitStatusLabel(gitStatus)) testId="git-status"
+        button role="menuitem" press=runQuickGitAction popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
           image (gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "pull" ? "symbol:sf/arrow.down.circle" : gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "commit" ? "symbol:sf/checkmark.circle" : "symbol:sf/arrow.up.circle")
-          column flex=1 min-width=0 align-items="flex-start"
-            text (pending(gitStatus) ? "Checking status" : gitQuickAction(gitStatus, gitBusy, gitWritable))
-            text (gitError != "" ? gitError : gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable)) font-size=13 color="muted"
-        button role="menuitem" press=inspect("git") disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
+          text (pending(gitStatus) ? "Checking status" : gitQuickAction(gitStatus, gitBusy, gitWritable))
+          text (gitError != "" ? gitError : gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable))
+        button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
           image "symbol:sf/text.bubble"
-          column flex=1 min-width=0 align-items="flex-start"
-            text "Review changes"
-            text (not activeThreadHasMessage ? "Available after the first message" : "Inspect changes, uncommitted edits, and turn diffs") font-size=13 color="muted"
-        button role="menuitem" press=openGitOverview disabled=(activeThreadId == "" or not activeThreadHasMessage) testId="git-more"
+          text "Review changes"
+          text (not activeThreadHasMessage ? "Available after the first message" : "Inspect changes, uncommitted edits, and turn diffs")
+        button role="menuitem" press=openGitOverview popovertarget="git-menu" popovertargetaction="hide" disabled=(activeThreadId == "" or not activeThreadHasMessage) testId="git-more"
           image "symbol:sf/ellipsis"
-          column flex=1 min-width=0 align-items="flex-start"
-            text "More"
-            text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details") font-size=13 color="muted"
+          text "More"
+          text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details")
       workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail ? "flex" : "none")
       row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail ? "flex" : "none")
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1

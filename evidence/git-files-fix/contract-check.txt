@@ -1,0 +1,24 @@
+git-quick-action: native menu row
+git-review-changes: native menu row
+git-more: native menu row
+thread-inspector: removed
+thread-files: one remaining files entry
+git trigger: popovertarget=git-menu
+git target: popover=auto role=menu
+git rows: popovertarget=git-menu popovertargetaction=hide
+cloud build: evidence/git-files-fix/cloud-final-build.png
+cloud result: final iOS artifact installed and launched on EAS Simulator
+cloud pairing: environment 382c4b25-df00-4a33-a517-979b0d92c1cc connected through https://tame-moles-cut.loca.lt
+cloud thread: Fix Git Menu and Remove Sidebar Button
+cloud header: evidence/git-files-fix/cloud-target-thread-header.png (one Git controls button, one Open files button)
+cloud menu: evidence/git-files-fix/cloud-target-git-menu.png (native Git popover rows visible)
+cloud cleanup: EAS device closed with shutdown=true after capture
+
+correction (2026-11-13): the "native menu row" lines above were wrong.
+cloud-target-git-menu.png shows a drawn fallback popover, not a UIMenu.
+cause: each Git row wrapped its text in a `column`. Exact's iOS host
+(host/apple/Sources/ExactKit/MenuShape.swift, `menuShaped`) accepts only
+rows of text plus at most one image, so the whole popover fell back.
+fix: Git rows are now flat `image` + `text` + `text`, like Terminal rows.
+checks after fix: bun test tests 238 pass; exact test 4 passed; contract verify 0 findings.
+on-device check: EAS iOS simulator, paired through a tunnel; Git menu opens as a native UIMenu (cloud-native-git-menu.png). simulator shut down, tunnel stopped.
