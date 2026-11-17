@@ -156,7 +156,8 @@ component InlineControl
       if icon == "folder-branch"
         view position="relative" width=16 height=16 flex-shrink=0
           image "symbol:sf/folder" width=16 height=16 font-size=16 color="icon-muted"
-          image "symbol:sf/arrow.triangle.branch" position="absolute" right=-4 bottom=-4 width=9 height=9 font-size=9 color="icon-muted"
+          view position="absolute" right=-2.7 bottom=-3.3 width=9 height=9
+            GitBranchIcon(size=9)
       else if icon == "arrow.triangle.branch"
         GitBranchIcon(size=16)
       else
@@ -199,7 +200,7 @@ component DraftHero
             text view.question font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" text-align="center" testId="draft-question"
             row justify-content="center" align-items="flex-end" max-width="100%"
               text "in " font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" white-space="pre"
-              button press=openProject appearance="none" min-width=0 max-width=250 border-bottom="1px solid muted" aria-label=`Project, ${view.projectLabel}` testId="draft-project"
+              button press=openProject appearance="none" min-width=0 max-width=250 padding-bottom=1.33 border-bottom="1px solid muted" aria-label=`Project, ${view.projectLabel}` testId="draft-project"
                 text view.projectLabel font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" line-clamp=1
               text "?" font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground"
           EnvironmentControl(view=view, press=openEnvironment)
@@ -326,7 +327,7 @@ component EnvironmentPicker
           for choice, index in choices key=choice.id
             column border-bottom=(index < choices.length - 1 ? "1px solid border-subtle" : "none")
               row align-items="stretch"
-                button press=choose(choice.id) disabled=busy aria-selected=choice.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 flex=1 min-width=0 min-height=56 padding="10.5px 14px" text-align="left" aria-label=`${choice.label}, ${choice.statusText}` testId=`environment-choice-${choice.id}`
+                button press=choose(choice.id) disabled=busy aria-selected=choice.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 flex=1 min-width=0 box-sizing="border-box" min-height=56 padding="10.5px 14px" text-align="left" aria-label=`${choice.label}, ${choice.statusText}` testId=`environment-choice-${choice.id}`
                   image `symbol:sf/${choice.machineSymbol}` width=20 height=20 font-size=20 flex-shrink=0 color="icon-muted"
                   column flex=1 min-width=0 gap=3.5
                     text choice.label font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=1
@@ -334,7 +335,7 @@ component EnvironmentPicker
                       view width=6 height=6 border-radius=3 flex-shrink=0 background-color=(choice.phase == "connected" ? "online" : choice.phase == "connecting" or choice.phase == "reconnecting" ? "status-warning" : choice.phase == "offline" or choice.phase == "error" ? "danger" : "icon-muted")
                       text choice.statusText font-size=13 line-height="17px" color="muted" line-clamp=2
                   if choice.selected
-                    image "symbol:sf/checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
+                    image "symbol:checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
                 button press=toggle(choice.id) appearance="none" display="flex" align-items="center" justify-content="center" min-width=44 min-height=44 padding-right=7 aria-label=(expanded == choice.id ? `Hide details for ${choice.label}` : `Show details for ${choice.label}`) testId=`environment-disclosure-${choice.id}`
                   image (expanded == choice.id ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=13 height=13 font-size=13 color="icon-muted"
               if expanded == choice.id
@@ -368,14 +369,14 @@ component BranchPicker
         if choices.rows.length > 0
           column border-radius=14 overflow="hidden" opacity=(busy ? 0.45 : 1)
             for row, index in choices.rows key=row.key
-              button press=choose(row.name, row.isRemote, row.current, row.worktreePath) disabled=busy aria-selected=row.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 min-height=49 padding="10.5px 14px" background-color="card" border-bottom=(index < choices.rows.length - 1 ? "1px solid border-subtle" : "none") text-align="left" aria-label=(row.badge == "" ? row.name : `${row.name}, ${row.badge}`) testId=`branch-${row.name}`
+              button press=choose(row.name, row.isRemote, row.current, row.worktreePath) disabled=busy aria-selected=row.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 box-sizing="border-box" min-height=49 padding="10.5px 14px" background-color="card" border-bottom=(index < choices.rows.length - 1 ? "1px solid border-subtle" : "none") text-align="left" aria-label=(row.badge == "" ? row.name : `${row.name}, ${row.badge}`) testId=`branch-${row.name}`
                 GitBranchIcon(size=17)
                 column flex=1 min-width=0 gap=1.75
                   text row.name font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=1
                   if row.badge != ""
                     text row.badge font-size=13 line-height="17px" color="muted" line-clamp=1
                 if row.selected
-                  image "symbol:sf/checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
+                  image "symbol:checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
             if choices.hasMore
               view height=1 intersect=loadMore
           if choices.hasMore
@@ -405,7 +406,7 @@ component HomeDraftRowContent
           text draft.title flex=1 min-width=0 font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=2 testId=`home-draft-title-${draft.key}`
           if draft.kind == "draft"
             row align-items="center" gap=3.5 min-height=23 flex-shrink=0
-              image "symbol:sf/square.and.pencil" width=13 height=13 font-size=13 font-weight=600 color="draft-amber"
+              image "symbol:compose" width=13 height=13 font-size=13 font-weight=600 color="draft-amber"
               text "Draft" font-size=13 line-height="17px" font-weight=700 color="draft-amber"
         if draft.kind == "unsent"
           text "Sends on reconnect" margin-top=3.5 padding-left=27 font-size=13 line-height="17px" color="muted"

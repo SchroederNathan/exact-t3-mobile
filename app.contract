@@ -1321,7 +1321,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2140,6 +2140,10 @@ component T3Code
         text forceStopMessage
         button commandfor="force-stop-result" command="close" testId="force-stop-ok"
           text "OK"
+      column id="draft-menu" popover="auto" role="menu"
+        button press=confirmDiscardDraft(discardKey, discardKind) destructive=true popovertarget="draft-menu" popovertargetaction="hide" testId="draft-menu-discard"
+          image "symbol:delete"
+          text (discardKind == "unsent" ? "Delete" : "Discard")
       dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
         text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
         button commandfor="discard-draft" command="close" testId="discard-draft-cancel"
@@ -2242,6 +2246,7 @@ component ThreadList
     drafts: HomeDraftRow[]
     openDraft: action
     discardDraft: action
+    aimDraft: action
     visibleThreads: Thread[]
     selectedEnvironment: string
     selectedProject: string
@@ -2288,7 +2293,7 @@ component ThreadList
             text "Unsent" font-size=13 line-height="17px" font-weight=500 color="muted"
             view flex=1 height=1 background-color="edge"
           for draft, index in drafts key=draft.key
-            row press=openDraft(draft.key, draft.kind, draft.threadId) delete=discardDraft(draft.key, draft.kind) role="button" width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) aria-label=draft.title testId=`home-draft-${draft.key}`
+            row press=openDraft(draft.key, draft.kind, draft.threadId) swipeleft=discardDraft(draft.key, draft.kind) contextmenu=aimDraft(draft.key, draft.kind) contextPopover="draft-menu" role="button" width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) aria-label=draft.title testId=`home-draft-${draft.key}`
               HomeDraftRowContent(draft=draft, sidebar=sidebar, showEnvironment=(catalog.environments.length > 1), last=(index == drafts.length - 1))
       section
         if visibleThreads.length == 0 and drafts.length == 0

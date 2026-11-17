@@ -11,6 +11,7 @@ members T3Code
   state taskViewportShort = false
   state sendRouteId = ""
   state discardKey = ""
+  state discardKind = ""
   state taskAlertTitle = ""
   state taskAlertBody = ""
   state retargetRouteId = ""
@@ -35,7 +36,7 @@ members T3Code
     after(150, applyBranchQuery)
   task measureTaskViewport when activeDraftKey != "" and threadRoute.name == "thread" key=`${threadRoute.id}:${composerFocus}:${split}:${composerBottomAdjustment}`
     after(1, measureTaskViewport, wait=frame)
-  task leaveMissingDraft when newTask.phase == "missing" and newTask.key == activeDraftKey and threadRoute.name == "thread" key=`${threadRoute.id}:${newTask.key}`
+  task leaveMissingDraft when (newTask.phase == "missing" or newTask.phase == "needsProject") and newTask.key == activeDraftKey and threadRoute.name == "thread" key=`${threadRoute.id}:${newTask.key}`
     after(1, pickProjectForMissing)
   task retireLaunches when allDrafts.filter(draft => launchState(draft) == "accepted" and liveThreadIds.includes(launchThreadId(draft))).length > 0 key=allDrafts.filter(draft => launchState(draft) == "accepted" and liveThreadIds.includes(launchThreadId(draft))).map(draft => draft.id).join("|")
     after(1, retireNextLaunch)
@@ -69,7 +70,7 @@ members T3Code
 
   action leaveProjectPicker(key: string)
     projectQuery = ""
-    if isDraftKey(key) and stampProject(threadDraft(savedDrafts, draftEdits, key)) == ""
+    if isDraftKey(key) and (stampProject(threadDraft(savedDrafts, draftEdits, key)) == "" or (newTask.key == key and newTask.phase == "missing"))
       nav = back(back(nav))
     else
       nav = back(nav)
@@ -130,7 +131,7 @@ members T3Code
         nav = nav
 
   action pickProjectForMissing
-    if newTask.phase == "missing" and top(split ? threadNav : nav).name == "thread"
+    if (newTask.phase == "missing" or newTask.phase == "needsProject") and top(split ? threadNav : nav).name == "thread"
       nav = push(split ? threadNav : nav, path("chooseProject", newTask.key))
 
   action toggleTaskWorkspace(key: string)
@@ -255,8 +256,13 @@ members T3Code
         persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=none))
       nav = push(base, path("thread", key))
 
+  action aimHomeDraft(key: string, kind: string)
+    discardKey = key
+    discardKind = kind
+
   action confirmDiscardDraft(key: string, kind: string)
     discardKey = key
+    discardKind = kind
     showModal(kind == "unsent" ? "delete-pending-task" : "discard-draft")
 
   action discardDraft
