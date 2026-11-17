@@ -1,7 +1,8 @@
 use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAttempt, matchingToolPanels, toolCopyText from "./tool-row.contract"
 use MediaBatch, MediaImage from "./media-image.contract"
 use TurnReview, TurnReviewContent from "./turn-review.contract"
-use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail from "./attachments.contract"
+use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail, TaskStamp from "./attachments.contract"
+use NewTaskView, ProjectChoices, ProjectChoice, EnvironmentChoice, BranchChoices, BranchRow, HomeDraftRow, isDraftKey, launchOf, launching, launchText, launchTitle, launchStrategy, launchError, routeMode, DraftHero, DraftControls, PreparingThread, ProjectMark, InlineControl, EnvironmentControl, ProjectPicker, EnvironmentPicker, BranchPicker, HomeDraftRowContent from "./new-task.contract"
 use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
@@ -19,7 +20,6 @@ font "DM Sans"
 routes nav
   tab threads "/"
   tab threadDetail "/detail"
-    newThread "/threads/new"
     thread "/threads/:id"
       inspector "/threads/:id/inspect/:kind"
       gitOverview "/threads/:id/git"
@@ -30,6 +30,14 @@ routes nav
       terminal "/threads/:id/terminal/:terminalId"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
+      chooseProject "/threads/:id/project"
+        addProject "/threads/:id/project/add"
+          addProjectNew "/threads/:id/project/add/new"
+          addProjectLocal "/threads/:id/project/add/local"
+          addProjectRepository "/threads/:id/project/add/repo/:source"
+            addProjectDestination "/threads/:id/project/add/clone/:source"
+      draftEnvironment "/threads/:id/environment"
+      draftBranch "/threads/:id/branch"
   tab pullRequests "/pulls"
     pullRequest "/pulls/:project/:number"
   tab usage "/usage"
@@ -337,6 +345,14 @@ shape Project
   id: string
   title: string
   environmentId: string
+  workspaceRoot: string
+  isScratch: bool
+  pinned: bool
+  updatedAt: number
+  repositoryKey: string
+  faviconUrl: string
+  monogram: string
+  monogramColor: string
 
 shape TerminalScript
   id: string
@@ -382,11 +398,6 @@ shape Catalog
   environments: Environment[]
   threads: Thread[]
 
-shape CreatedThread
-  ok: bool
-  error: string
-  threadId: string
-
 shape Reply
   ok: bool
   error: string
@@ -411,6 +422,7 @@ shape Inspection
   items: InspectionItem[]
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
+fn threadLive(catalog: Catalog, id: string): bool = threadFeed(selectedThread(catalog, id)).filter(row => row.message != none).length > 0
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
 fn threadFeed(threads: Thread[]): FeedRow[] = match first(threads) { case some(thread) => thread.rows, case none => [] }
 fn threadRows(threads: Thread[], expanded: ToolExpansion[], threadId: string): option<FeedRow>[] = [none].concat(threadFeed(threads).filter(row => row.foldId == "" or toolAttempt(expanded, threadId, row.foldId) >= 0).map(row => some(row)))
@@ -455,6 +467,7 @@ component T3Code
   members "./thread-scroll.contract"
   members "./tool-group.contract"
   members "./question-attachments.contract"
+  members "./new-task-state.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -502,8 +515,8 @@ component T3Code
   derive modelDraftError = failed(restoredModelSettings) ? "Saved model settings could not be loaded." : failed(persistedModelSettings) ? "Model settings could not be saved." : ""
   derive draftsReady = not pending(savedDrafts) and not failed(savedDrafts)
   derive draftError = failed(savedDrafts) ? "Saved drafts could not be loaded." : failed(savedDraft) ? "The draft could not be saved." : match first(failedDraftSaves) { case some(reply) => reply.error, case none => "" }
-  resource settings = loadSettings(settingsThreadId) as shape SheetSettings else empty()
-  resource composerModel = loadComposerModel(activeThreadId, catalog.modelDraftRevision, activeModelRevision) as shape ComposerModel else empty()
+  resource settings = loadSettings(settingsThreadId, newTask.environmentId, newTask.projectId) as shape SheetSettings else empty()
+  resource composerModel = loadComposerModel(activeComposerId, catalog.modelDraftRevision, activeModelRevision, newTask.environmentId, newTask.projectId) as shape ComposerModel else empty()
   mutation favoriteChanged as shape Reply refreshes settings
   mutation settingsOpened as shape Reply refreshes settings then afterSettingsOpen
   mutation settingsUpdated as shape Reply refreshes settings, composerModel then afterSettingsUpdate
@@ -525,7 +538,7 @@ component T3Code
   state gitWorktreeBase = ""
   state gitWorktreeBranch = ""
   state gitStatusRevision = 0
-  resource gitStatus = loadGitStatus(activeThreadId, gitStatusRevision) as shape GitStatus else empty()
+  resource gitStatus = loadGitStatus(activeThreadId != "" ? activeThreadId : activeDraftKey, gitStatusRevision, newTask.environmentId, newTask.cwd) as shape GitStatus else empty()
   resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
   resource pullRequests = loadPullRequests() as shape PullRequests else empty()
@@ -557,7 +570,6 @@ component T3Code
   mutation regrouped as shape NavigationChange then afterRegroup
   mutation changed as shape Reply refreshes environmentState, catalog
   mutation sent as shape SendReply then afterSend
-  mutation created as shape CreatedThread then afterCreate
   mutation paired as shape Reply refreshes environmentState, catalog then afterPair
   mutation savedEnvironment as shape Reply refreshes environmentState, catalog then afterEnvironmentSave
   mutation removed as shape Reply refreshes environmentState, catalog then afterEnvironmentRemove
@@ -593,7 +605,9 @@ component T3Code
   derive settingsNav = nav.tab == "settingsDetail" ? nav : select(nav, "settingsDetail")
   derive visibleTab = nav.tab == "threadDetail" ? "threads" : nav.tab == "settingsDetail" ? "settings" : nav.tab
   derive threadRoute = split ? top(threadNav) : current
-  derive activeThreadId = visibleTab == "threads" and (threadRoute.name == "thread" or threadRoute.name == "terminal" or threadRoute.name == "inspector" or threadRoute.name == "gitOverview" or threadRoute.name == "gitCommit" or threadRoute.name == "gitConfirm" or threadRoute.name == "linkedFile" or threadRoute.name == "turnReview" or threadRoute.name == "threadSettings" or threadRoute.name == "settingChoice") ? threadRoute.params.id : ""
+  derive activeComposerId = visibleTab == "threads" and threadRoute.url.startsWith("/threads/") ? threadRoute.params.id : ""
+  derive activeDraftKey = isDraftKey(activeComposerId) ? activeComposerId : ""
+  derive activeThreadId = activeDraftKey != "" or launching(allDrafts, activeComposerId) ? "" : activeComposerId
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)
@@ -609,11 +623,12 @@ component T3Code
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
-  derive composer = threadDraft(savedDrafts, draftEdits, activeThreadId).text
+  derive composer = threadDraft(savedDrafts, draftEdits, activeComposerId).text
   derive composerExpanded = composer != "" and (composer.includes("\n") or composerWide)
   derive activeModelRevision = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.modelRevision, case none => "" }
   derive composerError = match sent { case some(reply) => reply.id == activeThreadId and not pending(sent) ? reply.error : "", case none => "" }
-  derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend)
+  derive composerBlockedReason = activeDraftKey != "" ? (newTask.key == activeDraftKey ? newTask.sendBlockedReason : "") : activeComposerId != "" and activeThreadId == "" ? "Starting the thread…" : ""
+  derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend) and composerBlockedReason == "" and (activeDraftKey == "" or (newTask.key == activeDraftKey and newTask.phase == "ready"))
   derive gitWritable = not gitReadOnly and gitStatus.canWrite
   derive gitBusy = pending(gitActionResult) or pending(pulled) or pending(gitRefChanged) or pending(gitBranchCreated) or pending(gitWorktreeCreated) or gitOperation.status == "running"
   derive gitError = match gitActionResult { case some(reply) => reply.error, case none => match pulled { case some(reply) => reply.error, case none => match gitRefChanged { case some(reply) => reply.error, case none => match gitBranchCreated { case some(reply) => reply.error, case none => match gitWorktreeCreated { case some(reply) => reply.error, case none => gitOperation.error } } } } }
@@ -777,13 +792,13 @@ component T3Code
   action persistReconciledModels
     send persistedModelSettings = persistModelSettings()
 
-  task inspector when current.name == "inspector" and selectedThread(catalog, current.params.id).length > 0 key=`${current.id}:${current.params.kind}:${inspectorPath}`
+  task inspector when current.name == "inspector" and (selectedThread(catalog, current.params.id).length > 0 or (isDraftKey(current.params.id) and newTask.cwd != "")) key=`${current.id}:${current.params.kind}:${inspectorPath}:${newTask.cwd}`
     after(1, loadInspector)
 
   action openModelSettings
     cancelForkNavigation()
     clearForceStopDialogs()
-    let id = activeThreadId
+    let id = activeComposerId
     favoriteChanged = none
     settingsUpdated = none
     settingsClosed = none
@@ -792,14 +807,14 @@ component T3Code
     modelProviderFilter = ""
     showLegacyModels = false
     modelExpansionOverrides = []
-    send settingsOpened = beginSettings(id)
+    send settingsOpened = beginSettings(id, newTask.environmentId, newTask.projectId)
   action afterSettingsOpen
     if match settingsOpened { case some(reply) => reply.ok, case none => false }
       nav = push(split ? threadNav : nav, path("threadSettings", settingsThreadId))
   action cancelModelSettings
-    send settingsClosed = closeSettings(settingsThreadId, false)
+    send settingsClosed = closeSettings(settingsThreadId, false, newTask.environmentId, newTask.projectId)
   action saveModelSettings
-    send settingsClosed = closeSettings(settingsThreadId, true)
+    send settingsClosed = closeSettings(settingsThreadId, true, newTask.environmentId, newTask.projectId)
   action afterSettingsClose
     if match settingsClosed { case some(reply) => reply.ok, case none => false }
       send persistedModelSettings = persistModelSettings()
@@ -814,16 +829,16 @@ component T3Code
   action toggleModelGroup(id: string)
     modelExpansionOverrides = modelExpansionOverrides.includes(id) ? modelExpansionOverrides.filter(value => value != id) : modelExpansionOverrides.concat([id])
   action toggleModelFavorite(id: string, favorite: bool)
-    send favoriteChanged = setModelFavorite(settingsThreadId, id, favorite)
+    send favoriteChanged = setModelFavorite(settingsThreadId, id, favorite, newTask.environmentId)
   action selectSettingsModel(id: string)
-    send settingsUpdated = changeSettings(settingsThreadId, "model", id, "")
+    send settingsUpdated = changeSettings(settingsThreadId, "model", id, "", newTask.environmentId, newTask.projectId)
   action toggleSettingsOption(id: string, value: bool)
-    send settingsUpdated = changeSettings(settingsThreadId, "option", id, value ? "true" : "false")
+    send settingsUpdated = changeSettings(settingsThreadId, "option", id, value ? "true" : "false", newTask.environmentId, newTask.projectId)
   action openSettingChoice(kind: string, option: string)
     nav = push(nav, path("settingChoice", settingsThreadId, kind, option))
 
   action chooseSetting(kind: string, id: string, value: string)
-    send settingsUpdated = changeSettings(settingsThreadId, kind, id, value)
+    send settingsUpdated = changeSettings(settingsThreadId, kind, id, value, newTask.environmentId, newTask.projectId)
   action afterSettingsUpdate
     if match settingsUpdated { case some(reply) => reply.ok, case none => false }
       send persistedModelSettings = persistModelSettings()
@@ -832,7 +847,7 @@ component T3Code
 
 
   action loadInspector
-    send inspected = inspectThread(current.params.id, current.params.kind, inspectorPath)
+    send inspected = inspectThread(current.params.id, current.params.kind, inspectorPath, newTask.environmentId, newTask.cwd)
 
   action openTerminal(id: string, terminalId: string)
     let base = split ? threadNav : nav
@@ -1057,7 +1072,8 @@ component T3Code
   action compose
     cancelForkNavigation()
     clearForceStopDialogs()
-    nav = split ? push(select(threadNav, "threadDetail"), "/threads/new") : push(nav, "/threads/new")
+    if not pending(composed)
+      send composed = startNewTask(activeThreadId != "" ? activeThreadId : activeDraftKey, time.epochAtZero + performanceNow())
 
   action workspaceAction(value: string)
     if value.startsWith("tab:")
@@ -1065,20 +1081,7 @@ component T3Code
       clearForceStopDialogs()
       nav = select(nav, value.replaceAll("tab:", ""))
     else if value == "compose"
-      cancelForkNavigation()
-      clearForceStopDialogs()
-      nav = push(nav, "/threads/new")
-
-  action createProjectThread(id: string)
-    send created = createThread(id, "New thread")
-
-  action afterCreate
-    match created
-      case some(reply)
-        if reply.ok
-          nav = replace(split ? threadNav : nav, path("thread", reply.threadId))
-      case none
-        nav = nav
+      compose()
 
   action toggleSettled
     showSettled = not showSettled
@@ -1090,8 +1093,8 @@ component T3Code
     send changed = command("toggle", id, enabled ? "true" : "false")
 
   action editComposer(value: string)
-    if draftsReady and activeThreadId != ""
-      let previous = threadDraft(savedDrafts, draftEdits, activeThreadId)
+    if draftsReady and activeComposerId != "" and (activeThreadId != "" or activeDraftKey != "")
+      let previous = threadDraft(savedDrafts, draftEdits, activeComposerId)
       persistDraft(ThreadDraft(previous, text=value, revision=previous.revision + 1))
 
   action copyMessage(body: string)
@@ -1109,7 +1112,7 @@ component T3Code
   action focusComposer
     focus("composer")
 
-  task composerFit when activeThreadId != "" key=`${threadRoute.id}:${composer}:${composerAttachments.length}:${composerFocus}:${split}:${sidebarHidden}`
+  task composerFit when activeComposerId != "" key=`${threadRoute.id}:${composer}:${composerAttachments.length}:${composerFocus}:${split}:${sidebarHidden}`
     after(1, fitComposer, wait=frame)
 
   action fitComposer
@@ -1126,7 +1129,7 @@ component T3Code
     cancelForkNavigation()
     clearForceStopDialogs()
     inspectorPath = ""
-    nav = push(split ? threadNav : nav, path("inspector", activeThreadId, kind))
+    nav = push(split ? threadNav : nav, path("inspector", activeComposerId, kind))
 
   action ignoreGitStatus
 
@@ -1221,8 +1224,8 @@ component T3Code
       inspect("git")
 
   action pullLatest
-    if activeThreadId != "" and gitStatus.isRepo and gitWritable and gitStatus.behindCount > 0 and gitOperation.status != "running"
-      send pulled = pullGit(activeThreadId)
+    if (activeThreadId != "" or activeDraftKey != "") and gitStatus.isRepo and gitWritable and gitStatus.behindCount > 0 and gitOperation.status != "running"
+      send pulled = pullGit(activeThreadId != "" ? activeThreadId : activeDraftKey, newTask.environmentId, newTask.cwd)
 
   action switchGitRef(name: string)
     if activeThreadId != "" and gitWritable and not gitBusy and name != ""
@@ -1242,9 +1245,11 @@ component T3Code
     inspectorPath = parentDirectory(inspectorPath)
 
   action sendMessage
-    if canSend and activeThreadId != ""
+    if activeDraftKey != ""
+      launchTask()
+    else if canSend and activeThreadId != ""
       attachmentError = ""
-      send preparedSend = prepareSend(activeDraft, composerSendScope)
+      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask)
 
   action afterSend
     match sent
@@ -1252,7 +1257,12 @@ component T3Code
         let draft = threadDraft(savedDrafts, draftEdits, reply.id)
         match draft.pendingSend
           case some(message)
-            if message.commandId == reply.commandId
+            if message.commandId == reply.commandId and message.launch != none
+              let state = reply.ok ? "accepted" : reply.state == "unknown" ? "unknown" : "rejected"
+              persistDraft(ThreadDraft(draft, revision=draft.revision + 1, text=(reply.ok ? "" : draft.text), attachments=(reply.ok ? [] : draft.attachments), pendingSend=some(PendingSend(message, state=state, error=reply.error))))
+              if reply.ok
+                attachmentCleanup = attachmentCleanup.concat(message.paths.map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=draft.revision + 1)))
+            else if message.commandId == reply.commandId
               let same = draft.revision == message.revision
               let revision = draft.revision + 1
               let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
@@ -1311,7 +1321,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1401,89 +1411,125 @@ component T3Code
                               ::placeholder
                                 color="muted"
                         text (pairError != "" ? pairError : "For machines on your local network or tailnet. The machine keeps its own provider credentials.") font-size=14 line-height="21px" color=(pairError != "" ? "-exact-system-red" : "muted") padding="0 14px" testId="pair-message"
-              if e.name == "newThread"
-                column navigationKey=`${e.id}` navigationScroll="projects" data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+              if e.name == "chooseProject"
+                column navigationKey=`${e.id}` navigationScroll=`projects-${e.id}` data-workspace-header="editor" data-search-placement="toolbar" data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
-                    text "New thread" role="heading" aria-level=2
-                  list id="projects" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    section
-                      header
-                        text "Select a project"
-                      for project in catalog.projects key=project.id
-                        button press=createProjectThread(project.id) disabled=pending(created) testId=`project-pick-${project.id}`
-                          text project.title
-                      footer
-                        text (match created { case some(reply) => reply.error, case none => "" }) color="danger"
+                    button id="back" press=leaveProjectPicker(e.params.id) aria-label="Back" testId="project-back"
+                      text ""
+                    text "Choose project" role="heading" aria-level=2
+                    if projectChoices.hasReadyEnvironment
+                      button press=openAddProject(e.params.id) buttonStyle="glass" aria-label="Add project" testId="project-add"
+                        image "symbol:sf/plus"
+                    input type="search" value=projectQuery input=searchProjects placeholder="Search projects" aria-label="Search projects" testId="project-search"
+                  ProjectPicker(scrollId=`projects-${e.id}`, choices=projectChoices, busy=pending(retargetedTask), pick=chooseTaskProject(e.params.id), startScratch=startWithoutProject(e.params.id, projectChoices.scratchEnvironmentId), addProject=openAddProject(e.params.id), addEnvironment=addEnvironment)
+              if e.name == "addProject" or e.name == "addProjectNew" or e.name == "addProjectLocal" or e.name == "addProjectRepository" or e.name == "addProjectDestination"
+                column navigationKey=`${e.id}` navigationScroll=`add-project-${e.id}` data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text (e.name == "addProject" ? "Add project" : e.name == "addProjectNew" ? "New project" : e.name == "addProjectLocal" ? "Local folder" : e.name == "addProjectDestination" ? "Clone destination" : e.params.source == "url" ? "Git URL" : "Repository") role="heading" aria-level=2
+                  scroll id=`add-project-${e.id}` flex=1 min-height=0
+                    view
+              if e.name == "draftEnvironment"
+                column navigationKey=`${e.id}` navigationScroll=`environment-choices-${e.id}` data-workspace-header="editor" data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Environment" role="heading" aria-level=2
+                  EnvironmentPicker(scrollId=`environment-choices-${e.id}`, choices=environmentChoices, expanded=expandedTaskEnvironment, busy=pending(retargetedTask), choose=chooseTaskEnvironment(e.params.id), toggle=toggleTaskEnvironment, reconnect=reconnectEnvironment)
+              if e.name == "draftBranch"
+                column navigationKey=`${e.id}` navigationScroll=`branch-choices-${e.id}` data-workspace-header="editor" data-search-placement="toolbar" data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    button id="back" press=leaveBranchPicker disabled=pending(branchChecked) aria-label="Back" testId="branch-back"
+                      text ""
+                    text newTask.branchPickerTitle role="heading" aria-level=2
+                    input type="search" value=branchQuery input=searchBranches placeholder="Find a branch" aria-label="Find a branch" testId="branch-search"
+                  BranchPicker(listId=`branch-choices-${e.id}`, choices=branchChoices, worktree=(newTask.mode == "worktree"), startFromOrigin=newTask.startFromOrigin, busy=pending(branchChecked), loading=(branchChoices.key != newTask.key or (pending(branchChoices) and branchChoices.rows.length == 0)), choose=chooseTaskBranch(e.params.id), setStartFromOrigin=setStartFromOrigin(e.params.id), loadMore=loadMoreBranches, retry=retryBranches)
               if e.name == "thread"
-                column navigationKey=`${e.id}` navigationScroll="thread-messages" data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll=(routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "live" ? "thread-messages" : "draft-viewport") data-workspace-header="editor" data-hides-back=(split ? "true" : "false") data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
                     if split and sidebarHidden
                       button press=toggleSidebar buttonStyle="glass" aria-label="Show sidebar" testId="thread-sidebar-toggle"
                         image "symbol:sf/sidebar.left"
-                    text currentThreadTitle(selectedThread(catalog, e.params.id)) role="heading" aria-level=2
-                    text currentThreadSubtitle(catalog, selectedThread(catalog, e.params.id))
-                    if split
+                    if isDraftKey(e.params.id)
+                      text "New thread" role="heading" aria-level=2
+                    else
+                      text (currentThreadTitle(selectedThread(catalog, e.params.id)) != "" ? currentThreadTitle(selectedThread(catalog, e.params.id)) : launchTitle(allDrafts, e.params.id)) role="heading" aria-level=2
+                      text currentThreadSubtitle(catalog, selectedThread(catalog, e.params.id))
+                    if split and not isDraftKey(e.params.id)
                       button press=compose buttonStyle="glass" aria-label="New chat" testId="thread-compose"
                         image "symbol:compose"
-                    if terminalMenu.canRead or terminalMenu.canOperate
+                    if not isDraftKey(e.params.id) and e.params.id == activeThreadId and (terminalMenu.canRead or terminalMenu.canOperate)
                       button aria-label="Terminal" popovertarget="terminal-menu" testId="thread-terminal"
                         image "symbol:sf/terminal"
                     button aria-label="Git controls" popovertarget="git-menu" testId="thread-git"
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
-                    button press=inspect("files") aria-label="Open files" testId="thread-files"
-                      image "symbol:sf/folder"
+                    if not isDraftKey(e.params.id) or (e.params.id == newTask.key and newTask.cwd != "")
+                      button press=inspect("files") disabled=(isDraftKey(e.params.id) and not newTask.canReadFiles) aria-label="Open files" testId="thread-files"
+                        image "symbol:sf/folder"
                   column flex=1 min-height=0 min-width=0
                     column flex=1 min-height=0 min-width=0 position="relative"
-                      list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
-                        for item in threadRows(selectedThread(catalog, e.params.id), expandedTools, e.params.id) key=(match item { case some(row) => row.id, case none => "history" })
-                          column width="100%" box-sizing="border-box"
-                            match item
-                              case none
-                                for thread in selectedThread(catalog, e.params.id) key=thread.id
-                                  column align-items="center" gap=6 padding-bottom=12
-                                    if thread.history.hasMore
-                                      button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" display="flex" align-items="center" justify-content="center" gap=7 min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground" aria-label="Load earlier activity" testId="load-earlier"
-                                        if thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))
-                                          progress width=18 height=18
-                                        else
-                                          image "symbol:sf/chevron.up" width=18 height=18
-                                        text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier activity…" : "Load earlier activity") font-size=16 font-weight=500
-                                    if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
-                                      text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
-                              case some(row)
-                                match row.message
-                                  case some(message)
-                                    MarkdownMessage(message=message, fork=forkResponse, forkBusy=(forkBusy and forkState.threadId == e.params.id and forkState.rowId == row.id), forkDisabled=(not controlsAllowed or forkBusy), changes=row.changes, openChanges=openTurnReview, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage, attachments=attachmentPreviews, seenAttachment=observeAttachment, openAttachment=openAttachment, retryAttachment=retryAttachmentPreview, thumbnailFailures=thumbnailFailures, imageFailed=attachmentImageFailed, imageLoaded=attachmentImageLoaded, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
-                                  case none
-                                    match row.activity
-                                      case some(tool)
-                                        column id=`thread-tool-${row.id}` padding-bottom=3.5 testId=`tool-${row.id}`
-                                          if tool.category == "run-fold"
-                                            row align-items="center" padding="0 7px" border-bottom="1px solid edge"
-                                              button press=toggleTool(e.params.id, row.id) appearance="none" display="flex" align-items="center" gap=7 min-width=0 min-height=38.5 flex=1 padding=0 color="muted" aria-label=`${tool.displayTitle}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
-                                                text tool.displayTitle font-size=14 font-weight=500 line-height="19px" line-clamp=1 text-overflow="ellipsis" font-variant-numeric="tabular-nums"
-                                                image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=15 height=15
-                                              match row.changes
-                                                case some(changes)
-                                                  TurnChangeStat(changes=changes, threadId=e.params.id, open=openTurnReview)
-                                                case none
-                                                  view
+                      if routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "draft"
+                        scroll id="draft-viewport" flex=1 min-height=0 overscroll-behavior="none" testId="draft-viewport"
+                          if e.params.id == newTask.key and newTask.phase == "ready" and newTask.heroKind != "hidden"
+                            DraftHero(view=newTask, openProject=openTaskProject(e.params.id), openEnvironment=openTaskEnvironment(e.params.id))
+                          if e.params.id == newTask.key and newTask.phase == "noModel"
+                            column min-height="100%" box-sizing="border-box" justify-content="flex-end" gap=10.5 padding=14
+                              row justify-content="center"
+                                EnvironmentControl(view=newTask, press=openTaskEnvironment(e.params.id))
+                              text "Your draft is saved on this device. Connect to an environment to choose its first model." font-size=14 line-height="19px" color="muted" text-align="center" testId="draft-no-model"
+                      else if routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) != "live"
+                        scroll id="draft-viewport" flex=1 min-height=0 testId="preparing-viewport"
+                          PreparingThread(text=(match launchOf(allDrafts, e.params.id) { case some(draft) => launchText(allDrafts, e.params.id), case none => "" }), failed=(routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "failed"), reason=launchError(allDrafts, e.params.id), edit=editLaunchedTask(e.params.id))
+                      else
+                        list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
+                          for item in threadRows(selectedThread(catalog, e.params.id), expandedTools, e.params.id) key=(match item { case some(row) => row.id, case none => "history" })
+                            column width="100%" box-sizing="border-box"
+                              match item
+                                case none
+                                  for thread in selectedThread(catalog, e.params.id) key=thread.id
+                                    column align-items="center" gap=6 padding-bottom=12
+                                      if thread.history.hasMore
+                                        button press=loadEarlier(e.params.id) disabled=(thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))) appearance="none" display="flex" align-items="center" justify-content="center" gap=7 min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground" aria-label="Load earlier activity" testId="load-earlier"
+                                          if thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))
+                                            progress width=18 height=18
                                           else
-                                            ToolRow(tool=toolChild(tool), parentRowId="", rowId=row.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=(tool.groupedIds.length > 0), failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
-                                          if tool.groupedIds.length > 0 and toolAttempt(expandedTools, e.params.id, row.id) >= 0
-                                            if reasoningOnly(tool)
-                                              scroll max-height=336 min-height=0 min-width=0 overflow-x="hidden" margin-left=24.5 padding-top=3.5 padding-bottom=3.5 testId=`tool-group-${row.id}`
-                                                column gap=0
-                                                  for child in tool.grouped key=child.id
-                                                    ToolRow(tool=child, parentRowId=row.id, rowId=child.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=false, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                            image "symbol:sf/chevron.up" width=18 height=18
+                                          text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier activity…" : "Load earlier activity") font-size=16 font-weight=500
+                                      if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
+                                        text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
+                                case some(row)
+                                  match row.message
+                                    case some(message)
+                                      MarkdownMessage(message=message, fork=forkResponse, forkBusy=(forkBusy and forkState.threadId == e.params.id and forkState.rowId == row.id), forkDisabled=(not controlsAllowed or forkBusy), changes=row.changes, openChanges=openTurnReview, threadId=e.params.id, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, copy=copyMessage, attachments=attachmentPreviews, seenAttachment=observeAttachment, openAttachment=openAttachment, retryAttachment=retryAttachmentPreview, thumbnailFailures=thumbnailFailures, imageFailed=attachmentImageFailed, imageLoaded=attachmentImageLoaded, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                    case none
+                                      match row.activity
+                                        case some(tool)
+                                          column id=`thread-tool-${row.id}` padding-bottom=3.5 testId=`tool-${row.id}`
+                                            if tool.category == "run-fold"
+                                              row align-items="center" padding="0 7px" border-bottom="1px solid edge"
+                                                button press=toggleTool(e.params.id, row.id) appearance="none" display="flex" align-items="center" gap=7 min-width=0 min-height=38.5 flex=1 padding=0 color="muted" aria-label=`${tool.displayTitle}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
+                                                  text tool.displayTitle font-size=14 font-weight=500 line-height="19px" line-clamp=1 text-overflow="ellipsis" font-variant-numeric="tabular-nums"
+                                                  image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=15 height=15
+                                                match row.changes
+                                                  case some(changes)
+                                                    TurnChangeStat(changes=changes, threadId=e.params.id, open=openTurnReview)
+                                                  case none
+                                                    view
                                             else
-                                              ToolGroup(rows=tool.grouped, groupId=row.id, threadId=e.params.id, positions=toolGroupPositions, remember=rememberToolGroup, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
-                                      case none
-                                        view
+                                              ToolRow(tool=toolChild(tool), parentRowId="", rowId=row.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=(tool.groupedIds.length > 0), failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                            if tool.groupedIds.length > 0 and toolAttempt(expandedTools, e.params.id, row.id) >= 0
+                                              if reasoningOnly(tool)
+                                                scroll max-height=336 min-height=0 min-width=0 overflow-x="hidden" margin-left=24.5 padding-top=3.5 padding-bottom=3.5 testId=`tool-group-${row.id}`
+                                                  column gap=0
+                                                    for child in tool.grouped key=child.id
+                                                      ToolRow(tool=child, parentRowId=row.id, rowId=child.id, threadId=e.params.id, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, disclosureOnly=false, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                              else
+                                                ToolGroup(rows=tool.grouped, groupId=row.id, threadId=e.params.id, positions=toolGroupPositions, remember=rememberToolGroup, batch=toolPanels, viewKey=threadToolViewKey(selectedThread(catalog, e.params.id)), expanded=expandedTools, failedBatch=failed(toolPanels), toggle=toggleTool, retry=retryTool, copy=copyMessage, openImage=openToolImage, highlights=codeHighlights, layouts=tableLayouts, wrapped=wrappedCodes, seenBlock=observeBlock, toggleWrap=toggleCodeWrap, followLink=followMarkdownLink, media=mediaPreviews, seenMedia=observeMedia, retryMedia=retryMedia, openMedia=openMedia)
+                                        case none
+                                          view
                       workspace-thread-scroll target-test-id="thread-messages" observation-key=`${e.params.id}:${e.id}:${threadScrollRevision}` message=threadScrollObserved position="absolute" left=0 top=0 height=0 width=0
-                      if e.params.id == activeThreadId
+                      if e.params.id == activeComposerId
                         workspace-composer-metrics message=composerMetrics position="absolute" left=0 top=0 height=0 width=0 pointer-events="none"
                         text composer id="composer-mirror" aria-hidden=true position="absolute" left=0 top=0 opacity=0 pointer-events="none" white-space="pre" font-family="DM Sans" font-size=16 line-height="23px"
+                      if e.params.id == activeComposerId and routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "preparing"
+                        workspace-working-island status-label=(launchStrategy(allDrafts, e.params.id) == "worktree" ? "Setting up worktree…" : "Starting…") status-kind="preparing" status-symbol="" indicator="spinner" status-action="none" action-label="" action-pending="false" action-disabled="true" action-accessibility-label="" reconnect="false" show-arrow="false" message=workingIslandAction position="absolute" left=18 right=(split ? "calc(env(safe-area-inset-right) + 18px)" : 18) bottom=2 min-height=38.5 z-index=3 testId="preparing-status"
                       if e.params.id == activeThreadId and selectedThread(catalog, e.params.id).length > 0 and (threadAway or workingStatus.length > 0)
                         workspace-working-island status-label=floatingStatus.label status-kind=floatingStatus.kind status-symbol=floatingStatus.symbol indicator=floatingStatus.indicator status-action=islandAction action-label=islandActionLabel action-pending=(islandActionBusy ? "true" : "false") action-disabled=(islandActionDisabled ? "true" : "false") action-accessibility-label=(forceStopVisible ? "Force stop the agent" : floatingStatus.actionLabel) reconnect=(floatingStatus.action == "reconnect" ? "true" : "false") show-arrow=(threadAway ? "true" : "false") message=workingIslandAction position="absolute" left=18 right=(split ? "calc(env(safe-area-inset-right) + 18px)" : 18) bottom=2 min-height=38.5 z-index=3
                     for thread in selectedThread(catalog, e.params.id) key=thread.id
@@ -1534,42 +1580,46 @@ component T3Code
                         button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
                           text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
-                    row position="relative" padding="6px 12px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 min-width=0 box-sizing="border-box" testId="composer-dock"
-                      view aria-hidden=true position="absolute" inset=0 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-0) 0%, var(--composer-wash-60) 78%, var(--composer-wash-68) 100%)"
-                      view aria-hidden=true position="absolute" left=0 right=0 top="100%" height=120 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-68) 0px, var(--composer-wash-90) 34px, var(--composer-wash-90) 120px)"
-                      column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
-                        if composerFocus and composerAttachments.length > 0
-                          ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
-                        row flex-wrap="wrap" align-items="flex-end" min-width=0
-                          button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
-                            image "symbol:sf/plus" width=20 height=20
-                          textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=approvalComposerPlaceholder aria-label="Message" testId="composer"
-                            ::placeholder
-                              color="muted"
-                          if not composerFocus and composerAttachments.length > 0
-                            row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
-                              for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
-                                ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
-                              if composerAttachments.length > composerThumbnailLimit
-                                button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
-                                  text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
-                          row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
-                            button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
-                              row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
-                                ProviderIcon(provider=composerModel.provider, size=16)
-                              if composerExpanded
-                                text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
-                                if composerModel.summary != ""
-                                  text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
-                              image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
-                            if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
-                              button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
-                                row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
-                                  image "symbol:sf/stop.fill" font-size=12
-                            else
-                              button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
-                                row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
-                                  image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
+                    column flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                      if e.params.id == newTask.key and newTask.phase == "ready" and (newTask.workspaceVisible or newTask.contextVisible)
+                        row padding="0 12px" margin-bottom=-6 min-width=0
+                          DraftControls(view=newTask, toggleWorkspace=toggleTaskWorkspace(e.params.id), openBranch=openTaskBranch(e.params.id), openProject=openTaskProject(e.params.id), openEnvironment=openTaskEnvironment(e.params.id))
+                      row position="relative" padding="6px 12px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 min-width=0 box-sizing="border-box" testId="composer-dock"
+                        view aria-hidden=true position="absolute" inset=0 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-0) 0%, var(--composer-wash-60) 78%, var(--composer-wash-68) 100%)"
+                        view aria-hidden=true position="absolute" left=0 right=0 top="100%" height=120 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-68) 0px, var(--composer-wash-90) 34px, var(--composer-wash-90) 120px)"
+                        column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
+                          if composerFocus and composerAttachments.length > 0
+                            ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                          row flex-wrap="wrap" align-items="flex-end" min-width=0
+                            button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
+                              image "symbol:sf/plus" width=20 height=20
+                            textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                              ::placeholder
+                                color="muted"
+                            if not composerFocus and composerAttachments.length > 0
+                              row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
+                                for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
+                                  ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
+                                if composerAttachments.length > composerThumbnailLimit
+                                  button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
+                                    text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
+                            row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
+                              button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
+                                row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
+                                  ProviderIcon(provider=composerModel.provider, size=16)
+                                if composerExpanded
+                                  text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
+                                  if composerModel.summary != ""
+                                    text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
+                                image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
+                              if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
+                                button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
+                                  row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
+                                    image "symbol:sf/stop.fill" font-size=12
+                              else
+                                button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(composerBlockedReason != "" ? composerBlockedReason : activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
+                                  row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
+                                    image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
               if e.name == "terminal"
                 column navigationKey=`${e.id}` navigationScroll="terminal-output" data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2090,6 +2140,22 @@ component T3Code
         text forceStopMessage
         button commandfor="force-stop-result" command="close" testId="force-stop-ok"
           text "OK"
+      dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
+        text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
+        button commandfor="discard-draft" command="close" testId="discard-draft-cancel"
+          text "Cancel"
+        button press=discardDraft destructive=true commandfor="discard-draft" command="close" testId="discard-draft-confirm"
+          text "Discard"
+      dialog id="delete-pending-task" role="alertdialog" aria-label="Delete pending task?"
+        text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” has not been sent yet and will be removed from the outbox.`
+        button commandfor="delete-pending-task" command="close" testId="delete-pending-cancel"
+          text "Cancel"
+        button press=discardDraft destructive=true commandfor="delete-pending-task" command="close" testId="delete-pending-confirm"
+          text "Delete"
+      dialog id="task-alert" role="alertdialog" aria-label=taskAlertTitle
+        text taskAlertBody testId="task-alert-body"
+        button commandfor="task-alert" command="close" testId="task-alert-ok"
+          text "OK"
       dialog id="remove-environment" role="alertdialog" aria-label=`Remove ${environmentLabel(catalog, removedEnvironment)}?`
         text "This environment will be removed from this device. Your projects and threads will stay on the server."
         button commandfor="remove-environment" command="close" testId="environment-remove-cancel"
@@ -2137,10 +2203,10 @@ component T3Code
           image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
           text (pending(gitStatus) ? "Checking status" : gitBranchLabel(gitStatus))
           text (pending(gitStatus) ? "Checking status" : gitStatusLabel(gitStatus)) testId="git-status"
-        button role="menuitem" press=runQuickGitAction popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr")) testId="git-quick-action"
+        button role="menuitem" press=runQuickGitAction popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or gitBusy or not gitStatus.isRepo or ["detached", "no_origin", "no_commits", "clean", "diverged"].includes(gitQuickActionKind(gitStatus, gitBusy, gitWritable)) or (not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr") or (activeDraftKey != "" and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "pull")) testId="git-quick-action"
           image (gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "pull" ? "symbol:sf/arrow.down.circle" : gitQuickActionKind(gitStatus, gitBusy, gitWritable) == "commit" ? "symbol:sf/checkmark.circle" : "symbol:sf/arrow.up.circle")
           text (pending(gitStatus) ? "Checking status" : gitQuickAction(gitStatus, gitBusy, gitWritable))
-          text (gitError != "" ? gitError : gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable))
+          text (activeDraftKey != "" and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "pull" ? "Available after the first message" : gitError != "" ? gitError : gitStatus.unavailableReason != "" ? gitStatus.unavailableReason : not gitWritable and gitQuickActionKind(gitStatus, gitBusy, gitWritable) != "open_pr" ? "This connection cannot change source control." : gitBusy ? gitOperation.label : gitQuickActionHint(gitStatus, gitBusy, gitWritable))
         button role="menuitem" press=inspect("git") popovertarget="git-menu" popovertargetaction="hide" disabled=(pending(gitStatus) or not gitStatus.isRepo or not activeThreadHasMessage) testId="git-review-changes"
           image "symbol:sf/text.bubble"
           text "Review changes"
@@ -2173,6 +2239,9 @@ component T3Code
 component ThreadList
   props
     catalog: Catalog
+    drafts: HomeDraftRow[]
+    openDraft: action
+    discardDraft: action
     visibleThreads: Thread[]
     selectedEnvironment: string
     selectedProject: string
@@ -2213,8 +2282,16 @@ component ThreadList
             if selectedEnvironment != "" or selectedProject != ""
               button press=resetFilters appearance="none" aria-label="Reset thread filters" testId="reset-filters" width=28 height=28 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                 image "symbol:sf/xmark.circle.fill" width=18 height=18 color="muted"
+      if drafts.length > 0
+        section
+          row align-items="center" gap=8.75 margin="14px 0 5.25px" padding=(sidebar ? "0 10.5px" : "0 17.5px") testId="home-unsent"
+            text "Unsent" font-size=13 line-height="17px" font-weight=500 color="muted"
+            view flex=1 height=1 background-color="edge"
+          for draft, index in drafts key=draft.key
+            row press=openDraft(draft.key, draft.kind, draft.threadId) delete=discardDraft(draft.key, draft.kind) role="button" width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) aria-label=draft.title testId=`home-draft-${draft.key}`
+              HomeDraftRowContent(draft=draft, sidebar=sidebar, showEnvironment=(catalog.environments.length > 1), last=(index == drafts.length - 1))
       section
-        if visibleThreads.length == 0
+        if visibleThreads.length == 0 and drafts.length == 0
           column align-items="center" padding="28px 21px" gap=7
             text "No threads yet" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
             text "Start a new thread to begin coding." font-size=16 line-height="24px" color="muted" text-align="center"

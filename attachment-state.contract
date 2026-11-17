@@ -39,7 +39,7 @@ members T3Code
   resource attachmentUpload1 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 1 and slot.state == "uploading"))) as shape UploadProgress else empty()
   resource attachmentUpload2 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 2 and slot.state == "uploading"))) as shape UploadProgress else empty()
   resource attachmentPreviews = loadAttachmentPreviews(activeToolThreadId, toolViewKey, attachmentDemands.filter(demand => demand.threadId == activeToolThreadId).map(demand => AttachmentDemand(demand, viewKey=toolViewKey)), previewClock) with time.epochAtZero + previewNow as shape AttachmentBatch else empty()
-  derive activeDraft = threadDraft(savedDrafts, draftEdits, activeThreadId)
+  derive activeDraft = threadDraft(savedDrafts, draftEdits, activeComposerId)
   resource composerSendScope = observeComposerSend(activeToolThreadId, `${threadRoute.id}`, activeDraft.revision) as shape ComposerSendContext else empty()
   derive composerAttachments = activeDraft.attachments
   derive uploadProgresses = [attachmentUpload0, attachmentUpload1, attachmentUpload2]
@@ -290,6 +290,11 @@ members T3Code
             let draft = threadDraft(savedDrafts, draftEdits, reply.id)
             if draft.revision == reply.revision
               persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=some(message)))
+              match message.launch
+                case some(plan)
+                  flipToLaunch(reply.id, plan.threadId)
+                case none
+                  attachmentError = attachmentError
           case none
             attachmentError = reply.error
       case none

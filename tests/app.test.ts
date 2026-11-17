@@ -287,8 +287,8 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     { id: "b:t", title: "Thread b" },
   ]);
   expect(catalog.projects).toEqual([
-    { id: "a:p", title: "Project a", environmentId: "a" },
-    { id: "b:p", title: "Project b", environmentId: "b" },
+    expect.objectContaining({ id: "a:p", title: "Project a", environmentId: "a" }),
+    expect.objectContaining({ id: "b:p", title: "Project b", environmentId: "b" }),
   ]);
   chunk("b", bSubscription, {
     kind: "snapshot",
@@ -1169,18 +1169,60 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     ],
   });
 
-  const creating = answer("createThread", ["b:p", "Created in b"], store, storage, native);
-  const create = sent.at(-1)!;
-  expect(create).toMatchObject({
+  const launching = answer(
+    "sendDraft",
+    [
+      "new-task~abc-12345678",
+      {
+        commandId: "launch-b",
+        messageId: "message-b",
+        revision: 1,
+        text: "Created in b",
+        attachments: [],
+        paths: [],
+        selection: JSON.stringify({
+          threadId: "new-b",
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+        }),
+        approval: "",
+        state: "prepared",
+        error: "",
+        launch: {
+          threadId: "b:new-b",
+          projectId: "b:p",
+          projectTitle: "Project b",
+          title: "Created in b",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          strategy: "root",
+          branch: null,
+          baseRef: null,
+          worktreePath: null,
+          startFromOrigin: false,
+        },
+      },
+    ],
+    store,
+    storage,
+    native,
+  );
+  const launch = sent.at(-1)!;
+  expect(launch).toMatchObject({
     environmentId: "b",
-    frame: { payload: { type: "thread.create", projectId: "p", title: "Created in b" } },
+    frame: {
+      tag: "orchestration.launchThread",
+      payload: { threadId: "new-b", projectId: "p", title: "Created in b", workspaceStrategy: { type: "root" } },
+    },
   });
-  reply("b", String(create.frame.id), { sequence: 2 });
+  reply("b", String(launch.frame.id), { threadId: "new-b", resumed: false });
   await load();
-  expect(await creating).toEqual({
+  expect(await launching).toEqual({
+    id: "new-task~abc-12345678",
+    commandId: "launch-b",
     ok: true,
     error: "",
-    threadId: `b:${create.frame.payload.threadId}`,
+    state: "accepted",
   });
 
   const oldA = connections.find(({ id }) => id === "a")!;

@@ -1,0 +1,267 @@
+use ThreadDraft, threadDraft, TaskStamp, WorkspacePick, PendingSend, CleanupAttachment from "./attachments.contract"
+use NewTaskView, ProjectChoices, EnvironmentChoice, BranchChoices, HomeDraftRow, Composed, Retargeted, BranchCheckout, TaskReply, isDraftKey, mergeDrafts, launchOf, launchState, launchThreadId, stampProject, stampEnvironment, retargeted, withWorkspace, currentPick, toggledPick, branchPick, clearedDraft from "./new-task.contract"
+
+members T3Code
+  state projectQuery = ""
+  state branchQuery = ""
+  state branchQueryApplied = ""
+  state branchPages = 1
+  state branchRetry = 0
+  state taskRefsRevision = 0
+  state taskViewportShort = false
+  state sendRouteId = ""
+  state discardKey = ""
+  state taskAlertTitle = ""
+  state taskAlertBody = ""
+  state retargetRouteId = ""
+  state checkoutRouteId = ""
+  state expandedTaskEnvironment = ""
+  derive allDrafts = mergeDrafts(savedDrafts, draftEdits)
+  derive liveThreadIds = catalog.threads.filter(thread => thread.rows.filter(row => row.message != none).length > 0).map(thread => thread.id)
+  derive connectedEnvironmentIds = catalog.environments.filter(environment => environment.status == "Connected").map(environment => environment.id)
+  derive activeTask = threadDraft(savedDrafts, draftEdits, activeDraftKey)
+  resource newTask = presentNewTask(activeDraftKey, activeTask, catalog.projects, catalog.environments, taskRefsRevision, taskViewportShort, pending(preparedSend)) as shape NewTaskView else empty()
+  resource projectChoices = loadProjectChoices(threadRoute.name == "chooseProject" ? activeComposerId : "", threadDraft(savedDrafts, draftEdits, activeComposerId), catalog.projects, catalog.environments, environmentState.loaded, projectQuery) as shape ProjectChoices else empty()
+  resource environmentChoices = loadEnvironmentChoices(threadRoute.name == "draftEnvironment" ? activeDraftKey : "", activeTask, catalog.projects, catalog.environments) as shape EnvironmentChoice[] else empty()
+  resource branchChoices = loadBranchChoices(threadRoute.name == "draftBranch" ? activeDraftKey : "", newTask.environmentId, newTask.rootCwd, newTask.branch, branchQueryApplied, branchPages, branchRetry + taskRefsRevision) as shape BranchChoices else empty()
+  resource homeDrafts = loadHomeDrafts(allDrafts.filter(draft => isDraftKey(draft.id)), catalog.projects, catalog.environments, taskRefsRevision) as shape HomeDraftRow[] else empty()
+  mutation composed as shape Composed then afterCompose
+  mutation retargetedTask as shape Retargeted then afterRetarget
+  mutation branchChecked as shape BranchCheckout then afterBranchCheckout
+  mutation taskPrefsSaved as shape TaskReply queue
+  mutation taskSettingsForgotten as shape TaskReply queue
+
+  task debounceBranchQuery when branchQuery != branchQueryApplied key=branchQuery
+    after(150, applyBranchQuery)
+  task measureTaskViewport when activeDraftKey != "" and threadRoute.name == "thread" key=`${threadRoute.id}:${composerFocus}:${split}:${composerBottomAdjustment}`
+    after(1, measureTaskViewport, wait=frame)
+  task leaveMissingDraft when newTask.phase == "missing" and newTask.key == activeDraftKey and threadRoute.name == "thread" key=`${threadRoute.id}:${newTask.key}`
+    after(1, pickProjectForMissing)
+  task retireLaunches when allDrafts.filter(draft => launchState(draft) == "accepted" and liveThreadIds.includes(launchThreadId(draft))).length > 0 key=allDrafts.filter(draft => launchState(draft) == "accepted" and liveThreadIds.includes(launchThreadId(draft))).map(draft => draft.id).join("|")
+    after(1, retireNextLaunch)
+  task retryLaunches when not pending(sent) and allDrafts.filter(draft => launchState(draft) == "unknown" and connectedEnvironmentIds.includes(stampEnvironment(draft))).length > 0 key=allDrafts.filter(draft => launchState(draft) == "unknown").map(draft => `${draft.id}:${draft.revision}`).join("|")
+    after(3000, retryNextLaunch)
+
+  action measureTaskViewport
+    let viewport = frame("draft-viewport")
+    if not viewport.unavailable and not viewport.provisional
+      taskViewportShort = viewport.height + 48 < 380
+
+  action applyBranchQuery
+    branchQueryApplied = branchQuery
+    branchPages = 1
+
+  action afterCompose
+    match composed
+      case some(reply)
+        if reply.ok
+          persistDraft(reply.draft)
+          let base = split ? select(threadNav, "threadDetail") : nav
+          let opened = push(base, path("thread", reply.key))
+          nav = stampProject(reply.draft) == "" ? push(opened, path("chooseProject", reply.key)) : opened
+      case none
+        nav = nav
+
+  action openTaskProject(key: string)
+    blur()
+    projectQuery = ""
+    nav = push(split ? threadNav : nav, path("chooseProject", key))
+
+  action leaveProjectPicker(key: string)
+    projectQuery = ""
+    if isDraftKey(key) and stampProject(threadDraft(savedDrafts, draftEdits, key)) == ""
+      nav = back(back(nav))
+    else
+      nav = back(nav)
+
+  action searchProjects(value: string)
+    projectQuery = value
+
+  action chooseTaskProject(key: string, environmentId: string, projectId: string)
+    projectQuery = ""
+    let draft = threadDraft(savedDrafts, draftEdits, key)
+    persistDraft(retargeted(draft, environmentId, projectId, ""))
+    send taskPrefsSaved = rememberTaskProject(environmentId, projectId)
+    if top(split ? threadNav : nav).name == "chooseProject"
+      nav = back(nav)
+
+  action startWithoutProject(key: string, environmentId: string)
+    if not pending(retargetedTask)
+      retargetRouteId = `${threadRoute.id}`
+      send retargetedTask = startScratchTask(threadDraft(savedDrafts, draftEdits, key), environmentId)
+
+  action openTaskEnvironment(key: string)
+    blur()
+    nav = push(split ? threadNav : nav, path("draftEnvironment", key))
+
+  action chooseTaskEnvironment(key: string, environmentId: string)
+    haptic("selection")
+    let draft = threadDraft(savedDrafts, draftEdits, key)
+    match draft.task
+      case some(stamp)
+        if stamp.environmentId == environmentId
+          nav = back(nav)
+        else if not pending(retargetedTask)
+          retargetRouteId = `${threadRoute.id}`
+          send retargetedTask = switchTaskEnvironment(draft, environmentId)
+      case none
+        nav = back(nav)
+
+  action toggleTaskEnvironment(id: string)
+    expandedTaskEnvironment = expandedTaskEnvironment == id ? "" : id
+
+  action openAddProject(key: string)
+    nav = push(split ? threadNav : nav, path("addProject", key))
+
+  action afterRetarget
+    match retargetedTask
+      case some(reply)
+        if reply.ok
+          let latest = threadDraft(savedDrafts, draftEdits, reply.draft.id)
+          persistDraft(ThreadDraft(latest, revision=latest.revision + 1, task=reply.draft.task))
+          send taskPrefsSaved = rememberTaskProject(stampEnvironment(reply.draft), stampProject(reply.draft))
+          if `${threadRoute.id}` == retargetRouteId and (top(split ? threadNav : nav).name == "chooseProject" or top(split ? threadNav : nav).name == "draftEnvironment")
+            nav = back(nav)
+        else
+          taskAlertTitle = reply.alertTitle
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        nav = nav
+
+  action pickProjectForMissing
+    if newTask.phase == "missing" and top(split ? threadNav : nav).name == "thread"
+      nav = push(split ? threadNav : nav, path("chooseProject", newTask.key))
+
+  action toggleTaskWorkspace(key: string)
+    blur()
+    if key == newTask.key and not newTask.workspaceDisabled
+      let draft = threadDraft(savedDrafts, draftEdits, key)
+      persistDraft(withWorkspace(draft, toggledPick(draft, newTask)))
+
+  action openTaskBranch(key: string)
+    blur()
+    branchQuery = ""
+    branchQueryApplied = ""
+    branchPages = 1
+    nav = push(split ? threadNav : nav, path("draftBranch", key))
+
+  action searchBranches(value: string)
+    branchQuery = value
+
+  action loadMoreBranches
+    if branchChoices.hasMore and not pending(branchChoices)
+      branchPages = branchPages + 1
+
+  action retryBranches
+    branchRetry = branchRetry + 1
+
+  action chooseTaskBranch(key: string, name: string, isRemote: bool, current: bool, worktreePath: string)
+    if not pending(branchChecked) and key == newTask.key
+      haptic("selection")
+      if newTask.mode == "local" and not current and worktreePath == ""
+        checkoutRouteId = `${threadRoute.id}`
+        send branchChecked = checkoutTaskBranch(key, newTask.environmentId, newTask.rootCwd, name, isRemote)
+      else
+        let draft = threadDraft(savedDrafts, draftEdits, key)
+        persistDraft(withWorkspace(draft, branchPick(draft, newTask, name, current ? "" : worktreePath)))
+        nav = back(nav)
+
+  action afterBranchCheckout
+    match branchChecked
+      case some(reply)
+        if reply.ok
+          let draft = threadDraft(savedDrafts, draftEdits, reply.key)
+          persistDraft(withWorkspace(draft, WorkspacePick(currentPick(draft, newTask), mode="local", branch=some(reply.branch), worktreePath=(reply.worktreePath == "" ? none : some(reply.worktreePath)), followsCurrentCheckout=false)))
+          taskRefsRevision = taskRefsRevision + 1
+          gitStatusRevision = gitStatusRevision + 1
+          if `${threadRoute.id}` == checkoutRouteId and top(split ? threadNav : nav).name == "draftBranch"
+            nav = back(nav)
+        else
+          taskAlertTitle = "Could not switch branch"
+          taskAlertBody = reply.error != "" ? reply.error : "The branch could not be checked out."
+          showModal("task-alert")
+      case none
+        nav = nav
+
+  action leaveBranchPicker
+    if not pending(branchChecked)
+      nav = back(nav)
+
+  action setStartFromOrigin(key: string, value: bool)
+    if key == newTask.key
+      let draft = threadDraft(savedDrafts, draftEdits, key)
+      persistDraft(withWorkspace(draft, WorkspacePick(currentPick(draft, newTask), startFromOrigin=some(value))))
+
+  action launchTask
+    if canSend and newTask.phase == "ready" and newTask.sendBlockedReason == "" and activeDraftKey == newTask.key
+      attachmentError = ""
+      sendRouteId = `${threadRoute.id}`
+      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask)
+
+  action flipToLaunch(draftId: string, threadId: string)
+    let base = split ? threadNav : nav
+    if `${top(base).id}` == sendRouteId and top(base).params.id == draftId
+      blur()
+      nav = replace(base, path("thread", threadId))
+
+  action editLaunchedTask(threadId: string)
+    match launchOf(allDrafts, threadId)
+      case some(draft)
+        persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=none))
+        nav = replace(split ? threadNav : nav, path("thread", draft.id))
+      case none
+        nav = nav
+
+  action retryLaunch(threadId: string)
+    match launchOf(allDrafts, threadId)
+      case some(draft)
+        match draft.pendingSend
+          case some(message)
+            if not pending(sent)
+              send sent = sendDraft(draft.id, message, composerSendScope)
+          case none
+            nav = nav
+      case none
+        nav = nav
+
+  action retireNextLaunch
+    match first(allDrafts.filter(draft => launchState(draft) == "accepted" and liveThreadIds.includes(launchThreadId(draft))))
+      case some(draft)
+        persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=none))
+      case none
+        nav = nav
+
+  action retryNextLaunch
+    match first(allDrafts.filter(draft => launchState(draft) == "unknown" and connectedEnvironmentIds.includes(stampEnvironment(draft))))
+      case some(draft)
+        match draft.pendingSend
+          case some(message)
+            persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=some(PendingSend(message, state="prepared"))))
+          case none
+            nav = nav
+      case none
+        nav = nav
+
+  action openHomeDraft(key: string, kind: string, threadId: string)
+    cancelForkNavigation()
+    clearForceStopDialogs()
+    let base = split ? select(threadNav, "threadDetail") : nav
+    if kind == "unsent"
+      nav = push(base, path("thread", threadId))
+    else
+      let draft = threadDraft(savedDrafts, draftEdits, key)
+      if launchState(draft) == "rejected"
+        persistDraft(ThreadDraft(draft, revision=draft.revision + 1, pendingSend=none))
+      nav = push(base, path("thread", key))
+
+  action confirmDiscardDraft(key: string, kind: string)
+    discardKey = key
+    showModal(kind == "unsent" ? "delete-pending-task" : "discard-draft")
+
+  action discardDraft
+    let draft = threadDraft(savedDrafts, draftEdits, discardKey)
+    persistDraft(clearedDraft(draft))
+    attachmentCleanup = attachmentCleanup.concat(draft.attachments.map(item => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=item.path, revision=draft.revision + 1)))
+    send taskSettingsForgotten = forgetTaskSettings(discardKey)
+    discardKey = ""
