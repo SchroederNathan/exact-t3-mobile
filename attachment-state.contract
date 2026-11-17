@@ -20,7 +20,7 @@ members T3Code
   state galleryWork: option<GalleryWork> = none
   state galleryAttempt = 0
   state thumbnailFailures: ThumbnailFailure[] = []
-  resource attachmentAccess = loadAttachmentAccess(activeThreadId, threadControls.accessKey, controlAccess.allowed) as shape AttachmentAccess else empty()
+  resource attachmentAccess = loadAttachmentAccess(attachmentThreadId, threadControls.accessKey, controlAccess.allowed) as shape AttachmentAccess else empty()
   resource slotConnections = attachmentConnections(transferSlots, catalog) as shape AttachmentConnection[] else empty()
   mutation stagedAttachments as shape StagedAttachments then afterStagingAttachments
   mutation mintedAttachment as shape MintedAttachment queue then afterMintedAttachment
@@ -43,7 +43,7 @@ members T3Code
   resource composerSendScope = observeComposerSend(activeToolThreadId, `${threadRoute.id}`, activeDraft.revision) as shape ComposerSendContext else empty()
   derive composerAttachments = activeDraft.attachments
   derive uploadProgresses = [attachmentUpload0, attachmentUpload1, attachmentUpload2]
-  derive attachmentSendReady = composerAttachments.filter(item => item.state != "uploaded" or not uploadedVerified(verifiedAttachments, activeThreadId, item, attachmentAccess.accessKey)).length == 0
+  derive attachmentSendReady = composerAttachments.filter(item => item.state != "uploaded" or not uploadedVerified(verifiedAttachments, activeComposerId, item, attachmentAccess.accessKey)).length == 0
   derive pendingMessage = activeDraft.pendingSend
   derive attachmentStatus = composerAttachments.filter(item => item.state == "failed").length > 0 ? composerAttachments.filter(item => item.state == "failed").map(item => `${item.name}: ${item.error}`).join("\n") : composerAttachments.filter(item => item.state == "local" or item.state == "uploading").length > 0 ? "Uploading attachments…" : not attachmentSendReady ? "Checking attachments…" : ""
   derive galleryNext = match attachmentViewer { case some(viewer) => first(viewer.items.filter(item => item.state == "loading" and item.index == (gallerySelection.presentationId == viewer.presentationId ? gallerySelection.selectedIndex : viewer.selectedIndex))), case none => none }
@@ -52,9 +52,9 @@ members T3Code
 
   task expireAttachmentPreviews when attachmentPreviews.previews.length > 0 key=`${attachmentPreviews.previews.map(preview => preview.expiresAt).join(",")}:${previewClock}`
     after(60000, refreshAttachmentPreviews)
-  task attachmentNavigation key=`${threadRoute.id}:${activeThreadId}`
+  task attachmentNavigation key=`${threadRoute.id}:${attachmentThreadId}`
     after(1, attachmentNavigated)
-  task admitAttachment when draftsReady key=`${activeThreadId}:${attachmentDrafts.map(draft => `${draft.id}:${draft.revision}`).join("|")}:${persistedDrafts.map(receipt => `${receipt.id}:${receipt.revision}`).join("|")}:${attachmentAccess.accessKey}:${attachmentAccess.allowed}:${transferSlots.map(slot => `${slot.index}:${slotIdentity(slot)}:${slot.state}`).join("|")}:${verifiedAttachments.map(entry => `${entry.draftId}:${entry.localId}:${entry.accessKey}:${entry.state}`).join("|")}:${verificationKey}`
+  task admitAttachment when draftsReady key=`${attachmentThreadId}:${attachmentDrafts.map(draft => `${draft.id}:${draft.revision}`).join("|")}:${persistedDrafts.map(receipt => `${receipt.id}:${receipt.revision}`).join("|")}:${attachmentAccess.accessKey}:${attachmentAccess.allowed}:${transferSlots.map(slot => `${slot.index}:${slotIdentity(slot)}:${slot.state}`).join("|")}:${verifiedAttachments.map(entry => `${entry.draftId}:${entry.localId}:${entry.accessKey}:${entry.state}`).join("|")}:${verificationKey}`
     after(1, advanceAttachments)
   task finishAttachment0 key=`${attachmentUpload0.localId}:${attachmentUpload0.attempt}:${attachmentUpload0.state}:${failed(attachmentUpload0)}`
     after(1, finishUpload0)
@@ -114,22 +114,22 @@ members T3Code
         persistDraft(activeDraft)
 
   action pickAttachments(photos: bool)
-    pickDraftAttachments(activeThreadId, photos)
+    pickDraftAttachments(activeComposerId, photos)
 
   action pickDraftAttachments(draftId: string, photos: bool)
     if draftsReady and attachmentAccess.allowed and attachmentAccess.uploads and not pending(stagedAttachments) and attachmentDrafts.filter(draft => draft.id == draftId).length > 0
       let serial = pickerSerial + 1
       pickerSerial = serial
-      pickerIntent = PickerIntent(threadId=activeThreadId, draftId=draftId, routeId=`${threadRoute.id}`, serial=serial, photos=photos)
+      pickerIntent = PickerIntent(threadId=attachmentThreadId, draftId=draftId, routeId=`${threadRoute.id}`, serial=serial, photos=photos)
       attachmentError = ""
       showPicker(photos ? "attachment-photos" : "attachment-files")
     else
       attachmentError = attachmentAccess.uploads ? "Check your connection and attachment permission." : "This environment does not support attachment uploads."
 
   action pickedAttachments(files: Picked[])
-    if pickerIntent.threadId == activeThreadId and pickerIntent.routeId == `${threadRoute.id}` and files.length > 0 and attachmentDrafts.filter(draft => draft.id == pickerIntent.draftId).length > 0
+    if pickerIntent.threadId == attachmentThreadId and pickerIntent.routeId == `${threadRoute.id}` and files.length > 0 and attachmentDrafts.filter(draft => draft.id == pickerIntent.draftId).length > 0
       let draft = threadDraft(savedDrafts, draftEdits, pickerIntent.draftId)
-      send stagedAttachments = stagePickedAttachments(pickerIntent, files, pickerIntent.draftId == activeThreadId ? [activeDraft] : questionAttachmentTargets.filter(target => target.key == (match first(questionAttachmentTargets.filter(entry => entry.draft.id == pickerIntent.draftId)) { case some(target) => target.key, case none => "" })).map(target => threadDraft(savedDrafts, draftEdits, target.draft.id)), draft, attachmentAccess.maxFileBytes)
+      send stagedAttachments = stagePickedAttachments(pickerIntent, files, pickerIntent.draftId == activeComposerId ? [activeDraft] : questionAttachmentTargets.filter(target => target.key == (match first(questionAttachmentTargets.filter(entry => entry.draft.id == pickerIntent.draftId)) { case some(target) => target.key, case none => "" })).map(target => threadDraft(savedDrafts, draftEdits, target.draft.id)), draft, attachmentAccess.maxFileBytes)
 
   action cancelledAttachments
     pickerIntent = PickerIntent(threadId="", draftId="", routeId="", serial=pickerSerial, photos=true)
@@ -137,7 +137,7 @@ members T3Code
   action afterStagingAttachments
     match stagedAttachments
       case some(reply)
-        if reply.intent == pickerIntent and reply.intent.threadId == activeThreadId and reply.intent.routeId == `${threadRoute.id}` and attachmentDrafts.filter(draft => draft.id == reply.intent.draftId).length > 0
+        if reply.intent == pickerIntent and reply.intent.threadId == attachmentThreadId and reply.intent.routeId == `${threadRoute.id}` and attachmentDrafts.filter(draft => draft.id == reply.intent.draftId).length > 0
           let draft = threadDraft(savedDrafts, draftEdits, reply.intent.draftId)
           let revision = draft.revision + 1
           let items = reply.attachments.map(item => DraftAttachment(item, insertionRevision=revision))
@@ -157,13 +157,13 @@ members T3Code
           case some(slot)
             transferSlots = transferSlots.filter(entry => entry.index != slot.index)
           case none
-            if attachmentAccess.allowed and attachmentAccess.uploads and activeThreadId != "" and transferSlots.length < 3
+            if attachmentAccess.allowed and attachmentAccess.uploads and attachmentThreadId != "" and transferSlots.length < 3
               match first(attachmentDrafts.filter(draft => draft.attachments.filter(item => item.state == "local" and item.insertionRevision <= max(draftReceiptRevision(persistedDrafts, draft.id), threadDraft(savedDrafts, [], draft.id).revision) and transferSlots.filter(slot => slot.draftId == draft.id and slot.localId == item.localId).length == 0).length > 0))
                 case some(draft)
                   match first(draft.attachments.filter(item => item.state == "local" and item.insertionRevision <= max(draftReceiptRevision(persistedDrafts, draft.id), threadDraft(savedDrafts, [], draft.id).revision) and transferSlots.filter(slot => slot.draftId == draft.id and slot.localId == item.localId).length == 0))
                     case some(item)
                       let index = transferSlots.filter(slot => slot.index == 0).length == 0 ? 0 : transferSlots.filter(slot => slot.index == 1).length == 0 ? 1 : 2
-                      let slot = AttachmentSlot(index=index, state="minting", threadId=activeThreadId, draftId=draft.id, localId=item.localId, attempt=item.attempt, accessKey=attachmentAccess.accessKey, origin=attachmentAccess.origin, item=item, attachmentId="", url="", revision=0)
+                      let slot = AttachmentSlot(index=index, state="minting", threadId=attachmentThreadId, draftId=draft.id, localId=item.localId, attempt=item.attempt, accessKey=attachmentAccess.accessKey, origin=attachmentAccess.origin, item=item, attachmentId="", url="", revision=0)
                       transferSlots = transferSlots.concat([slot])
                       send mintedAttachment = mintAttachment(slot)
                     case none
@@ -227,7 +227,7 @@ members T3Code
         transferSlots = transferSlots
 
   action removeAttachment(localId: string)
-    removeDraftAttachment(activeThreadId, localId)
+    removeDraftAttachment(activeComposerId, localId)
 
   action removeDraftAttachment(draftId: string, localId: string)
     let draft = threadDraft(savedDrafts, draftEdits, draftId)
@@ -237,12 +237,12 @@ members T3Code
         persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.filter(entry => entry.localId != localId)))
         transferSlots = transferSlots.filter(slot => slot.draftId != draftId or slot.localId != localId)
         if draft.pendingSend == none
-          attachmentCleanup = attachmentCleanup.concat([CleanupAttachment(threadId=activeThreadId, draftId=draftId, accessKey=attachmentAccess.accessKey, attachmentId=item.id, path=item.path, revision=revision)])
+          attachmentCleanup = attachmentCleanup.concat([CleanupAttachment(threadId=attachmentThreadId, draftId=draftId, accessKey=attachmentAccess.accessKey, attachmentId=item.id, path=item.path, revision=revision)])
       case none
         attachmentError = attachmentError
 
   action retryAttachment(localId: string)
-    retryDraftAttachment(activeThreadId, localId)
+    retryDraftAttachment(activeComposerId, localId)
 
   action retryDraftAttachment(draftId: string, localId: string)
     let draft = threadDraft(savedDrafts, draftEdits, draftId)
@@ -257,7 +257,7 @@ members T3Code
           match first(draft.attachments.filter(item => item.state == "uploaded" and not uploadedVerified(verifiedAttachments, draft.id, item, attachmentAccess.accessKey)))
             case some(item)
               verificationKey = attachmentIdentity(draft.id, item.localId, item.attempt)
-              send verifiedAttachment = verifyAttachment(activeThreadId, draft.id, attachmentAccess.accessKey, item)
+              send verifiedAttachment = verifyAttachment(attachmentThreadId, draft.id, attachmentAccess.accessKey, item)
             case none
               verificationKey = ""
         case none
@@ -304,7 +304,7 @@ members T3Code
     match pendingMessage
       case some(message)
         if not pending(sent)
-          send sent = sendDraft(activeThreadId, message, composerSendScope)
+          send sent = sendDraft(activeComposerId, message, composerSendScope)
       case none
         attachmentError = attachmentError
 
@@ -353,18 +353,18 @@ members T3Code
       send viewerPrepared = prepareToolImageViewer(threadId, `${threadRoute.id}`, rowId, index)
 
   action previewDraftAttachment(item: DraftAttachment)
-    previewAttachmentDraft(activeThreadId, item)
+    previewAttachmentDraft(activeComposerId, item)
 
   action previewAttachmentDraft(draftId: string, item: DraftAttachment)
     if not pending(viewerPresented) and not pending(viewerPrepared)
       closeAttachmentViewer()
       let selected = GalleryCandidate(item=Attachment(type=item.type, id=item.id, name=item.name, mimeType=item.mimeType, sizeBytes=item.sizeBytes, width=item.width, height=item.height), localPath=item.path, sourceId=`draft-image-${item.localId}`)
-      send viewerPrepared = prepareAttachmentViewer(activeThreadId, `${threadRoute.id}`, selected, threadDraft(savedDrafts, draftEdits, draftId).attachments.map(entry => GalleryCandidate(item=Attachment(type=entry.type, id=entry.id, name=entry.name, mimeType=entry.mimeType, sizeBytes=entry.sizeBytes, width=entry.width, height=entry.height), localPath=entry.path, sourceId=`draft-image-${entry.localId}`)))
+      send viewerPrepared = prepareAttachmentViewer(attachmentThreadId, `${threadRoute.id}`, selected, threadDraft(savedDrafts, draftEdits, draftId).attachments.map(entry => GalleryCandidate(item=Attachment(type=entry.type, id=entry.id, name=entry.name, mimeType=entry.mimeType, sizeBytes=entry.sizeBytes, width=entry.width, height=entry.height), localPath=entry.path, sourceId=`draft-image-${entry.localId}`)))
 
   action afterViewerPrepared
     match viewerPrepared
       case some(reply)
-        if reply.viewer.routeId == `${threadRoute.id}` and reply.viewer.threadId == activeThreadId
+        if reply.viewer.routeId == `${threadRoute.id}` and reply.viewer.threadId == attachmentThreadId
           let present = reply.viewer.imageGallery or reply.viewer.items.filter(item => item.state != "ready").length == 0
           attachmentViewer = some(AttachmentViewer(reply.viewer, state=(present ? "presented" : "loading")))
           if present
@@ -488,11 +488,11 @@ members T3Code
     viewerUrl = none
 
   action attachmentNavigated
-    if pickerIntent.routeId != `${threadRoute.id}` or pickerIntent.threadId != activeThreadId
+    if pickerIntent.routeId != `${threadRoute.id}` or pickerIntent.threadId != attachmentThreadId
       pickerIntent = PickerIntent(threadId="", draftId="", routeId="", serial=pickerSerial, photos=true)
     match attachmentViewer
       case some(viewer)
-        if viewer.routeId != `${threadRoute.id}` or viewer.threadId != activeThreadId
+        if viewer.routeId != `${threadRoute.id}` or viewer.threadId != attachmentThreadId
           closeAttachmentViewer()
       case none
         attachmentViewer = none

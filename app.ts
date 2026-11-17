@@ -1117,18 +1117,19 @@ const sources: Sources = {
     loaded: true,
     items: await loadEnvironments(storage),
   }),
-  loadControlAccess: async ([environmentId, key, _retry], store) => {
-    if (!environmentId || !key) return { key, allowed: false, error: "" };
+  loadControlAccess: async ([environmentId, key, _retry, forDraft], store) => {
+    if (!environmentId || (!key && !forDraft)) return { key, allowed: false, error: "" };
     try {
       const session = sessionFor(environmentId);
       const token = credentials(store)[environmentId];
-      if (!token || key !== session.controlAccessKey())
+      const accessKey = forDraft ? session.controlAccessKey() : key;
+      if (!token || !accessKey || accessKey !== session.controlAccessKey())
         return { key, allowed: false, error: "Reconnect to respond." };
-      session.installControlAccess(key, {});
+      session.installControlAccess(accessKey, {});
       const response = await readJson(`${session.environment.url}/api/auth/session`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const allowed = session.installControlAccess(key, response);
+      const allowed = session.installControlAccess(accessKey, response);
       return {
         key,
         allowed,

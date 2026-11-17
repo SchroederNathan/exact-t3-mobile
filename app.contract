@@ -608,6 +608,7 @@ component T3Code
   derive activeComposerId = visibleTab == "threads" and threadRoute.url.startsWith("/threads/") ? threadRoute.params.id : ""
   derive activeDraftKey = isDraftKey(activeComposerId) ? activeComposerId : ""
   derive activeThreadId = activeDraftKey != "" or launching(allDrafts, activeComposerId) ? "" : activeComposerId
+  derive attachmentThreadId = activeDraftKey != "" ? (newTask.key == activeDraftKey and newTask.environmentId != "" ? `${encodeURIComponent(newTask.environmentId)}:${activeDraftKey}` : "") : activeThreadId
   derive activeToolThreadId = visibleTab == "threads" and threadRoute.name == "thread" ? threadRoute.params.id : ""
   derive toolViewKey = threadToolViewKey(selectedThread(catalog, activeToolThreadId))
   derive toolRequests = wantedTools(threadFeed(selectedThread(catalog, activeToolThreadId)), expandedTools, activeToolThreadId)

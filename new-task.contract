@@ -279,7 +279,7 @@ component ProjectPicker
                 image "symbol:sf/text.bubble" width=18 height=18 font-size=18 color="icon-muted"
               column flex=1 min-width=0
                 text "No project" font-size=16 line-height="22px" font-weight=700 color="foreground"
-                text "Start a task without a project" font-size=13 line-height="17.875px" color="muted" line-clamp=1
+                text "Start a task without a project" font-size=13 line-height="18px" color="muted" line-clamp=1
               image "symbol:sf/chevron.right" width=14 height=14 font-size=14 flex-shrink=0 color="chevron"
         if choices.items.length > 0
           column border-radius=24 background-color="card" overflow="hidden"
@@ -289,7 +289,7 @@ component ProjectPicker
                   ProjectMark(faviconUrl=item.faviconUrl, monogram=item.monogram, color=item.monogramColor, size=20)
                 column flex=1 min-width=0
                   text item.title font-size=16 line-height="22px" font-weight=700 color="foreground" line-clamp=1
-                  text item.subtitle font-size=13 line-height="17.875px" color="muted" line-clamp=1
+                  text item.subtitle font-size=13 line-height="18px" color="muted" line-clamp=1
                 image "symbol:sf/chevron.right" width=14 height=14 font-size=14 flex-shrink=0 color="chevron"
         else if choices.noMatch
           column align-items="center" gap=7 padding="28px 21px"
@@ -411,7 +411,7 @@ component HomeDraftRowContent
         if draft.kind == "unsent"
           text "Sends on reconnect" margin-top=3.5 padding-left=27 font-size=13 line-height="17px" color="muted"
         if draft.branch != "" or showEnvironment
-          row align-items="center" gap=3.5 margin-top=3.5 padding-left=27 min-width=0
+          row align-items="center" gap=3.5 margin-top=4.5 padding-left=27 min-width=0
             if showEnvironment
               image `symbol:sf/${draft.machineSymbol}` width=13 height=13 font-size=13 color="muted"
             if draft.branch != ""
