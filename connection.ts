@@ -3,6 +3,7 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
+import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
 import {
@@ -868,6 +869,9 @@ export class DirectSession {
   private terminalRequests = new Map<string, { threadId: string; terminalId: string }>();
   private terminalRequestIds = new Map<string, string>();
   private shellLive = false;
+  private clonesRequest = "";
+  /** The `subscribeProjectClones` list: null until its first event, [] once the stream fails. */
+  private clones: CloneSnapshot[] | null = null;
   private transcripts = new Map<string, ThreadHistory>();
   private switchingSnapshots = new Map<string, ReturnType<typeof switchingProjection>>();
   private switching: ReturnType<typeof switchingProjection> | undefined;
@@ -1549,6 +1553,8 @@ export class DirectSession {
     this.switching = undefined;
     this.threadRequest = "";
     this.configReady = false;
+    this.clonesRequest = "";
+    this.clones = null;
     this.socket = socket;
     this.environment.status = "Connected";
     this.shellRequest = this.request("orchestration.subscribeShell", {});
@@ -2710,6 +2716,42 @@ export class DirectSession {
     return true;
   }
 
+  /** Typed calls for `project-rpc.ts`. */
+  readonly rpc: RpcSession = { query: (tag, payload) => this.query(tag, payload) };
+
+  /** Every clone this environment tracks; the first read opens the stream. */
+  projectClones(): CloneSnapshot[] | null {
+    if (!this.clonesRequest && this.socket?.readyState === 1)
+      try {
+        this.clonesRequest = this.request(PROJECT_CLONES_SUBSCRIPTION.tag, PROJECT_CLONES_SUBSCRIPTION.payload);
+      } catch {
+        this.clones ??= [];
+      }
+    return this.clones;
+  }
+
+  /** What Add Project reads from the server config. */
+  addProjectFacts(): { os: string; baseDirectory: string; newProjectsRoot: string | null; ghqCloneLayout: boolean } {
+    const settings = object(this.config.settings);
+    return {
+      os: string(object(object(this.config.environment).platform).os),
+      baseDirectory: string(settings.addProjectBaseDirectory),
+      newProjectsRoot: typeof this.config.newProjectsRoot === "string" ? this.config.newProjectsRoot : null,
+      ghqCloneLayout: settings.ghqCloneLayout === true,
+    };
+  }
+
+  projectRecords(): { id: string; title: string; workspaceRoot: string; archived: boolean }[] {
+    return [...this.projects.values()]
+      .filter((project) => !project.deletedAt)
+      .map((project) => ({
+        id: string(project.id),
+        title: string(project.title),
+        workspaceRoot: string(project.workspaceRoot),
+        archived: Boolean(project.archivedAt),
+      }));
+  }
+
   launchThread(
     plan: LaunchPlan,
     message: { commandId: string; messageId: string; text: string; attachments: StoredAttachment[] },
@@ -2752,6 +2794,7 @@ export class DirectSession {
     this.terminalRequests.clear();
     this.terminalRequestIds.clear();
     this.terminalOutputStates.clear();
+    this.clonesRequest = "";
     this.socket = undefined;
     this.gitOperations.clear();
     this.gitStatusByThread.clear();
@@ -2849,6 +2892,15 @@ export class DirectSession {
         (entry) => entry.requestId !== "" && entry.requestId === id,
       );
       if (frame._tag === "Chunk") {
+        if (id === this.clonesRequest) {
+          const values = Array.isArray(frame.values) ? frame.values : [];
+          if (values.length > 0)
+            try {
+              this.clones = parseProjectClones(values[values.length - 1]);
+            } catch {
+              this.clones = [];
+            }
+        }
         for (const item of records(frame.values)) {
           const git = this.gitOperations.get(id);
           if (git) this.gitProgress(git, item);
@@ -2883,6 +2935,10 @@ export class DirectSession {
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
       } else if (frame._tag === "Exit") {
         if (id === this.shellRequest) this.shellLive = false;
+        if (id === this.clonesRequest) {
+          this.clonesRequest = "";
+          this.clones ??= [];
+        }
         const threadEnded = id === this.threadRequest;
         if (threadEnded) {
           this.switching = undefined;
@@ -2904,8 +2960,8 @@ export class DirectSession {
         }
         const query = this.queries.get(id);
         this.queries.delete(id);
-        if (error)
-          query?.reject(new RpcFailure(error, string(object(records(exit.cause)[0]?.error)._tag)));
+        const cause = object(records(exit.cause)[0]?.error);
+        if (error) query?.reject(new RpcFailure(error, string(cause._tag), cause));
         else query?.resolve(object(exit.value));
         const projectId = this.faviconRequests.get(id);
         if (projectId) {

@@ -13,6 +13,8 @@ export class RpcFailure extends Error {
   constructor(
     message: string,
     readonly tag: string,
+    /** The server's error object, for callers that read its fields. */
+    readonly detail: Record<string, unknown> = {},
   ) {
     super(message);
   }
