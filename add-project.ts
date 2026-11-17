@@ -930,6 +930,8 @@ export interface NewProjectModel {
   readonly buttonEnabled: boolean;
   /** What "Create project" publishes, when the switch is on. */
   readonly publish: PublishChoice | null;
+  /** The "Add existing project" row under the button. */
+  readonly existingRows: readonly AddProjectRow[];
 }
 
 function publishTargets(discovery: SourceControlDiscovery | null): PublishChoice[] {
@@ -1014,10 +1016,11 @@ export function presentNewProject(input: {
     publishRows,
     buttonEnabled: !input.submitting && name.length > 0,
     publish: input.publishes ? target : null,
+    existingRows: [ADD_EXISTING_ROW],
   };
 }
 
-export const ADD_EXISTING_ROW: AddProjectRow = row({
+const ADD_EXISTING_ROW: AddProjectRow = row({
   kind: "existing",
   id: "existing",
   title: "Add existing project",

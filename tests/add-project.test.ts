@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  ADD_EXISTING_ROW,
   NOT_REACHED_YET,
   PROJECT_ADDED_LATE,
   addProjectSource,
@@ -422,7 +421,8 @@ test("new project preview, machines and publish targets", () => {
   expect(presentNewProject({ ...input, environments: [mac({ newProjectsRoot: null })] }).empty).toBe(true);
   expect(publishRepositoryName("octocat", "/Users/me/projects/my-app")).toBe("octocat/my-app");
   expect(publishRepositoryName(null, "/Users/me/projects/my-app")).toBe("my-app");
-  expect(ADD_EXISTING_ROW).toMatchObject({
+  expect(empty.existingRows).toHaveLength(1);
+  expect(empty.existingRows[0]).toMatchObject({
     title: "Add existing project",
     subtitle: "Open a folder or clone a repository",
     icon: "symbol:sf/folder.badge.plus",
