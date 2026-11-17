@@ -247,3 +247,13 @@ test("an atomic-write failure preserves the previous bytes and a later snapshot 
     },
   ]);
 });
+
+test("a new thread draft keeps its model pick under its draft key", async () => {
+  const { storage, state } = fixture();
+  const pick = { threadId: "new-task~abc-12345678", modelSelection: { instanceId: "codex-work", model: "gpt-6" } };
+  await saveModelDrafts(storage, [{ id: "new-task~abc-12345678", selection: pick }]);
+  expect(await loadModelDrafts(fixture(state.contents).storage)).toEqual([{ id: "new-task~abc-12345678", selection: pick }]);
+  await expect(
+    saveModelDrafts(storage, [{ id: "new-task~abc-12345678", selection: { ...pick, threadId: "other" } }]),
+  ).rejects.toThrow();
+});
