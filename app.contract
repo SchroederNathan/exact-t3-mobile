@@ -1601,39 +1601,41 @@ component T3Code
                       row position="relative" padding="6px 12px" margin-bottom=composerBottomAdjustment margin-right=(split ? "env(safe-area-inset-right)" : 0) flex-shrink=0 min-width=0 box-sizing="border-box" testId="composer-dock"
                         view aria-hidden=true position="absolute" inset=0 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-0) 0%, var(--composer-wash-60) 78%, var(--composer-wash-68) 100%)"
                         view aria-hidden=true position="absolute" left=0 right=0 top="100%" height=120 pointer-events="none" background-image="linear-gradient(to bottom, var(--composer-wash-68) 0px, var(--composer-wash-90) 34px, var(--composer-wash-90) 120px)"
-                        column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
-                          if composerFocus and composerAttachments.length > 0
-                            ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
-                          row flex-wrap="wrap" align-items="flex-end" min-width=0
-                            button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
-                              image "symbol:sf/plus" width=20 height=20
-                            textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
-                              ::placeholder
-                                color="muted"
-                            if not composerFocus and composerAttachments.length > 0
-                              row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
-                                for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
-                                  ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
-                                if composerAttachments.length > composerThumbnailLimit
-                                  button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
-                                    text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
-                            row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
-                              button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
-                                row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
-                                  ProviderIcon(provider=composerModel.provider, size=16)
-                                if composerExpanded
-                                  text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
-                                  if composerModel.summary != ""
-                                    text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
-                                image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
-                              if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
-                                button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
-                                  row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
-                                    image "symbol:sf/stop.fill" font-size=12
-                              else
-                                button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(composerBlockedReason != "" ? composerBlockedReason : activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
-                                  row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
-                                    image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
+                        column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 border-radius=27 box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
+                          // The glass draws a rim outside its bounds; upstream clips it with a rounded `overflow: hidden` host.
+                          column flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" overflow="hidden"
+                            if composerFocus and composerAttachments.length > 0
+                              ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                            row flex-wrap="wrap" align-items="flex-end" min-width=0
+                              button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
+                                image "symbol:sf/plus" width=20 height=20
+                              textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                                ::placeholder
+                                  color="muted"
+                              if not composerFocus and composerAttachments.length > 0
+                                row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
+                                  for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
+                                    ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
+                                  if composerAttachments.length > composerThumbnailLimit
+                                    button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
+                                      text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
+                              row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
+                                button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
+                                  row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
+                                    ProviderIcon(provider=composerModel.provider, size=16)
+                                  if composerExpanded
+                                    text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
+                                    if composerModel.summary != ""
+                                      text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
+                                  image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
+                                if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
+                                  button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
+                                    row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
+                                      image "symbol:sf/stop.fill" font-size=12
+                                else
+                                  button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(composerBlockedReason != "" ? composerBlockedReason : activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
+                                    row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
+                                      image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
               if e.name == "terminal"
                 column navigationKey=`${e.id}` navigationScroll="terminal-output" data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
