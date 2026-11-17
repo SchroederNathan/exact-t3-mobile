@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { DirectSession } from "../connection";
 import { browseFilesystem } from "../project-rpc";
+import { draftClone } from "../add-project-sources";
 
 type Frame = { _tag: string; id: string; tag: string; payload: Record<string, unknown> };
 
@@ -49,19 +50,26 @@ test("the clone list is unknown until the stream's first event, then follows eac
 
   session.receive(JSON.stringify({ _tag: "Chunk", requestId: request!.id, values: [[snapshot("running")]] }));
   expect(session.projectClones()?.map((clone) => clone.phase)).toEqual(["running"]);
+  expect(draftClone(session, "env:p1", true)).toEqual({
+    banner: { phase: "running", title: "Cloning Hello-World", detail: "Receiving objects · 42% · 1.2 MiB/s" },
+    blocksStart: true,
+    blockReason: "Wait for the project clone to finish.",
+  });
 
   session.receive(JSON.stringify({ _tag: "Chunk", requestId: request!.id, values: [[snapshot("done")]] }));
-  expect(session.projectClones()?.map((clone) => clone.phase)).toEqual(["done"]);
+  expect(draftClone(session, "env:p1", true)).toEqual({ banner: null, blocksStart: false, blockReason: "" });
 });
 
-test("a failed clone stream reads as an empty list", () => {
+test("a draft opened by a clone waits for the list; a failed stream unblocks it", () => {
   const { session, requestFor } = connected();
-  expect(session.projectClones()).toBeNull();
+  expect(draftClone(session, "env:p1", true).blocksStart).toBe(true);
+  expect(draftClone(session, "env:p1", false).blocksStart).toBe(false);
   const request = requestFor("subscribeProjectClones")!;
   session.receive(
     JSON.stringify({ _tag: "Exit", requestId: request.id, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: { message: "nope" } }] } }),
   );
   expect(session.projectClones()).toEqual([]);
+  expect(draftClone(session, "env:p1", true).blocksStart).toBe(false);
 });
 
 test("a browse refusal keeps the server's failure fields", async () => {

@@ -1,3 +1,5 @@
+use ThreadDraft from "./attachments.contract"
+
 shape AddProjectRow
   kind: string
   id: string
@@ -71,6 +73,78 @@ shape ProjectCloneModel
   blocksStart: bool
   blockReason: string
 
+shape AddFlow
+  draftKey: string
+  environmentId: string
+  targetId: string
+  remoteUrl: string
+  repositoryTitle: string
+  repositoryName: string
+  repositoryText: string
+  path: string
+  previousPath: string
+  pathEdited: bool
+  name: string
+  publish: bool
+  publishProvider: string
+  error: string
+  errorRoute: string
+  routeId: string
+
+shape AddFacts
+  stamp: string
+
+shape AddProjectView
+  environmentId: string
+  source: SourceChooserModel
+  repository: RepositoryInputModel
+  destination: CloneDestinationModel
+  local: LocalFolderModel
+  newProject: NewProjectModel
+  browser: FolderBrowserModel
+  pathSeed: string
+  pathRaw: string
+  pathText: string
+
+shape RepositoryReply
+  ok: bool
+  error: string
+  remoteUrl: string
+  repositoryTitle: string
+  repositoryName: string
+
+shape FolderReply
+  path: string
+
+shape AddProjectReply
+  ok: bool
+  error: string
+  alertTitle: string
+  alertBody: string
+  clearName: bool
+  key: string
+  draft: ThreadDraft
+  environmentId: string
+  projectId: string
+  remoteUrl: string
+  publishCwd: string
+  publishProvider: string
+  publishLabel: string
+  publishRepository: string
+
+shape AppAccessReply
+  show: bool
+  title: string
+  body: string
+  url: string
+
+shape CloneActionReply
+  ok: bool
+  error: string
+  alertTitle: string
+  removed: bool
+  projectId: string
+
 // Sizes follow upstream Tailwind classes at its 3.5pt spacing unit: `py-2.5` is 8.75, `min-h-12` is 42.
 fn addProjectIconColor(tint: string): string = tint == "icon-muted" ? "light-dark(#71717b, #818181)" : "foreground"
 
@@ -131,7 +205,7 @@ component AddProjectDestinationScreen
       if error != ""
         AddProjectErrorBanner(message=error, testId="add-project-destination-error")
       if model.repositoryTitle != ""
-        column border-radius=24 background-color="card" padding="10.5px 14px" testId="add-project-repository-card"
+        column border-radius=24 background-color="card" padding="11px 14px 10.5px" testId="add-project-repository-card"
           text model.repositoryTitle font-size=16 line-height="23px" font-weight=700
           text model.remoteUrl margin-top=1.75 font-size=13 line-height="17px" color="muted" line-clamp=2
       if not model.empty
@@ -223,7 +297,7 @@ component AddProjectCloneBanner
   view
     if banner.phase == "running"
       row align-items="center" gap=10.5 border-radius=14 border-width=1 border-style="solid" border-color="edge" background-color="light-dark(#ffffff, #111111)" padding="10.5px 12.25px" testId="clone-banner"
-        progress aria-label="Cloning"
+        progress aria-label="Cloning" color="light-dark(#999999, #999999)"
         column flex=1 min-width=0
           text banner.title font-size=14 line-height="19px" font-weight=500 line-clamp=1 testId="clone-banner-title"
           text banner.detail font-size=13 line-height="17px" color="muted" line-clamp=1 testId="clone-banner-detail"
@@ -288,7 +362,8 @@ component AddProjectListRow
     item: AddProjectRow
     choose: action
   view
-    button press=choose(item) disabled=(not item.enabled) appearance="none" display="flex" flex-direction="row" align-items="center" padding="8.75px 12.25px" box-sizing="border-box" text-align="left" background-color="card" color="foreground" opacity=(item.enabled ? 1 : 0.45) aria-label=(item.subtitle == "" ? item.title : `${item.title}, ${item.subtitle}`) aria-selected=item.selected testId=`add-project-${item.kind}-${item.id}`
+    // Upstream's title and subtitle stack lays out 0.5pt taller than its line heights sum; rows sized by the icon well do not.
+    button press=choose(item) disabled=(not item.enabled) appearance="none" display="flex" flex-direction="row" align-items="center" padding=(item.subtitle != "" ? "9.25px 12.25px 8.75px" : "8.75px 12.25px") box-sizing="border-box" text-align="left" background-color="card" color="foreground" opacity=(item.enabled ? 1 : 0.45) aria-label=(item.subtitle == "" ? item.title : `${item.title}, ${item.subtitle}`) aria-selected=item.selected testId=`add-project-${item.kind}-${item.id}`
       AddProjectRowBody(item=item)
 
 component AddProjectSwitchRow
@@ -298,7 +373,7 @@ component AddProjectSwitchRow
     toggle: action
   view
     row align-items="center" background-color="card" opacity=(item.enabled ? 1 : 0.45)
-      button press=choose(item) disabled=(not item.enabled) appearance="none" flex=1 min-width=0 display="flex" flex-direction="row" align-items="center" padding="8.75px 0 8.75px 12.25px" box-sizing="border-box" text-align="left" color="foreground" aria-label=item.title testId=`add-project-${item.kind}-${item.id}`
+      button press=choose(item) disabled=(not item.enabled) appearance="none" flex=1 min-width=0 display="flex" flex-direction="row" align-items="center" padding="9.25px 0 8.75px 12.25px" box-sizing="border-box" text-align="left" color="foreground" aria-label=item.title testId=`add-project-${item.kind}-${item.id}`
         AddProjectRowBody(item=item)
       input type="checkbox" switch accent-color="AccentColor" checked=item.selected change=toggle(item.id) disabled=(not item.enabled) align-self="flex-start" margin="8.75px 12.25px 0 10.5px" aria-label=item.title testId=`add-project-switch-${item.id}`
 
@@ -335,7 +410,9 @@ component AddProjectInput
     submit: action
     testId: string
   view
-    input value=value input=edit submit=submit placeholder=placeholder enterkeyhint=enterKeyHint autofocus=autofocus autocapitalize=autocapitalize autocorrect="off" spellcheck="false" aria-label=label appearance="none" height=42 min-height=42 box-sizing="border-box" padding="0 14px" border-radius=24 border-width=1 border-style="solid" border-color="light-dark(#d4d4d8, #1e1e1e)" background-color="input-fill" color="foreground" font-family="DM Sans" font-size=16 line-height="22px" testId=testId
+    input value=value input=edit submit=submit placeholder=placeholder enterkeyhint=enterKeyHint autofocus=autofocus autocapitalize=autocapitalize autocorrect="off" aria-label=label appearance="none" height=42 min-height=42 box-sizing="border-box" padding="0 14px" border-radius=24 border-width=1 border-style="solid" border-color="light-dark(#d4d4d8, #1e1e1e)" background-color="input-fill" color="foreground" font-family="DM Sans" font-size=16 line-height="22px" testId=testId
+      ::placeholder
+        color="muted"
 
 component AddProjectPrimaryButton
   props
@@ -349,7 +426,7 @@ component AddProjectPrimaryButton
     button press=press disabled=(not enabled) appearance="none" display="flex" flex-direction="row" align-items="center" justify-content="center" gap=7 align-self=(fullWidth ? "stretch" : "flex-start") min-height=42 padding="0 21px" box-sizing="border-box" border-radius=999 background-color=(enabled ? "AccentColor" : "control-secondary") color=(enabled ? "white" : "muted") testId=testId
       if loading
         progress aria-label=label color="muted"
-      text label font-size=16 line-height="23px" font-weight=500
+      text label font-size=14 font-weight=500
 
 component AddProjectSecondaryButton
   props
@@ -358,7 +435,7 @@ component AddProjectSecondaryButton
     testId: string
   view
     button press=press appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" box-sizing="border-box" border-radius=999 background-color="control-secondary" color="foreground" aria-label=label testId=testId
-      text label font-size=16 line-height="23px" font-weight=500
+      text label font-size=14 font-weight=500
 
 component AddProjectErrorBanner
   props

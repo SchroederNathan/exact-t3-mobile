@@ -31,6 +31,7 @@ import { controlKey } from "./thread-controls";
 import { questionAttachmentState } from "./question-attachments";
 import { ComposerSendScope, parseApprovalSend } from "./approval-send";
 import { projectTurnDiff } from "./turn-review";
+import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -494,9 +495,31 @@ function prepareLaunch(
 
 const { draftHost: _draftHost, rememberStickyModel, refreshAfterCheckout: _refresh, ...newTaskReads } = newTask;
 
+const addProject = addProjectSources({
+  sessionFor,
+  sync: syncNativeConnections,
+  awaitReply,
+  scopes: async (environmentId, store) => {
+    const session = sessionFor(environmentId);
+    const token = credentials(store)[environmentId];
+    if (!token)
+      return { operate: false, sourceControlWrite: false, filesystemRead: false, error: "Reconnect to add projects." };
+    const response = await readJson(`${session.environment.url}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return {
+      operate: sessionScope(response, "orchestration:operate"),
+      sourceControlWrite: sessionScope(response, "source-control:write"),
+      filesystemRead: sessionScope(response, "filesystem:read"),
+      error: null,
+    };
+  },
+});
+
 const sources: Sources = {
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),
   ...newTaskReads,
+  ...addProject,
   restoreModelSettings: async (_args, _store, storage) => {
     composerSettings.restore(await loadModelDrafts(storage));
     return { ok: true, error: "" };

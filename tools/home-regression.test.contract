@@ -419,3 +419,36 @@ test "native model settings save and cancel through their own navigation stack" 
   clock data
   expect text "composer" == ""
   request POST "http://127.0.0.1:0/assert/settings"
+
+test "Local folder adds a project and opens its draft above Home"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/threads/new-task~abc-12345678"
+  clock data
+  clock settle
+  expect state current.name == "chooseProject"
+  tap "project-add"
+  clock data
+  clock settle
+  expect state current.name == "addProject"
+  expect tree has "add-project-source-github"
+  tap "add-project-source-local"
+  clock data
+  clock settle
+  expect text "add-project-path" == "~/"
+  expect tree has "add-project-folder-Projects"
+  type "add-project-path" "~/Projects/demo"
+  tap "add-project-add"
+  clock data
+  clock settle
+  expect state current.name == "thread"
+  expect text "draft-project" == "demo"
+  back
+  clock settle
+  expect state current.name == "threads"

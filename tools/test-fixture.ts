@@ -286,6 +286,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         const assertion = assertions(path, request.signal);
         if (assertion) return assertion;
       }
+      if (path === "/api/auth/session" && !controls && !attachments) {
+        return json({
+          authenticated: true,
+          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read"],
+        });
+      }
       if (path === "/.well-known/t3/environment") {
         return json({
           environmentId: id,

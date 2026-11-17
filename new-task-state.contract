@@ -112,9 +112,6 @@ members T3Code
   action toggleTaskEnvironment(id: string)
     expandedTaskEnvironment = expandedTaskEnvironment == id ? "" : id
 
-  action openAddProject(key: string)
-    nav = push(split ? threadNav : nav, path("addProject", key))
-
   action afterRetarget
     match retargetedTask
       case some(reply)

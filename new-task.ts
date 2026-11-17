@@ -234,6 +234,8 @@ export interface NewTaskFacts {
   viewportShort: boolean;
   canReadFiles: boolean;
   cloneBlocked: boolean;
+  /** The project's clone, while it is not done. */
+  cloneBanner?: { phase: string; title: string; detail: string } | null;
 }
 
 export type NewTaskPhase = "loading" | "missing" | "needsProject" | "noModel" | "ready";
@@ -266,6 +268,9 @@ export interface NewTaskView {
   branchDisabled: boolean;
   branchPickerTitle: "Branch" | "Base branch";
   sendBlockedReason: string;
+  clonePhase: string;
+  cloneTitle: string;
+  cloneDetail: string;
   placeholder: string;
   canReadFiles: boolean;
   mode: WorkspaceMode;
@@ -304,6 +309,9 @@ const emptyView = (key: string, phase: NewTaskPhase): NewTaskView => ({
   branchDisabled: true,
   branchPickerTitle: "Branch",
   sendBlockedReason: "",
+  clonePhase: "",
+  cloneTitle: "",
+  cloneDetail: "",
   placeholder: "Ask anything",
   canReadFiles: false,
   mode: "local",
@@ -336,6 +344,9 @@ export function presentNewTask(facts: NewTaskFacts): NewTaskView {
     environmentOnline: online,
     environmentA11y: `Choose environment, ${environmentLabel}, ${online ? "Connected" : "Offline"}`,
     canReadFiles: facts.canReadFiles,
+    clonePhase: facts.cloneBanner?.phase ?? "",
+    cloneTitle: facts.cloneBanner?.title ?? "",
+    cloneDetail: facts.cloneBanner?.detail ?? "",
   };
   const resolved = resolveWorkspace({
     pick: stamp.workspace,

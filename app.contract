@@ -7,6 +7,7 @@ use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, Markd
 use EmptyState from "exact:content"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
+use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
 use ToolGroup from "./tool-group.contract"
 
 font "DM Sans"
@@ -468,6 +469,7 @@ component T3Code
   members "./tool-group.contract"
   members "./question-attachments.contract"
   members "./new-task-state.contract"
+  members "./add-project-state.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -1424,11 +1426,19 @@ component T3Code
                     input type="search" value=projectQuery input=searchProjects placeholder="Search projects" aria-label="Search projects" testId="project-search"
                   ProjectPicker(scrollId=`projects-${e.id}`, choices=projectChoices, busy=pending(retargetedTask), pick=chooseTaskProject(e.params.id), startScratch=startWithoutProject(e.params.id, projectChoices.scratchEnvironmentId), addProject=openAddProject(e.params.id), addEnvironment=addEnvironment)
               if e.name == "addProject" or e.name == "addProjectNew" or e.name == "addProjectLocal" or e.name == "addProjectRepository" or e.name == "addProjectDestination"
-                column navigationKey=`${e.id}` navigationScroll=`add-project-${e.id}` data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                column navigationKey=`${e.id}` navigationScroll=`add-project-${e.id}` data-workspace-header="editor" data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
-                    text (e.name == "addProject" ? "Add project" : e.name == "addProjectNew" ? "New project" : e.name == "addProjectLocal" ? "Local folder" : e.name == "addProjectDestination" ? "Clone destination" : e.params.source == "url" ? "Git URL" : "Repository") role="heading" aria-level=2
-                  scroll id=`add-project-${e.id}` flex=1 min-height=0
-                    view
+                    text (e.name == "addProject" ? "Add project" : e.name == "addProjectNew" ? "New project" : e.name == "addProjectLocal" ? "Local folder" : e.name == "addProjectDestination" ? "Clone destination" : addView.repository.title) role="heading" aria-level=2
+                  if e.name == "addProject"
+                    AddProjectSourceScreen(scrollId=`add-project-${e.id}`, model=addView.source, choose=chooseAddRow, addEnvironment=addEnvironment)
+                  else if e.name == "addProjectRepository"
+                    AddProjectRepositoryScreen(scrollId=`add-project-${e.id}`, model=addView.repository, hasEnvironment=(addView.environmentId != ""), text=addFlow.repositoryText, error=(addFlow.errorRoute == e.name ? addFlow.error : ""), submitting=addSubmitting, edit=editAddRepository, submit=submitAddRepository, addEnvironment=addEnvironment)
+                  else if e.name == "addProjectDestination"
+                    AddProjectDestinationScreen(scrollId=`add-project-${e.id}`, model=addView.destination, browser=addView.browser, path=addFlow.path, error=(addFlow.errorRoute == e.name ? addFlow.error : ""), submitting=addSubmitting, editPath=editAddPath, submit=submitAddProject, chooseFolder=chooseAddRow, addEnvironment=addEnvironment)
+                  else if e.name == "addProjectLocal"
+                    AddProjectLocalScreen(scrollId=`add-project-${e.id}`, model=addView.local, browser=addView.browser, path=addFlow.path, error=(addFlow.errorRoute == e.name ? addFlow.error : ""), submitting=addSubmitting, editPath=editAddPath, submit=submitAddProject, chooseFolder=chooseAddRow, addEnvironment=addEnvironment)
+                  else
+                    AddProjectNewScreen(scrollId=`add-project-${e.id}`, model=addView.newProject, name=addFlow.name, error=(addFlow.errorRoute == e.name ? addFlow.error : ""), submitting=addSubmitting, editName=editAddName, submit=submitAddProject, choose=chooseAddRow, togglePublish=toggleAddPublish, addEnvironment=addEnvironment)
               if e.name == "draftEnvironment"
                 column navigationKey=`${e.id}` navigationScroll=`environment-choices-${e.id}` data-workspace-header="editor" data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1582,6 +1592,9 @@ component T3Code
                           text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
                     column id="composer-dock-stack" flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                      if e.params.id == newTask.key and newTask.phase == "ready" and newTask.clonePhase != ""
+                        column padding="0 15.5px 7px" min-width=0
+                          AddProjectCloneBanner(banner=CloneBannerModel(phase=newTask.clonePhase, title=newTask.cloneTitle, detail=newTask.cloneDetail), cancel=actOnClone("cancel"), retry=actOnClone("retry"), remove=actOnClone("remove"))
                       if e.params.id == newTask.key and newTask.phase == "ready" and (newTask.workspaceVisible or newTask.contextVisible)
                         row padding="0 12px" margin-bottom=-6 min-width=0
                           DraftControls(view=newTask, toggleWorkspace=toggleTaskWorkspace(e.params.id), openBranch=openTaskBranch(e.params.id), openProject=openTaskProject(e.params.id), openEnvironment=openTaskEnvironment(e.params.id))
@@ -2157,6 +2170,12 @@ component T3Code
           text "Cancel"
         button press=discardDraft destructive=true commandfor="delete-pending-task" command="close" testId="delete-pending-confirm"
           text "Delete"
+      dialog id="app-access" role="alertdialog" aria-label=appAccessTitle
+        text appAccessBody
+        button commandfor="app-access" command="close" testId="app-access-cancel"
+          text "Not now"
+        button press=installAppAccess commandfor="app-access" command="close" testId="app-access-install"
+          text "Install"
       dialog id="task-alert" role="alertdialog" aria-label=taskAlertTitle
         text taskAlertBody testId="task-alert-body"
         button commandfor="task-alert" command="close" testId="task-alert-ok"

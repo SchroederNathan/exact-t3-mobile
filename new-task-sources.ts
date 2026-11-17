@@ -1,6 +1,7 @@
 import type { NativeModule, Result, Sources, Storage } from "./app.contract.d.ts";
 import type { ComposerSettings } from "./composer-settings";
 import { type DirectSession, object, scopedThreadId, string, threadIdentity } from "./connection";
+import { draftClone } from "./add-project-sources";
 import { saveModelDrafts } from "./model-drafts";
 import {
   environmentPresentation,
@@ -223,6 +224,7 @@ export function newTaskSources(boundary: NewTaskBoundary): Pick<
         projectFile(stamp.environmentId, project.workspaceRoot, online, native),
       ]);
       const defaults = target?.taskDefaults(rawId(project.id), file.value) ?? { mode: "local" as const, startFromOrigin: true };
+      const clone = draftClone(online ? target : null, stamp.projectId, stamp.cloning && stamp.projectId === project.id);
       let modelResolved = true;
       try {
         modelResolved = !target?.configLoaded() || draftHost(key, stamp.environmentId, stamp.projectId).resolved;
@@ -239,6 +241,8 @@ export function newTaskSources(boundary: NewTaskBoundary): Pick<
         environment,
         refs,
         modelResolved,
+        cloneBlocked: clone.blocksStart,
+        cloneBanner: clone.banner,
       });
     },
 

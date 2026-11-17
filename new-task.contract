@@ -28,6 +28,9 @@ shape NewTaskView
   branchDisabled: bool
   branchPickerTitle: string
   sendBlockedReason: string
+  clonePhase: string
+  cloneTitle: string
+  cloneDetail: string
   placeholder: string
   canReadFiles: bool
   mode: string
