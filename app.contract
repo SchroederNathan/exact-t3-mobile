@@ -1581,7 +1581,7 @@ component T3Code
                         button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
                           text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
-                    column flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                    column id="composer-dock-stack" flex-shrink=0 min-width=0 testId="composer-dock-stack"
                       if e.params.id == newTask.key and newTask.phase == "ready" and (newTask.workspaceVisible or newTask.contextVisible)
                         row padding="0 12px" margin-bottom=-6 min-width=0
                           DraftControls(view=newTask, toggleWorkspace=toggleTaskWorkspace(e.params.id), openBranch=openTaskBranch(e.params.id), openProject=openTaskProject(e.params.id), openEnvironment=openTaskEnvironment(e.params.id))

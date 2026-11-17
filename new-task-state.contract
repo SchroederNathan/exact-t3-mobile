@@ -21,7 +21,7 @@ members T3Code
   derive liveThreadIds = catalog.threads.filter(thread => thread.rows.filter(row => row.message != none).length > 0).map(thread => thread.id)
   derive connectedEnvironmentIds = catalog.environments.filter(environment => environment.status == "Connected").map(environment => environment.id)
   derive activeTask = threadDraft(savedDrafts, draftEdits, activeDraftKey)
-  resource newTask = presentNewTask(activeDraftKey, activeTask, catalog.projects, catalog.environments, taskRefsRevision, taskViewportShort, pending(preparedSend)) as shape NewTaskView else empty()
+  resource newTask = presentNewTask(draftsReady ? activeDraftKey : "", activeTask, catalog.projects, catalog.environments, taskRefsRevision, taskViewportShort, pending(preparedSend)) as shape NewTaskView else empty()
   resource projectChoices = loadProjectChoices(threadRoute.name == "chooseProject" ? activeComposerId : "", threadDraft(savedDrafts, draftEdits, activeComposerId), catalog.projects, catalog.environments, environmentState.loaded, projectQuery) as shape ProjectChoices else empty()
   resource environmentChoices = loadEnvironmentChoices(threadRoute.name == "draftEnvironment" ? activeDraftKey : "", activeTask, catalog.projects, catalog.environments) as shape EnvironmentChoice[] else empty()
   resource branchChoices = loadBranchChoices(threadRoute.name == "draftBranch" ? activeDraftKey : "", newTask.environmentId, newTask.rootCwd, newTask.branch, branchQueryApplied, branchPages, branchRetry + taskRefsRevision) as shape BranchChoices else empty()
@@ -45,8 +45,9 @@ members T3Code
 
   action measureTaskViewport
     let viewport = frame("draft-viewport")
-    if not viewport.unavailable and not viewport.provisional
-      taskViewportShort = viewport.height + 48 < 380
+    let dock = frame("composer-dock-stack")
+    if not viewport.unavailable and not viewport.provisional and not dock.unavailable and not dock.provisional
+      taskViewportShort = viewport.height + dock.height < 380
 
   action applyBranchQuery
     branchQueryApplied = branchQuery

@@ -76,7 +76,6 @@ function truncate(text: string, maxLength = 50): string {
     : `${characters.slice(0, maxLength).join("")}...`;
 }
 
-/** The launch's `title`: the prompt, else the attachments that stand in for it. */
 export function deriveThreadTitleSeed(
   text: string,
   attachments: ReadonlyArray<{ type: string; name: string }>,
@@ -89,7 +88,6 @@ export function deriveThreadTitleSeed(
   return name ? truncate(`File: ${name}`) : "New thread";
 }
 
-/** A Home row's title for an unsent prompt. */
 export function deriveThreadTitleFromPrompt(value: string): string {
   const title = normalizeTitle(value) || "New thread";
   return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
@@ -196,7 +194,6 @@ export type EnvironmentPhase =
   | "unsupported"
   | "available";
 
-/** The catalog's raw status word as the Expo client's connection presentation names it. */
 export function environmentPresentation(status: string): {
   phase: EnvironmentPhase;
   statusText: string;
@@ -500,7 +497,6 @@ export function planLaunch(
   };
 }
 
-/** `orchestration.launchThread`'s workspace strategy: optional keys only when set. */
 export function launchWorkspaceStrategy(plan: LaunchPlan): Record<string, unknown> {
   if (plan.strategy === "worktree")
     return {
@@ -539,7 +535,6 @@ export interface ProjectScope {
   pinned: boolean;
 }
 
-/** One scope per repository across environments; scratch-only scopes are not pickable. */
 export function projectScopes(
   projects: ReadonlyArray<ChoiceProject>,
   activityByProject: ReadonlyMap<string, number>,
@@ -728,7 +723,6 @@ export interface HomeDraftRow {
   createdAt: string;
 }
 
-/** Drafts with content first, then launches waiting for a connection; newest first in each. */
 export function homeDraftRows(
   drafts: ReadonlyArray<HomeDraftInput>,
   branchFor: (draft: HomeDraftInput) => string,

@@ -116,7 +116,6 @@ interface PagerEntry {
   error: string;
 }
 
-/** Pages of `vcs.listRefs` per environment, cwd and query, kept until a refresh asks again. */
 export class RefPager {
   private entries = new Map<string, PagerEntry>();
   private revisions = new Map<string, number>();

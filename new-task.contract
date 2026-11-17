@@ -336,7 +336,7 @@ component EnvironmentPicker
                       text choice.statusText font-size=13 line-height="17px" color="muted" line-clamp=2
                   if choice.selected
                     image "symbol:checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
-                button press=toggle(choice.id) appearance="none" display="flex" align-items="center" justify-content="center" min-width=44 min-height=44 padding-right=7 aria-label=(expanded == choice.id ? `Hide details for ${choice.label}` : `Show details for ${choice.label}`) testId=`environment-disclosure-${choice.id}`
+                button press=toggle(choice.id) appearance="none" display="flex" align-items="center" justify-content="center" min-width=38.5 min-height=38.5 align-self="center" aria-label=(expanded == choice.id ? `Hide details for ${choice.label}` : `Show details for ${choice.label}`) testId=`environment-disclosure-${choice.id}`
                   image (expanded == choice.id ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=13 height=13 font-size=13 color="icon-muted"
               if expanded == choice.id
                 column gap=10.5 padding="0 14px 14px"
