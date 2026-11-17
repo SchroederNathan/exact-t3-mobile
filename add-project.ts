@@ -237,7 +237,6 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-// ---- Paths (ported in behavior from pkg/shared/src/path.ts and client-runtime state/projects.ts)
 
 const isWindowsDrivePath = (value: string) => /^[a-zA-Z]:([/\\]|$)/.test(value);
 const isUncPath = (value: string) => value.startsWith("\\\\");
@@ -409,7 +408,6 @@ export function resolveAddProjectPath(
   return path.length === 0 ? { ok: false, error: "Enter a project path." } : { ok: true, path };
 }
 
-// ---- Clone URLs (ported in behavior from pkg/shared/src/cloneUrl.ts and operations/projects.ts)
 
 const REPOSITORY_SHORTHAND = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
 const INCOMPLETE_OWNER_PATH = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})\/+$/;
@@ -500,7 +498,6 @@ function defaultCloneUrl(repository: RepositoryInfo): string {
   return (byKind(repository.provider)?.transport ?? "ssh") === "https" ? repository.url : repository.sshUrl;
 }
 
-// ---- Environments
 
 function platformFromOs(os: string): string {
   if (os === "windows") return "Win32";
@@ -578,7 +575,6 @@ function providerIcon(provider: ProviderDefinition) {
   return { icon: provider.icon, iconTint: provider.monochrome ? "icon" : "" };
 }
 
-// ---- Source chooser
 
 interface Readiness {
   readonly ready: boolean;
@@ -689,7 +685,6 @@ export function presentSourceChooser(input: {
   };
 }
 
-// ---- Repository input
 
 export interface CloneDestinationRequest {
   readonly source: string;
@@ -747,7 +742,6 @@ export function destinationFromRepository(source: string, repository: Repository
   };
 }
 
-// ---- Clone destination and local folder
 
 export interface PathField {
   /** The folder name kept at the end of the path while browsing ("" on Local folder). */
@@ -910,7 +904,6 @@ export function projectExistsAlert(title: string, unarchived: boolean): Alert {
 
 export const PROJECT_ADDED_LATE: Alert = { title: "Project added", message: NOT_REACHED_YET };
 
-// ---- New project
 
 export interface PublishChoice {
   readonly provider: string;
@@ -1036,7 +1029,6 @@ export function publishFailedAlert(label: string, error: unknown): Alert {
   return { title: `Could not create the ${label} repository`, message: errorMessage(error) };
 }
 
-// ---- Folder browser
 
 export interface FolderBrowserModel {
   /** The directory to list with `filesystem.browse`, or "" for none. */
@@ -1128,7 +1120,6 @@ export function presentFolderBrowser(input: {
   };
 }
 
-// ---- Clone progress on the draft
 
 const STAGE_LABELS: Record<CloneStage, string> = {
   connecting: "Connecting",
@@ -1188,7 +1179,6 @@ export function presentProjectClone(input: {
   return { banner, blocksStart, blockReason: blocksStart ? CLONE_BLOCK_REASON : "" };
 }
 
-// ---- App access suggestion (suggestAppAccess.ts)
 
 export interface AppAccessCheck {
   readonly provider: string;
