@@ -36,3 +36,15 @@ test "a phone keeps the list tab selected and never the detail tab"
   expect state split == false
   expect state visibleTab == "threads"
   expect state current.name == "threads"
+
+test "a new thread draft without a project opens Choose project, and Back closes both"
+  at "/threads/new-task~abc-12345678"
+  clock data
+  clock settle
+  expect state current.name == "chooseProject"
+  expect text "projects-empty-title" == "No environments connected"
+  expect tree has "projects-add-environment"
+  expect tree missing "project-add"
+  tap "project-back"
+  clock settle
+  expect state current.name == "threads"

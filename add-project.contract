@@ -1,0 +1,456 @@
+use ThreadDraft from "./attachments.contract"
+
+shape AddProjectRow
+  kind: string
+  id: string
+  title: string
+  subtitle: string
+  icon: string
+  iconSize: number
+  iconTint: string
+  selected: bool
+  enabled: bool
+  trailing: string
+  path: string
+  browsePath: string
+
+shape SourceChooserModel
+  environmentId: option<string>
+  empty: bool
+  environmentRows: AddProjectRow[]
+  sourceRows: AddProjectRow[]
+  loading: bool
+
+shape RepositoryInputModel
+  title: string
+  placeholder: string
+  buttonLabel: string
+  buttonEnabled: bool
+
+shape CloneDestinationModel
+  empty: bool
+  repositoryTitle: string
+  remoteUrl: string
+  buttonEnabled: bool
+  notice: string
+
+shape LocalFolderModel
+  empty: bool
+  scopeError: string
+  buttonEnabled: bool
+
+shape PublishChoice
+  provider: string
+  label: string
+  owner: option<string>
+
+shape NewProjectModel
+  environmentId: option<string>
+  empty: bool
+  ready: bool
+  machineRows: AddProjectRow[]
+  pathPreview: string
+  publishRows: AddProjectRow[]
+  buttonEnabled: bool
+  publish: option<PublishChoice>
+  existingRows: AddProjectRow[]
+
+shape FolderBrowserModel
+  request: string
+  accessError: string
+  browseError: string
+  missingNote: string
+  loading: bool
+  rows: AddProjectRow[]
+
+shape CloneBannerModel
+  phase: string
+  title: string
+  detail: string
+
+shape ProjectCloneModel
+  banner: option<CloneBannerModel>
+  blocksStart: bool
+  blockReason: string
+
+shape AddFlow
+  draftKey: string
+  environmentId: string
+  targetId: string
+  remoteUrl: string
+  repositoryTitle: string
+  repositoryName: string
+  repositoryText: string
+  path: string
+  previousPath: string
+  pathEdited: bool
+  name: string
+  publish: bool
+  publishProvider: string
+  error: string
+  errorRoute: string
+  routeId: string
+
+shape AddFacts
+  stamp: string
+
+shape AddProjectView
+  environmentId: string
+  source: SourceChooserModel
+  repository: RepositoryInputModel
+  destination: CloneDestinationModel
+  local: LocalFolderModel
+  newProject: NewProjectModel
+  browser: FolderBrowserModel
+  pathSeed: string
+  pathRaw: string
+  pathText: string
+
+shape RepositoryReply
+  ok: bool
+  error: string
+  remoteUrl: string
+  repositoryTitle: string
+  repositoryName: string
+
+shape FolderReply
+  path: string
+
+shape AddProjectReply
+  ok: bool
+  error: string
+  alertTitle: string
+  alertBody: string
+  clearName: bool
+  key: string
+  draft: ThreadDraft
+  environmentId: string
+  projectId: string
+  remoteUrl: string
+  publishCwd: string
+  publishProvider: string
+  publishLabel: string
+  publishRepository: string
+
+shape AppAccessReply
+  show: bool
+  title: string
+  body: string
+  url: string
+
+shape CloneActionReply
+  ok: bool
+  error: string
+  alertTitle: string
+  removed: bool
+  projectId: string
+
+// Sizes follow upstream Tailwind classes at its 3.5pt spacing unit: `py-2.5` is 8.75, `min-h-12` is 42.
+fn addProjectIconColor(tint: string): string = tint == "icon-muted" ? "light-dark(#71717b, #818181)" : "foreground"
+
+component AddProjectSourceScreen
+  props
+    scrollId: string
+    model: SourceChooserModel
+    choose: action
+    addEnvironment: action
+  view
+    AddProjectShell(scrollId=scrollId)
+      if model.empty
+        AddProjectEmptyEnvironment(addEnvironment=addEnvironment)
+      if model.environmentRows.length > 0
+        AddProjectSectionTitle(title="Environments")
+        AddProjectRows(rows=model.environmentRows, loading=false, choose=choose, testId="add-project-environments")
+      if not model.empty
+        AddProjectRows(rows=model.sourceRows, loading=false, choose=choose, testId="add-project-sources")
+        if model.loading
+          row justify-content="center"
+            progress aria-label="Loading source control" color="light-dark(#71717b, #818181)" testId="add-project-discovery-loading"
+
+component AddProjectRepositoryScreen
+  props
+    scrollId: string
+    model: RepositoryInputModel
+    hasEnvironment: bool
+    text: string
+    error: string
+    submitting: bool
+    edit: action
+    submit: action
+    addEnvironment: action
+  view
+    AddProjectShell(scrollId=scrollId)
+      if error != ""
+        AddProjectErrorBanner(message=error, testId="add-project-repository-error")
+      if hasEnvironment
+        AddProjectInput(value=text, placeholder=model.placeholder, enterKeyHint="next", autofocus=false, autocapitalize="none", label=model.title, edit=edit, submit=submit, testId="add-project-repository-input")
+        AddProjectPrimaryButton(label=model.buttonLabel, enabled=model.buttonEnabled, loading=submitting, fullWidth=true, press=submit, testId="add-project-repository-submit")
+      else
+        AddProjectEmptyEnvironment(addEnvironment=addEnvironment)
+
+component AddProjectDestinationScreen
+  props
+    scrollId: string
+    model: CloneDestinationModel
+    browser: FolderBrowserModel
+    path: string
+    error: string
+    submitting: bool
+    editPath: action
+    submit: action
+    chooseFolder: action
+    addEnvironment: action
+  view
+    AddProjectShell(scrollId=scrollId)
+      if error != ""
+        AddProjectErrorBanner(message=error, testId="add-project-destination-error")
+      if model.repositoryTitle != ""
+        column border-radius=24 background-color="card" padding="11px 14px 10.5px" testId="add-project-repository-card"
+          text model.repositoryTitle font-size=16 line-height="23px" font-weight=700
+          text model.remoteUrl margin-top=1.75 font-size=13 line-height="17px" color="muted" line-clamp=2
+      if not model.empty
+        AddProjectInput(value=path, placeholder="~/projects/my-app", enterKeyHint="done", autofocus=false, autocapitalize="none", label="Clone destination", edit=editPath, submit=submit, testId="add-project-path")
+        AddProjectPrimaryButton(label="Clone project", enabled=model.buttonEnabled, loading=submitting, fullWidth=true, press=submit, testId="add-project-clone")
+        if model.notice != ""
+          text model.notice font-size=14 line-height="19px" color="muted" testId="add-project-clone-notice"
+        AddProjectFolderBrowser(model=browser, choose=chooseFolder)
+      else
+        AddProjectEmptyEnvironment(addEnvironment=addEnvironment)
+
+component AddProjectLocalScreen
+  props
+    scrollId: string
+    model: LocalFolderModel
+    browser: FolderBrowserModel
+    path: string
+    error: string
+    submitting: bool
+    editPath: action
+    submit: action
+    chooseFolder: action
+    addEnvironment: action
+  view
+    AddProjectShell(scrollId=scrollId)
+      if error != ""
+        AddProjectErrorBanner(message=error, testId="add-project-local-error")
+      if not model.empty
+        if model.scopeError != ""
+          AddProjectErrorBanner(message=model.scopeError, testId="add-project-local-scope")
+        AddProjectInput(value=path, placeholder="~/projects/my-app", enterKeyHint="done", autofocus=false, autocapitalize="none", label="Project folder", edit=editPath, submit=submit, testId="add-project-path")
+        AddProjectPrimaryButton(label="Add project", enabled=model.buttonEnabled, loading=submitting, fullWidth=true, press=submit, testId="add-project-add")
+        AddProjectFolderBrowser(model=browser, choose=chooseFolder)
+      else
+        AddProjectEmptyEnvironment(addEnvironment=addEnvironment)
+
+component AddProjectNewScreen
+  props
+    scrollId: string
+    model: NewProjectModel
+    name: string
+    error: string
+    submitting: bool
+    editName: action
+    submit: action
+    choose: action
+    togglePublish: action
+    addEnvironment: action
+  view
+    AddProjectShell(scrollId=scrollId)
+      if error != ""
+        AddProjectErrorBanner(message=error, testId="add-project-new-error")
+      if model.ready
+        AddProjectInput(value=name, placeholder="Project name", enterKeyHint="done", autofocus=true, autocapitalize="sentences", label="Project name", edit=editName, submit=submit, testId="add-project-name")
+        if model.pathPreview != ""
+          text model.pathPreview padding="0 3.5px" font-size=14 line-height="19.25px" color="muted" line-clamp=2 testId="add-project-path-preview"
+        if model.machineRows.length > 0
+          AddProjectRows(rows=model.machineRows, loading=false, choose=choose, testId="add-project-machines")
+        if model.publishRows.length > 0
+          AddProjectPublishRows(rows=model.publishRows, choose=choose, toggle=togglePublish)
+        AddProjectPrimaryButton(label="Create project", enabled=model.buttonEnabled, loading=submitting, fullWidth=true, press=submit, testId="add-project-create")
+        AddProjectRows(rows=model.existingRows, loading=false, choose=choose, testId="add-project-existing")
+      else if model.machineRows.length > 0
+        AddProjectRows(rows=model.machineRows, loading=false, choose=choose, testId="add-project-machines")
+      else
+        AddProjectEmptyEnvironment(addEnvironment=addEnvironment)
+
+component AddProjectFolderBrowser
+  props
+    model: FolderBrowserModel
+    choose: action
+  view
+    column gap=10
+      AddProjectSectionTitle(title="Browse folders")
+      if model.accessError != ""
+        AddProjectErrorBanner(message=model.accessError, testId="add-project-browse-access")
+      if model.missingNote != ""
+        text model.missingNote font-size=14 line-height="19px" color="muted" testId="add-project-browse-missing"
+      if model.browseError != ""
+        AddProjectErrorBanner(message=model.browseError, testId="add-project-browse-error")
+      AddProjectRows(rows=model.rows, loading=model.loading, choose=choose, testId="add-project-folders")
+
+component AddProjectCloneBanner
+  props
+    banner: CloneBannerModel
+    cancel: action
+    retry: action
+    remove: action
+  view
+    if banner.phase == "running"
+      row align-items="center" gap=10.5 border-radius=14 border-width=1 border-style="solid" border-color="edge" background-color="light-dark(#ffffff, #111111)" padding="10.5px 12.25px" testId="clone-banner"
+        progress aria-label="Cloning" color="light-dark(#999999, #999999)"
+        column flex=1 min-width=0
+          text banner.title font-size=14 line-height="19px" font-weight=500 line-clamp=1 testId="clone-banner-title"
+          text banner.detail font-size=13 line-height="17px" color="muted" line-clamp=1 testId="clone-banner-detail"
+        AddProjectSecondaryButton(label="Cancel", press=cancel, testId="clone-banner-cancel")
+    else
+      column border-radius=14 border-width=1 border-style="solid" border-color=(banner.phase == "cancelled" ? "light-dark(rgba(254, 154, 0, 0.32), rgba(254, 154, 0, 0.32))" : "light-dark(rgba(251, 44, 54, 0.32), rgba(251, 65, 74, 0.32))") background-color=(banner.phase == "cancelled" ? "light-dark(#fcf4e8, #312108)" : "control-danger-fill") padding="10.5px 12.25px" testId="clone-banner"
+        text banner.title font-size=14 line-height="19px" font-weight=500 line-clamp=1 color=(banner.phase == "cancelled" ? "light-dark(#bb4d00, #ffb900)" : "danger") testId="clone-banner-title"
+        if banner.detail != ""
+          text banner.detail margin-top=1.75 font-size=13 line-height="17px" color="danger" line-clamp=3 testId="clone-banner-detail"
+        row margin-top=7 justify-content="flex-end" gap=7
+          AddProjectSecondaryButton(label="Remove project", press=remove, testId="clone-banner-remove")
+          AddProjectSecondaryButton(label="Retry", press=retry, testId="clone-banner-retry")
+
+component AddProjectShell
+  props
+    scrollId: string
+  slot
+  view
+    scroll id=scrollId flex=1 min-height=0 background-color="screen"
+      column gap=10 padding="16px 20px calc(max(env(safe-area-inset-bottom), 18px) + 18px)"
+        children
+
+component AddProjectSectionTitle
+  props
+    title: string
+  view
+    text title padding="0 3.5px" font-size=12 line-height="16px" font-weight=700 letter-spacing="0.7px" text-transform="uppercase" color="muted"
+
+component AddProjectRows
+  props
+    rows: AddProjectRow[]
+    loading: bool
+    choose: action
+    testId: string
+  view
+    column border-radius=24 background-color="card" overflow="hidden" testId=testId
+      if loading
+        row justify-content="center" padding="17.5px 0"
+          progress aria-label="Loading folders" color="light-dark(#71717b, #818181)" testId=`${testId}-loading`
+      for item, index in rows key=`${item.kind}-${item.id}`
+        if index > 0
+          view height=1 background-color="light-dark(rgba(228, 228, 231, 0.7), rgba(25, 25, 25, 0.7))"
+        AddProjectListRow(item=item, choose=choose)
+
+component AddProjectPublishRows
+  props
+    rows: AddProjectRow[]
+    choose: action
+    toggle: action
+  view
+    column border-radius=24 background-color="card" overflow="hidden" testId="add-project-publish"
+      for item, index in rows key=`${item.kind}-${item.id}`
+        if index > 0
+          view height=1 background-color="light-dark(rgba(228, 228, 231, 0.7), rgba(25, 25, 25, 0.7))"
+        if item.trailing == "switch"
+          AddProjectSwitchRow(item=item, choose=choose, toggle=toggle)
+        else
+          AddProjectListRow(item=item, choose=choose)
+
+component AddProjectListRow
+  props
+    item: AddProjectRow
+    choose: action
+  view
+    // Upstream's title and subtitle stack lays out 0.5pt taller than its line heights sum; rows sized by the icon well do not.
+    button press=choose(item) disabled=(not item.enabled) appearance="none" display="flex" flex-direction="row" align-items="center" padding=(item.subtitle != "" ? "9.25px 12.25px 8.75px" : "8.75px 12.25px") box-sizing="border-box" text-align="left" background-color="card" color="foreground" opacity=(item.enabled ? 1 : 0.45) aria-label=(item.subtitle == "" ? item.title : `${item.title}, ${item.subtitle}`) aria-selected=item.selected testId=`add-project-${item.kind}-${item.id}`
+      AddProjectRowBody(item=item)
+
+component AddProjectSwitchRow
+  props
+    item: AddProjectRow
+    choose: action
+    toggle: action
+  view
+    row align-items="center" background-color="card" opacity=(item.enabled ? 1 : 0.45)
+      button press=choose(item) disabled=(not item.enabled) appearance="none" flex=1 min-width=0 display="flex" flex-direction="row" align-items="center" padding="9.25px 0 8.75px 12.25px" box-sizing="border-box" text-align="left" color="foreground" aria-label=item.title testId=`add-project-${item.kind}-${item.id}`
+        AddProjectRowBody(item=item)
+      input type="checkbox" switch accent-color="AccentColor" checked=item.selected change=toggle(item.id) disabled=(not item.enabled) align-self="flex-start" margin="8.75px 12.25px 0 10.5px" aria-label=item.title testId=`add-project-switch-${item.id}`
+
+component AddProjectRowBody
+  props
+    item: AddProjectRow
+  view
+    row flex=1 min-width=0 align-items="center" gap=10.5
+      row width=24.5 height=24.5 flex-shrink=0 align-items="center" justify-content="center" border-radius=12.25 background-color=(item.trailing == "check" ? "AccentColor" : "transparent")
+        if item.icon.startsWith("symbol:")
+          image item.icon width=item.iconSize height=item.iconSize font-size=item.iconSize color=addProjectIconColor(item.iconTint)
+        else if item.iconTint != ""
+          image item.icon width=item.iconSize height=item.iconSize -exact-tint-color="foreground"
+        else
+          image item.icon width=item.iconSize height=item.iconSize
+      column flex=1 min-width=0 gap=1.75
+        text item.title font-size=16 line-height="22px" font-weight=700
+        if item.subtitle != ""
+          text item.subtitle font-size=14 line-height="19.25px" color="muted" line-clamp=2
+      if item.trailing == "chevron"
+        image "symbol:forward-chevron" width=13 height=13 font-size=13 color="light-dark(rgba(113, 113, 123, 0.42), rgba(129, 129, 129, 0.42))"
+      else if item.trailing == "check"
+        image "symbol:checkmark" width=14 height=14 font-size=14 color="foreground"
+
+component AddProjectInput
+  props
+    value: string
+    placeholder: string
+    enterKeyHint: string
+    autofocus: bool
+    autocapitalize: string
+    label: string
+    edit: action
+    submit: action
+    testId: string
+  view
+    input value=value input=edit submit=submit placeholder=placeholder enterkeyhint=enterKeyHint autofocus=autofocus autocapitalize=autocapitalize autocorrect="off" aria-label=label appearance="none" height=42 min-height=42 box-sizing="border-box" padding="0 14px" border-radius=24 border-width=1 border-style="solid" border-color="light-dark(#d4d4d8, #1e1e1e)" background-color="input-fill" color="foreground" font-family="DM Sans" font-size=16 line-height="22px" testId=testId
+      ::placeholder
+        color="muted"
+
+component AddProjectPrimaryButton
+  props
+    label: string
+    enabled: bool
+    loading: bool
+    fullWidth: bool
+    press: action
+    testId: string
+  view
+    button press=press disabled=(not enabled) appearance="none" display="flex" flex-direction="row" align-items="center" justify-content="center" gap=7 align-self=(fullWidth ? "stretch" : "flex-start") min-height=42 padding="0 21px" box-sizing="border-box" border-radius=999 background-color=(enabled ? "AccentColor" : "control-secondary") color=(enabled ? "white" : "muted") testId=testId
+      if loading
+        progress aria-label=label color="muted"
+      text label font-size=14 font-weight=500
+
+component AddProjectSecondaryButton
+  props
+    label: string
+    press: action
+    testId: string
+  view
+    button press=press appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" box-sizing="border-box" border-radius=999 background-color="control-secondary" color="foreground" aria-label=label testId=testId
+      text label font-size=14 font-weight=500
+
+component AddProjectErrorBanner
+  props
+    message: string
+    testId: string
+  view
+    column role="alert" border-radius=14 border-width=1 border-style="solid" border-color="light-dark(rgba(251, 44, 54, 0.32), rgba(251, 65, 74, 0.32))" background-color="control-danger-fill" padding="10.5px 12.25px" testId=testId
+      text message font-size=14 line-height="19px" font-weight=500 color="danger" user-select="text"
+
+component AddProjectEmptyEnvironment
+  props
+    addEnvironment: action
+  view
+    column align-items="center" gap=10.5 border-radius=14 background-color="card" padding="28px 17.5px" testId="add-project-empty-environment"
+      text "Environment unavailable" font-size=18 line-height="23px" font-weight=700 text-align="center"
+      text "Start or reconnect an environment before adding a project." font-size=14 line-height="21px" color="muted" text-align="center"
+      row margin-top=3.5
+        AddProjectPrimaryButton(label="Add environment", enabled=true, loading=false, fullWidth=false, press=addEnvironment, testId="add-project-add-environment")

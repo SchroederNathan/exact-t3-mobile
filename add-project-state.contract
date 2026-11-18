@@ -1,0 +1,179 @@
+use threadDraft from "./attachments.contract"
+use stampProject from "./new-task.contract"
+use AddProjectRow, AddFlow, AddFacts, AddProjectView, RepositoryReply, FolderReply, AddProjectReply, AppAccessReply, CloneActionReply from "./add-project.contract"
+
+members T3Code
+  state addFlow = AddFlow(draftKey="", environmentId="", targetId="", remoteUrl="", repositoryTitle="", repositoryName="", repositoryText="", path="", previousPath="", pathEdited=false, name="", publish=false, publishProvider="", error="", errorRoute="", routeId="")
+  state addNavigating = ""
+  state addVisit = 0
+  state appAccessTitle = ""
+  state appAccessBody = ""
+  state appAccessUrl = ""
+  derive addRoute = threadRoute.name == "addProject" or threadRoute.name == "addProjectNew" or threadRoute.name == "addProjectLocal" or threadRoute.name == "addProjectRepository" or threadRoute.name == "addProjectDestination" ? threadRoute.name : ""
+  derive addSource = addRoute == "addProjectRepository" or addRoute == "addProjectDestination" ? threadRoute.params.source : ""
+  derive addSubmitting = pending(projectAdded) or pending(repositoryLooked)
+  resource addFacts = loadAddProjectFacts(addRoute, addVisit, addFlow.environmentId, addFlow.targetId, addRoute == "addProjectLocal" or addRoute == "addProjectDestination" ? addFlow.path : "", catalog.environments) as shape AddFacts else empty()
+  resource addView = presentAddProject(addRoute, addSource, addFlow, catalog.environments, addFacts.stamp, pending(addFacts), addNavigating != "", addSubmitting) as shape AddProjectView else empty()
+  mutation repositoryLooked as shape RepositoryReply then afterRepositoryLookup
+  mutation addFolderOpened as shape FolderReply then afterAddFolderOpened
+  mutation projectAdded as shape AddProjectReply then afterProjectAdded
+  mutation appAccessChecked as shape AppAccessReply then afterAppAccess
+  mutation cloneActed as shape CloneActionReply then afterCloneAction
+
+  task seedAddPath when addRoute != "" and not addFlow.pathEdited and addView.pathSeed != "" and addFlow.path != addView.pathSeed key=addView.pathSeed
+    after(1, seedAddPath)
+  task cleanAddPath when addRoute != "" and addFlow.pathEdited and addView.pathRaw == addFlow.path and addView.pathText != addFlow.path key=`${addView.pathRaw}>${addView.pathText}`
+    after(1, cleanAddPath)
+
+  action openAddProject(key: string)
+    blur()
+    addFlow = AddFlow(addFlow, draftKey=key, environmentId="", targetId="", error="", errorRoute="")
+    addVisit = addVisit + 1
+    nav = push(split ? threadNav : nav, path("addProject", key))
+
+  action chooseAddRow(row: AddProjectRow)
+    let base = split ? threadNav : nav
+    let key = threadRoute.params.id
+    if row.kind == "environment"
+      if addRoute == "addProjectNew"
+        addFlow = AddFlow(addFlow, targetId=row.id)
+      else
+        addFlow = AddFlow(addFlow, environmentId=row.id)
+    else if row.kind == "source"
+      let target = match addView.source.environmentId { case some(id) => id, case none => "" }
+      if row.id == "new"
+        addFlow = AddFlow(addFlow, targetId=target, name="", publish=false, publishProvider="", error="", errorRoute="")
+        nav = push(base, path("addProjectNew", key))
+      else if row.id == "local"
+        addNavigating = ""
+        addFlow = AddFlow(addFlow, targetId=target, path="", previousPath="", pathEdited=false, error="", errorRoute="")
+        nav = push(base, path("addProjectLocal", key))
+      else
+        addFlow = AddFlow(addFlow, targetId=target, repositoryText="", error="", errorRoute="")
+        nav = push(base, path("addProjectRepository", key, row.id))
+    else if row.kind == "folder" or row.kind == "browse-up"
+      addNavigating = row.path
+      send addFolderOpened = openAddFolder(addView.environmentId, row.browsePath, row.path)
+    else if row.kind == "publish"
+      addFlow = AddFlow(addFlow, publish=not addFlow.publish)
+    else if row.kind == "publish-target"
+      addFlow = AddFlow(addFlow, publishProvider=row.id)
+    else if row.kind == "existing"
+      nav = back(nav)
+
+  action toggleAddPublish(id: string, on: bool)
+    addFlow = AddFlow(addFlow, publish=on)
+
+  action editAddRepository(value: string)
+    addFlow = AddFlow(addFlow, repositoryText=value)
+
+  action editAddPath(value: string)
+    addNavigating = ""
+    addFlow = AddFlow(addFlow, previousPath=addFlow.path, path=value, pathEdited=true)
+
+  action editAddName(value: string)
+    addFlow = AddFlow(addFlow, name=value)
+
+  action seedAddPath
+    if not addFlow.pathEdited and addView.pathSeed != ""
+      addFlow = AddFlow(addFlow, path=addView.pathSeed, previousPath=addView.pathSeed)
+
+  action cleanAddPath
+    if addView.pathRaw == addFlow.path
+      addFlow = AddFlow(addFlow, path=addView.pathText, previousPath=addView.pathText)
+
+  action afterAddFolderOpened
+    match addFolderOpened
+      case some(reply)
+        if addNavigating == reply.path
+          addNavigating = ""
+          addFlow = AddFlow(addFlow, previousPath=addFlow.path, path=reply.path, pathEdited=true)
+      case none
+        nav = nav
+
+  action submitAddRepository
+    if not addSubmitting and addView.repository.buttonEnabled
+      addFlow = AddFlow(addFlow, routeId=`${threadRoute.id}`, error="", errorRoute="")
+      send repositoryLooked = lookupAddRepository(addView.environmentId, addSource, addFlow.repositoryText)
+
+  action afterRepositoryLookup
+    match repositoryLooked
+      case some(reply)
+        if `${threadRoute.id}` == addFlow.routeId
+          if reply.ok
+            addNavigating = ""
+            addFlow = AddFlow(addFlow, remoteUrl=reply.remoteUrl, repositoryTitle=reply.repositoryTitle, repositoryName=reply.repositoryName, path="", previousPath="", pathEdited=false, error="", errorRoute="")
+            nav = push(split ? threadNav : nav, path("addProjectDestination", threadRoute.params.id, addSource))
+          else
+            addFlow = AddFlow(addFlow, error=reply.error, errorRoute=addRoute)
+      case none
+        nav = nav
+
+  action submitAddProject
+    if not addSubmitting and addView.environmentId != ""
+      if addRoute == "addProjectLocal" and addView.local.buttonEnabled
+        addFlow = AddFlow(addFlow, routeId=`${threadRoute.id}`, error="", errorRoute="")
+        send projectAdded = addLocalProject(addView.environmentId, addFlow.path, time.epochAtZero + performanceNow())
+      else if addRoute == "addProjectNew" and addView.newProject.buttonEnabled
+        addFlow = AddFlow(addFlow, routeId=`${threadRoute.id}`, error="", errorRoute="")
+        send projectAdded = createAddProject(addView.environmentId, addFlow.name, match addView.newProject.publish { case some(choice) => choice.provider, case none => "" }, time.epochAtZero + performanceNow())
+      else if addRoute == "addProjectDestination" and addView.destination.buttonEnabled
+        addFlow = AddFlow(addFlow, routeId=`${threadRoute.id}`, error="", errorRoute="")
+        send projectAdded = cloneAddProject(addView.environmentId, addFlow.path, addFlow.remoteUrl, time.epochAtZero + performanceNow())
+
+  action afterProjectAdded
+    match projectAdded
+      case some(reply)
+        let here = `${threadRoute.id}` == addFlow.routeId
+        if reply.alertTitle != ""
+          taskAlertTitle = reply.alertTitle
+          taskAlertBody = reply.alertBody
+          showModal("task-alert")
+        if here and (reply.clearName or reply.error != "")
+          addFlow = AddFlow(addFlow, name=(reply.clearName ? "" : addFlow.name), error=reply.error, errorRoute=(reply.error != "" ? addRoute : ""))
+        if reply.publishProvider != ""
+          send appAccessChecked = publishAddRepository(reply.environmentId, reply.publishCwd, reply.publishProvider, reply.publishRepository, reply.publishLabel)
+        else if reply.remoteUrl != ""
+          send appAccessChecked = checkAddAppAccess(reply.environmentId, reply.remoteUrl)
+        if reply.ok
+          persistDraft(reply.draft)
+          send taskPrefsSaved = rememberTaskProject(reply.environmentId, reply.projectId)
+          if here
+            blur()
+            nav = replace(go(split ? threadNav : nav, path("thread", addFlow.draftKey)), path("thread", reply.key))
+      case none
+        nav = nav
+
+  action afterAppAccess
+    match appAccessChecked
+      case some(reply)
+        if reply.show and reply.url == ""
+          taskAlertTitle = reply.title
+          taskAlertBody = reply.body
+          showModal("task-alert")
+        else if reply.show
+          appAccessTitle = reply.title
+          appAccessBody = reply.body
+          appAccessUrl = reply.url
+          showModal("app-access")
+      case none
+        nav = nav
+
+  action installAppAccess
+    openURL(appAccessUrl)
+
+  action actOnClone(kind: string)
+    if not pending(cloneActed) and newTask.projectId != ""
+      send cloneActed = runProjectCloneAction(kind, newTask.environmentId, newTask.projectId)
+
+  action afterCloneAction
+    match cloneActed
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = reply.alertTitle
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        else if reply.removed and activeDraftKey != "" and stampProject(threadDraft(savedDrafts, draftEdits, activeDraftKey)) == reply.projectId
+          nav = go(split ? threadNav : nav, "/")
+      case none
+        nav = nav

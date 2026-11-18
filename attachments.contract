@@ -4,6 +4,34 @@ shape ThreadDraft
   revision: number
   attachments: DraftAttachment[]
   pendingSend: option<PendingSend>
+  task: option<TaskStamp>
+
+shape WorkspacePick
+  mode: string
+  branch: option<string>
+  worktreePath: option<string>
+  startFromOrigin: option<bool>
+  followsCurrentCheckout: bool
+
+shape TaskStamp
+  environmentId: string
+  projectId: string
+  createdAt: string
+  cloning: bool
+  workspace: option<WorkspacePick>
+
+shape LaunchPlan
+  threadId: string
+  projectId: string
+  projectTitle: string
+  title: string
+  runtimeMode: string
+  interactionMode: string
+  strategy: string
+  branch: option<string>
+  baseRef: option<string>
+  worktreePath: option<string>
+  startFromOrigin: bool
 
 
 shape AttachmentReply
@@ -51,6 +79,8 @@ shape PendingSend
   selection: string
   approval: string
   state: string
+  error: string
+  launch: option<LaunchPlan>
 
 shape DraftReceipt
   id: string
@@ -331,4 +361,4 @@ fn attachmentIdentity(threadId: string, localId: string, attempt: number): strin
 fn slotIdentity(slot: AttachmentSlot): string = attachmentIdentity(slot.draftId, slot.localId, slot.attempt)
 fn uploadedVerified(verified: VerifiedAttachment[], draftId: string, item: DraftAttachment, accessKey: string): bool = verified.filter(entry => entry.draftId == draftId and entry.localId == item.localId and entry.attachmentId == item.id and entry.attempt == item.attempt and entry.accessKey == accessKey and entry.state == "ready").length > 0
 
-fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0, attachments=[], pendingSend=none) } }
+fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0, attachments=[], pendingSend=none, task=none) } }

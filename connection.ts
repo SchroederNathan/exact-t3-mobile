@@ -3,6 +3,8 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
+import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
+import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
 import {
   projectThreadStatus,
@@ -498,6 +500,11 @@ const iconHex = [
   "#ff2056",
 ];
 
+function repositoryKey(project: ObjectValue): string {
+  const identity = object(project.repositoryIdentity);
+  return string(object(identity.origin).canonicalKey) || string(identity.canonicalKey);
+}
+
 function projectIcon(project: ObjectValue) {
   const title = string(project.title).normalize("NFKC").trim();
   const words = title.match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -815,6 +822,24 @@ export function reduceGitOperation(
   return { status: "failed", operation, label: previous?.label ?? "Source control action failed", error: event.error ?? "Git action failed." };
 }
 
+export interface ListRefsWireOptions {
+  query?: string;
+  cursor?: number;
+  includeMatchingRemoteRefs?: boolean;
+  refKind?: "all" | "local" | "remote";
+  refresh?: boolean;
+  limit?: number;
+}
+
+export interface TaskProject {
+  id: string;
+  title: string;
+  workspaceRoot: string;
+  isScratch: boolean;
+  repositoryKey: string;
+  defaultModelSelection: unknown;
+}
+
 export class DirectSession {
   readonly environment: Environment;
   private readonly serial = ++sessionSerial;
@@ -844,6 +869,9 @@ export class DirectSession {
   private terminalRequests = new Map<string, { threadId: string; terminalId: string }>();
   private terminalRequestIds = new Map<string, string>();
   private shellLive = false;
+  private clonesRequest = "";
+  /** The `subscribeProjectClones` list: null until its first event, [] once the stream fails. */
+  private clones: CloneSnapshot[] | null = null;
   private transcripts = new Map<string, ThreadHistory>();
   private switchingSnapshots = new Map<string, ReturnType<typeof switchingProjection>>();
   private switching: ReturnType<typeof switchingProjection> | undefined;
@@ -947,11 +975,15 @@ export class DirectSession {
     return this.gitOperationStateByThread.get(threadId) ?? { status: "idle" };
   }
 
+  async refreshStatusAt(cwd: string, localOnly = false): Promise<GitStatus> {
+    const result = await this.query("vcs.refreshStatus", { cwd, ...(localOnly ? { localOnly } : {}) });
+    return this.normalizeGitStatus(cwd, result);
+  }
+
   async refreshGitStatus(threadId: string, localOnly = false): Promise<GitStatus> {
     const cwd = this.cwdForThread(threadId);
     try {
-      const result = await this.query("vcs.refreshStatus", { cwd, ...(localOnly ? { localOnly } : {}) });
-      const status = this.normalizeGitStatus(cwd, result);
+      const status = await this.refreshStatusAt(cwd, localOnly);
       this.gitStatusByThread.set(threadId, status);
       return status;
     } catch (error) {
@@ -979,25 +1011,21 @@ export class DirectSession {
     }
   }
 
+  pullAt(cwd: string): Promise<ObjectValue> {
+    return this.query("vcs.pull", { cwd });
+  }
+
   async pullGit(threadId: string): Promise<ObjectValue> {
-    const cwd = this.cwdForThread(threadId);
-    const result = await this.query("vcs.pull", { cwd });
+    const result = await this.pullAt(this.cwdForThread(threadId));
     await this.refreshGitStatus(threadId, true).catch(() => {});
     return result;
   }
 
-  async listGitRefs(
-    threadId: string,
-    options: {
-      query?: string;
-      cursor?: number;
-      includeMatchingRemoteRefs?: boolean;
-      refKind?: "all" | "local" | "remote";
-      refresh?: boolean;
-      limit?: number;
-    } = {},
-  ): Promise<ObjectValue> {
-    const cwd = this.cwdForThread(threadId);
+  listGitRefs(threadId: string, options: ListRefsWireOptions = {}): Promise<ObjectValue> {
+    return this.listRefsAt(this.cwdForThread(threadId), options);
+  }
+
+  listRefsAt(cwd: string, options: ListRefsWireOptions = {}): Promise<ObjectValue> {
     return this.query("vcs.listRefs", {
       cwd,
       ...(options.query ? { query: options.query } : {}),
@@ -1011,9 +1039,12 @@ export class DirectSession {
     });
   }
 
+  switchRefAt(cwd: string, refName: string): Promise<ObjectValue> {
+    return this.query("vcs.switchRef", { cwd, refName });
+  }
+
   async switchGitRef(threadId: string, refName: string): Promise<ObjectValue> {
-    const cwd = this.cwdForThread(threadId);
-    const result = await this.query("vcs.switchRef", { cwd, refName });
+    const result = await this.switchRefAt(this.cwdForThread(threadId), refName);
     await this.refreshGitStatus(threadId, true).catch(() => {});
     return result;
   }
@@ -1417,10 +1448,10 @@ export class DirectSession {
   }
 
   async inspect(threadId: string, kind: string, path: string): Promise<Inspection> {
-    const shell = this.shells.get(threadId);
-    if (!shell) throw new Error("This thread is no longer available.");
-    const project = this.projects.get(string(shell.projectId));
-    const cwd = string(shell.worktreePath) || string(project?.workspaceRoot);
+    return this.inspectAt(this.cwdForThread(threadId), kind, path);
+  }
+
+  async inspectAt(cwd: string, kind: string, path: string): Promise<Inspection> {
     if (!cwd) throw new Error("This thread has no available workspace.");
     if (kind === "file") {
       const result = await this.query("projects.readFile", { cwd, relativePath: path });
@@ -1522,6 +1553,8 @@ export class DirectSession {
     this.switching = undefined;
     this.threadRequest = "";
     this.configReady = false;
+    this.clonesRequest = "";
+    this.clones = null;
     this.socket = socket;
     this.environment.status = "Connected";
     this.shellRequest = this.request("orchestration.subscribeShell", {});
@@ -2325,7 +2358,7 @@ export class DirectSession {
   }
 
   async setModelFavorite(threadId: string, modelId: string, favorite: boolean): Promise<Reply> {
-    if (!this.shells.has(threadId))
+    if (!this.shells.has(threadId) && !isDraftKey(threadId))
       return { ok: false, error: "This thread is no longer available." };
     const settings = this.config.settings;
     if (!settings) return { ok: false, error: "Model favorites are still loading." };
@@ -2558,63 +2591,193 @@ export class DirectSession {
     );
   }
 
-  create(projectId: string, title: string, commandId: string, threadId: string): Promise<Reply> {
+  // New thread drafts: project facts, the draft's own settings host, scratch and launch.
+
+  threadProjectId(threadId: string): string {
+    return string(this.shells.get(threadId)?.projectId);
+  }
+
+  task(projectId: string): TaskProject | null {
     const project = this.projects.get(projectId);
-    if (!project || project.archivedAt || project.deletedAt)
-      throw new Error("Choose an available project.");
-    const settings = object(this.config.settings);
-    const overrides = object(object(settings.projectSettingsOverrides)[projectId]);
-    const providers = records(this.config.providers).filter((provider) => {
-      const override = object(object(overrides.providerInstances)[string(provider.instanceId)]);
-      return (
-        (override.enabled ?? provider.enabled) === true &&
-        provider.installed === true &&
-        object(provider.auth).status !== "unauthenticated" &&
-        provider.availability !== "unavailable"
-      );
-    });
-    const preferred = [project.defaultModelSelection, settings.defaultModelSelection]
-      .map(object)
-      .find((selection) =>
-        providers.some(
-          (provider) =>
-            provider.instanceId === selection.instanceId &&
-            records(provider.models).some(
-              (model) => model.slug === selection.model && model.isLegacy !== true,
-            ),
-        ),
-      );
-    const models = providers.flatMap((provider) =>
-      records(provider.models)
-        .filter((model) => model.isLegacy !== true)
-        .map((model) => ({
-          instanceId: string(provider.instanceId),
-          model: string(model.slug),
-          isDefault: model.isDefault === true,
-        })),
+    if (!project || project.archivedAt || project.deletedAt) return null;
+    const workspaceRoot = string(project.workspaceRoot);
+    return {
+      id: projectId,
+      title: string(project.title),
+      workspaceRoot,
+      isScratch: this.isScratch(workspaceRoot),
+      repositoryKey: repositoryKey(project),
+      defaultModelSelection: this.projectSetting(projectId, project, "defaultModelSelection"),
+    };
+  }
+
+  private isScratch(workspaceRoot: string): boolean {
+    const root = string(this.config.scratchWorkspaceRoot).replace(/[\\/]+$/, "");
+    return root !== "" && workspaceRoot.replace(/[\\/]+$/, "") === root;
+  }
+
+  private projectSetting(projectId: string, project: ObjectValue, key: string): unknown {
+    const overrides = object(object(object(this.config.settings).projectSettingsOverrides)[projectId]);
+    if (overrides[key] !== undefined && overrides[key] !== null) return overrides[key];
+    if (project[key] !== undefined && project[key] !== null) return project[key];
+    return object(this.config.settings)[key];
+  }
+
+  taskDefaults(projectId: string, projectFile: ObjectValue | null) {
+    const project = this.projects.get(projectId) ?? {};
+    const configured = this.projectSetting(projectId, project, "defaultThreadEnvMode") ?? projectFile?.defaultThreadEnvMode;
+    const workspaceRoot = string(project.workspaceRoot);
+    const newProjectsRoot = string(this.config.newProjectsRoot).replace(/[\\/]+$/, "");
+    const hasThreads = [...this.shells.values()].some(
+      (thread) => thread.projectId === projectId && !thread.deletedAt,
     );
-    const fallback = models.find((model) => model.isDefault) ?? models[0];
-    const selection =
-      preferred ??
-      (fallback ? { instanceId: fallback.instanceId, model: fallback.model } : undefined);
-    if (!selection)
-      throw new Error("Configure an available model in T3 Code before creating a thread.");
-    const id = this.request("orchestration.dispatchCommand", {
-      type: "thread.create",
-      commandId,
-      threadId,
-      projectId,
-      title: title.trim() || "New thread",
-      createdBy: "user",
+    const inNewProjectsRoot =
+      newProjectsRoot !== "" &&
+      workspaceRoot.startsWith(`${newProjectsRoot}/`) &&
+      !workspaceRoot.slice(newProjectsRoot.length + 1).includes("/");
+    const mode: "local" | "worktree" =
+      this.isScratch(workspaceRoot) ||
+      configured !== "worktree" ||
+      (inNewProjectsRoot && !hasThreads && object(object(this.config.settings).projectSettingsOverrides)[projectId] === undefined && project.defaultThreadEnvMode == null)
+        ? "local"
+        : "worktree";
+    const startFromOrigin = this.projectSetting(projectId, project, "newWorktreesStartFromOrigin");
+    return { mode, startFromOrigin: startFromOrigin !== false };
+  }
+
+  scratchReady(): boolean {
+    return string(this.config.scratchWorkspaceRoot) !== "";
+  }
+
+  configLoaded(): boolean {
+    return this.configReady;
+  }
+
+  activityByProject(): Map<string, number> {
+    const activity = new Map<string, number>();
+    for (const thread of this.shells.values()) {
+      if (thread.deletedAt || thread.archivedAt) continue;
+      const id = scopedThreadId(this.environment.id, string(thread.projectId));
+      const at = timestamp(thread.updatedAt) || timestamp(thread.createdAt);
+      activity.set(id, Math.max(activity.get(id) ?? 0, at));
+    }
+    return activity;
+  }
+
+  draftSettings(projectId: string, sticky: ModelSelection | null) {
+    const project = this.projects.get(projectId) ?? {};
+    const modelSelection = defaultModelSelection(
+      this.config,
+      this.projectSetting(projectId, project, "defaultModelSelection"),
+      sticky,
+    );
+    const runtimeMode =
+      object(this.config.settings).defaultRuntimeMode === "approval-required"
+        ? "approval-required"
+        : "full-access";
+    const thread = (id: string) => ({ id, projectId, modelSelection, runtimeMode });
+    const policy = { canSwitchProvider: true };
+    return {
+      resolved: modelSelection !== null,
+      settings: (threadId: string, staged?: ThreadSettingsSelection | null) =>
+        projectThreadSettings(this.config, thread(threadId), staged, policy),
+      stageSettings: (
+        threadId: string,
+        staged: ThreadSettingsSelection | null | undefined,
+        change: SettingsChange,
+      ) => stageThreadSettings(this.config, thread(threadId), staged, change, policy),
+      validateSettings: (threadId: string, staged?: ThreadSettingsSelection | null) =>
+        validateThreadSettings(this.config, thread(threadId), staged, policy),
+    };
+  }
+
+  async readProjectFile(cwd: string, relativePath: string): Promise<ObjectValue | null> {
+    const result = await this.query("projects.readFile", { cwd, relativePath, allowMissing: true });
+    if (result.exists === false || result.truncated === true) return null;
+    try {
+      return object(JSON.parse(string(result.contents)));
+    } catch {
+      return null;
+    }
+  }
+
+  async ensureScratch(): Promise<string> {
+    const result = await this.query("projects.ensureScratch", {});
+    const projectId = string(result.projectId);
+    if (!projectId) throw new Error("The folder for threads without a project could not be created.");
+    return projectId;
+  }
+
+  async waitForProject(projectId: string, timeoutMs: number): Promise<boolean> {
+    for (let waited = 0; !this.projects.has(projectId); waited += 100) {
+      if (waited >= timeoutMs) return false;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return true;
+  }
+
+  /** Typed calls for `project-rpc.ts`. */
+  readonly rpc: RpcSession = { query: (tag, payload) => this.query(tag, payload) };
+
+  /** Every clone this environment tracks; the first read opens the stream. */
+  projectClones(): CloneSnapshot[] | null {
+    if (!this.clonesRequest && this.socket?.readyState === 1)
+      try {
+        this.clonesRequest = this.request(PROJECT_CLONES_SUBSCRIPTION.tag, PROJECT_CLONES_SUBSCRIPTION.payload);
+      } catch {
+        this.clones ??= [];
+      }
+    return this.clones;
+  }
+
+  /** What Add Project reads from the server config. */
+  addProjectFacts(): { os: string; baseDirectory: string; newProjectsRoot: string | null; ghqCloneLayout: boolean } {
+    const settings = object(this.config.settings);
+    return {
+      os: string(object(object(this.config.environment).platform).os),
+      baseDirectory: string(settings.addProjectBaseDirectory),
+      newProjectsRoot: typeof this.config.newProjectsRoot === "string" ? this.config.newProjectsRoot : null,
+      ghqCloneLayout: settings.ghqCloneLayout === true,
+    };
+  }
+
+  projectRecords(): { id: string; title: string; workspaceRoot: string; archived: boolean }[] {
+    return [...this.projects.values()]
+      .filter((project) => !project.deletedAt)
+      .map((project) => ({
+        id: string(project.id),
+        title: string(project.title),
+        workspaceRoot: string(project.workspaceRoot),
+        archived: Boolean(project.archivedAt),
+      }));
+  }
+
+  launchThread(
+    plan: LaunchPlan,
+    message: { commandId: string; messageId: string; text: string; attachments: StoredAttachment[] },
+    modelSelection: ModelSelection,
+  ): Promise<{ ok: boolean; error: string; state: string }> {
+    const threadId = threadIdentity(plan.threadId).threadId;
+    return this.query("orchestration.launchThread", {
+      commandId: message.commandId,
       creationSource: "mobile",
-      modelSelection: selection,
-      runtimeMode:
-        settings.defaultRuntimeMode === "approval-required" ? "approval-required" : "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-    });
-    return new Promise((resolve) => this.replies.set(id, resolve));
+      threadId,
+      projectId: threadIdentity(plan.projectId).threadId,
+      title: plan.title,
+      generateTitle: true,
+      modelSelection,
+      runtimeMode: plan.runtimeMode,
+      interactionMode: plan.interactionMode,
+      workspaceStrategy: launchWorkspaceStrategy(plan),
+      initialMessage: { messageId: message.messageId, text: message.text, attachments: message.attachments },
+    }).then(
+      () => ({ ok: true, error: "", state: "accepted" }),
+      (error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "The thread could not be started.",
+        state: error instanceof RpcFailure ? "rejected" : "unknown",
+      }),
+    );
   }
 
   disconnected(reason: string, status = reason) {
@@ -2631,6 +2794,7 @@ export class DirectSession {
     this.terminalRequests.clear();
     this.terminalRequestIds.clear();
     this.terminalOutputStates.clear();
+    this.clonesRequest = "";
     this.socket = undefined;
     this.gitOperations.clear();
     this.gitStatusByThread.clear();
@@ -2728,6 +2892,15 @@ export class DirectSession {
         (entry) => entry.requestId !== "" && entry.requestId === id,
       );
       if (frame._tag === "Chunk") {
+        if (id === this.clonesRequest) {
+          const values = Array.isArray(frame.values) ? frame.values : [];
+          if (values.length > 0)
+            try {
+              this.clones = parseProjectClones(values[values.length - 1]);
+            } catch {
+              this.clones = [];
+            }
+        }
         for (const item of records(frame.values)) {
           const git = this.gitOperations.get(id);
           if (git) this.gitProgress(git, item);
@@ -2762,6 +2935,10 @@ export class DirectSession {
         this.socket?.send(JSON.stringify({ _tag: "Ack", requestId: frame.requestId }));
       } else if (frame._tag === "Exit") {
         if (id === this.shellRequest) this.shellLive = false;
+        if (id === this.clonesRequest) {
+          this.clonesRequest = "";
+          this.clones ??= [];
+        }
         const threadEnded = id === this.threadRequest;
         if (threadEnded) {
           this.switching = undefined;
@@ -2783,8 +2960,8 @@ export class DirectSession {
         }
         const query = this.queries.get(id);
         this.queries.delete(id);
-        if (error)
-          query?.reject(new RpcFailure(error, string(object(records(exit.cause)[0]?.error)._tag)));
+        const cause = object(records(exit.cause)[0]?.error);
+        if (error) query?.reject(new RpcFailure(error, string(cause._tag), cause));
         else query?.resolve(object(exit.value));
         const projectId = this.faviconRequests.get(id);
         if (projectId) {
@@ -2960,11 +3137,23 @@ export class DirectSession {
   projectList(): Catalog["projects"] {
     return [...this.projects.entries()]
       .filter(([, project]) => !project.archivedAt && !project.deletedAt)
-      .map(([id, project]) => ({
-        id: scopedThreadId(this.environment.id, id),
-        title: string(project.title),
-        environmentId: this.environment.id,
-      }));
+      .map(([id, project]) => {
+        const icon = projectIcon(project);
+        const favicon = !project.projectIcon ? (this.favicons.get(id)?.url ?? "") : "";
+        return {
+          id: scopedThreadId(this.environment.id, id),
+          title: string(project.title),
+          environmentId: this.environment.id,
+          workspaceRoot: string(project.workspaceRoot),
+          isScratch: this.isScratch(string(project.workspaceRoot)),
+          pinned: Boolean(project.pinnedAt),
+          updatedAt: timestamp(project.updatedAt) || timestamp(project.createdAt),
+          repositoryKey: repositoryKey(project),
+          faviconUrl: favicon,
+          monogram: icon.projectInitials,
+          monogramColor: icon.projectIconColor,
+        };
+      });
   }
 
   threadStatus(threadId: string, nowMs: number, stopping: boolean) {

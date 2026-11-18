@@ -282,7 +282,8 @@ final class T3NativeModule: ExactModule {
         item.style = .editor
         if #available(iOS 27.2, *) { item.titleAlignment = .leading }
       }
-      guard style != "editor" else { return }
+      let toolbarSearch = route.data[.searchPlacement] == "toolbar"
+      guard style != "editor" || toolbarSearch else { return }
       if style == "brand" {
         let title = item.titleView as? WorkspaceBrandTitleView ?? WorkspaceBrandTitleView(frame: .zero)
         let searchButtonCount = item.searchController != nil && route.data[.searchPlacement] != "integrated" ? 1 : 0
@@ -299,7 +300,7 @@ final class T3NativeModule: ExactModule {
         search.searchBar.autocapitalizationType = .none
         item.hidesSearchBarWhenScrolling = false
         if #available(iOS 26.0, *) {
-          let integrated = route.data[.searchPlacement] == "integrated" || style == "settings-sheet"
+          let integrated = route.data[.searchPlacement] == "integrated" || toolbarSearch || style == "settings-sheet"
           item.preferredSearchBarPlacement = integrated ? .integrated : .integratedButton
           item.searchBarPlacementAllowsToolbarIntegration = integrated
           let placement = item.searchBarPlacementBarButtonItem

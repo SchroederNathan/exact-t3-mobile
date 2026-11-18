@@ -98,6 +98,10 @@ export class ComposerSettings {
     return this.drafts.get(id);
   }
 
+  forget(id: string) {
+    this.drafts.delete(id);
+  }
+
   resolve(id: string, threadId: string, session: Session): ThreadSettingsSelection | undefined {
     const draft = this.selection(id);
     if (!draft || draft.threadId !== threadId) return;

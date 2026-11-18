@@ -1,5 +1,6 @@
 import type { Storage } from "./app.contract.d.ts";
 import type { ModelSelection } from "./thread-settings";
+import { isDraftKey } from "./new-task";
 
 export type ModelDraftSelection = {
   threadId: string;
@@ -44,6 +45,7 @@ function isModelDraft(value: unknown): value is ModelDraft {
     )
       return false;
   }
+  if (isDraftKey(value.id)) return selection.threadId === value.id;
   const separator = value.id.indexOf(":");
   if (separator < 1) return false;
   try {

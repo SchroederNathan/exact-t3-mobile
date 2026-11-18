@@ -32,8 +32,8 @@ members T3Code
   state controlRetry = 0
   state stopSubmissionKey = ""
   derive threadControls = match first(catalog.threads.filter(thread => thread.id == activeThreadId)) { case some(thread) => thread.controls, case none => noControls() }
-  derive controlEnvironmentId = match first(catalog.threads.filter(thread => thread.id == activeThreadId)) { case some(thread) => thread.environmentId, case none => "" }
-  resource controlAccess = loadControlAccess(controlEnvironmentId, threadControls.accessKey, controlRetry) as shape ControlAccess else empty()
+  derive controlEnvironmentId = activeDraftKey != "" ? newTask.environmentId : match first(catalog.threads.filter(thread => thread.id == activeThreadId)) { case some(thread) => thread.environmentId, case none => "" }
+  resource controlAccess = loadControlAccess(controlEnvironmentId, threadControls.accessKey, controlRetry, activeDraftKey != "") as shape ControlAccess else empty()
   mutation controlSent as shape ControlReply queue refreshes catalog then afterControl
   mutation stopSent as shape ControlReply refreshes catalog
   derive controlsAllowed = threadControls.ready and not pending(controlAccess) and not failed(controlAccess) and controlAccess.key == threadControls.accessKey and controlAccess.allowed

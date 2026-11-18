@@ -6,6 +6,7 @@ import { ActivityFixture } from "./activity-fixture";
 import { AttachmentFixture } from "./attachment-fixture";
 import { ControlsFixture } from "./controls-fixture";
 import { MarkdownFixture } from "./markdown-fixture";
+import { projectFixture } from "./project-fixture";
 
 const app = NodePath.resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
@@ -285,6 +286,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         const assertion = assertions(path, request.signal);
         if (assertion) return assertion;
       }
+      if (path === "/api/auth/session" && !controls && !attachments) {
+        return json({
+          authenticated: true,
+          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read"],
+        });
+      }
       if (path === "/.well-known/t3/environment") {
         return json({
           environmentId: id,
@@ -358,7 +365,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           attachments?.receive(socket, frame) ||
           controls?.receive(socket, frame) ||
           markdown?.receive(socket, frame) ||
-          activities?.receive(socket, frame)
+          activities?.receive(socket, frame) ||
+          projectFixture(id).receive(socket, frame)
         ) {
           changed();
           return;

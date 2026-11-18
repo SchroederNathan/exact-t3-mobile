@@ -1476,7 +1476,7 @@ describe("direct T3 connection", () => {
     );
     expect(session.environment.machineSymbol).toBe("macmini");
     expect(session.projectList()).toEqual([
-      { id: "env:p", title: "T3 Code", environmentId: "env" },
+      expect.objectContaining({ id: "env:p", title: "T3 Code", environmentId: "env", isScratch: false }),
     ]);
     for (const id of ["child", "side", "archived"]) {
       session.select(id);
@@ -1858,30 +1858,46 @@ describe("direct T3 connection", () => {
         ],
       }),
     );
-    const created = session.create("p", "New thread", "create-command", "new-thread");
-    const createRequest = JSON.parse(sent.at(-1)!);
-    expect(createRequest.payload).toEqual({
-      type: "thread.create",
-      commandId: "create-command",
+    const launched = session.launchThread(
+      {
+        threadId: "env:new-thread",
+        projectId: "env:p",
+        projectTitle: "Project",
+        title: "Fix the login",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        strategy: "worktree",
+        branch: "t3/0a1b2c3d",
+        baseRef: "main",
+        worktreePath: null,
+        startFromOrigin: true,
+      },
+      { commandId: "launch-command", messageId: "message-1", text: "Fix the login", attachments: [] },
+      { instanceId: "test", model: "model" },
+    );
+    const launchRequest = JSON.parse(sent.at(-1)!);
+    expect(launchRequest.tag).toBe("orchestration.launchThread");
+    expect(launchRequest.payload).toEqual({
+      commandId: "launch-command",
+      creationSource: "mobile",
       threadId: "new-thread",
       projectId: "p",
-      title: "New thread",
-      createdBy: "user",
-      creationSource: "mobile",
+      title: "Fix the login",
+      generateTitle: true,
       modelSelection: { instanceId: "test", model: "model" },
       runtimeMode: "full-access",
       interactionMode: "default",
-      branch: null,
-      worktreePath: null,
+      workspaceStrategy: { type: "worktree", baseRef: "main", branch: "t3/0a1b2c3d", startFromOrigin: true },
+      initialMessage: { messageId: "message-1", text: "Fix the login", attachments: [] },
     });
     session.receive(
       JSON.stringify({
         _tag: "Exit",
-        requestId: createRequest.id,
-        exit: { _tag: "Success", value: { sequence: 3 } },
+        requestId: launchRequest.id,
+        exit: { _tag: "Success", value: { threadId: "new-thread", resumed: false } },
       }),
     );
-    await expect(created).resolves.toEqual({ ok: true, error: "" });
+    await expect(launched).resolves.toEqual({ ok: true, error: "", state: "accepted" });
     session.receive(
       JSON.stringify({
         _tag: "Chunk",

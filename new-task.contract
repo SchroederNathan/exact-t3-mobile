@@ -1,0 +1,437 @@
+use ThreadDraft, TaskStamp, WorkspacePick, LaunchPlan, PendingSend from "./attachments.contract"
+
+shape NewTaskView
+  key: string
+  phase: string
+  environmentId: string
+  projectId: string
+  rootCwd: string
+  cwd: string
+  isScratch: bool
+  heroKind: string
+  question: string
+  projectLabel: string
+  environmentLabel: string
+  environmentSymbol: string
+  environmentOnline: bool
+  environmentA11y: string
+  contextVisible: bool
+  workspaceVisible: bool
+  workspaceLabel: string
+  workspaceIcon: string
+  workspaceDisabled: bool
+  workspaceHint: string
+  workspaceNext: string
+  branchVisible: bool
+  branchLabel: string
+  branchA11y: string
+  branchDisabled: bool
+  branchPickerTitle: string
+  sendBlockedReason: string
+  clonePhase: string
+  cloneTitle: string
+  cloneDetail: string
+  placeholder: string
+  canReadFiles: bool
+  mode: string
+  branch: string
+  worktreePath: string
+  startFromOrigin: bool
+  currentBranch: string
+  isRepo: bool
+
+shape ProjectChoice
+  key: string
+  environmentId: string
+  projectId: string
+  title: string
+  subtitle: string
+  faviconUrl: string
+  monogram: string
+  monogramColor: string
+
+shape ProjectChoices
+  key: string
+  hasReadyEnvironment: bool
+  scratchVisible: bool
+  scratchEnabled: bool
+  scratchEnvironmentId: string
+  emptyTitle: string
+  emptyDetail: string
+  emptySpinner: bool
+  emptyAction: string
+  noMatch: bool
+  items: ProjectChoice[]
+
+shape EnvironmentChoice
+  id: string
+  label: string
+  machineSymbol: string
+  phase: string
+  statusText: string
+  selected: bool
+
+shape BranchRow
+  key: string
+  name: string
+  badge: string
+  selected: bool
+  isRemote: bool
+  current: bool
+  worktreePath: string
+
+shape BranchChoices
+  key: string
+  rows: BranchRow[]
+  hasMore: bool
+  error: string
+  message: string
+
+shape HomeDraftRow
+  key: string
+  kind: string
+  title: string
+  threadId: string
+  branch: string
+  environmentLabel: string
+  machineSymbol: string
+  faviconUrl: string
+  monogram: string
+  monogramColor: string
+
+shape Composed
+  ok: bool
+  error: string
+  key: string
+  draft: ThreadDraft
+
+shape Retargeted
+  ok: bool
+  error: string
+  alertTitle: string
+  draft: ThreadDraft
+
+shape TaskReply
+  ok: bool
+  error: string
+
+shape BranchCheckout
+  ok: bool
+  error: string
+  key: string
+  branch: string
+  worktreePath: string
+
+fn isDraftKey(id: string): bool = id.startsWith("new-task~") and not id.includes(":")
+fn mergeDrafts(saved: ThreadDraft[], edits: ThreadDraft[]): ThreadDraft[] = edits.concat(saved.filter(draft => edits.filter(edit => edit.id == draft.id).length == 0))
+fn launchThreadId(draft: ThreadDraft): string = match draft.pendingSend { case some(message) => match message.launch { case some(plan) => plan.threadId, case none => "" }, case none => "" }
+fn launchState(draft: ThreadDraft): string = match draft.pendingSend { case some(message) => message.launch != none ? message.state : "", case none => "" }
+fn launchOf(drafts: ThreadDraft[], threadId: string): option<ThreadDraft> = threadId == "" ? none : first(drafts.filter(draft => launchThreadId(draft) == threadId))
+fn launchError(drafts: ThreadDraft[], threadId: string): string = match launchOf(drafts, threadId) { case some(draft) => match draft.pendingSend { case some(message) => message.error, case none => "" }, case none => "" }
+fn launchText(drafts: ThreadDraft[], threadId: string): string = match launchOf(drafts, threadId) { case some(draft) => match draft.pendingSend { case some(message) => message.text, case none => "" }, case none => "" }
+fn launchTitle(drafts: ThreadDraft[], threadId: string): string = match launchOf(drafts, threadId) { case some(draft) => match draft.pendingSend { case some(message) => match message.launch { case some(plan) => plan.title, case none => "" }, case none => "" }, case none => "" }
+fn launchStrategy(drafts: ThreadDraft[], threadId: string): string = match launchOf(drafts, threadId) { case some(draft) => match draft.pendingSend { case some(message) => match message.launch { case some(plan) => plan.strategy, case none => "" }, case none => "" }, case none => "" }
+fn launching(drafts: ThreadDraft[], threadId: string): bool = match launchOf(drafts, threadId) { case some(draft) => launchState(draft) != "accepted", case none => false }
+fn routeMode(drafts: ThreadDraft[], live: bool, id: string): string = isDraftKey(id) ? "draft" : match launchOf(drafts, id) { case some(draft) => launchState(draft) == "rejected" ? "failed" : launchState(draft) == "accepted" and live ? "live" : "preparing", case none => "live" }
+fn stampProject(draft: ThreadDraft): string = match draft.task { case some(stamp) => stamp.projectId, case none => "" }
+fn stampEnvironment(draft: ThreadDraft): string = match draft.task { case some(stamp) => stamp.environmentId, case none => "" }
+fn retargeted(draft: ThreadDraft, environmentId: string, projectId: string, createdAt: string): ThreadDraft = ThreadDraft(draft, revision=draft.revision + 1, task=some(TaskStamp(environmentId=environmentId, projectId=projectId, createdAt=(match draft.task { case some(stamp) => stamp.createdAt, case none => createdAt }), cloning=false, workspace=(match draft.task { case some(stamp) => stamp.projectId == projectId ? stamp.workspace : none, case none => none }))))
+fn withWorkspace(draft: ThreadDraft, pick: WorkspacePick): ThreadDraft = ThreadDraft(draft, revision=draft.revision + 1, task=(match draft.task { case some(stamp) => some(TaskStamp(stamp, workspace=some(pick))), case none => none }))
+fn currentPick(draft: ThreadDraft, view: NewTaskView): WorkspacePick = match draft.task { case some(stamp) => match stamp.workspace { case some(pick) => pick, case none => WorkspacePick(mode=view.mode, branch=none, worktreePath=none, startFromOrigin=none, followsCurrentCheckout=false) }, case none => WorkspacePick(mode=view.mode, branch=none, worktreePath=none, startFromOrigin=none, followsCurrentCheckout=false) }
+fn toggledPick(draft: ThreadDraft, view: NewTaskView): WorkspacePick = WorkspacePick(mode=view.workspaceNext, branch=(view.workspaceNext == "local" and view.currentBranch != "" ? some(view.currentBranch) : none), worktreePath=none, startFromOrigin=currentPick(draft, view).startFromOrigin, followsCurrentCheckout=(view.workspaceNext == "local" and view.currentBranch == ""))
+fn branchPick(draft: ThreadDraft, view: NewTaskView, name: string, worktreePath: string): WorkspacePick = WorkspacePick(currentPick(draft, view), mode=view.mode, branch=some(name), worktreePath=(view.mode == "local" and worktreePath != "" and worktreePath != view.rootCwd ? some(worktreePath) : none), followsCurrentCheckout=false)
+fn clearedDraft(draft: ThreadDraft): ThreadDraft = ThreadDraft(draft, revision=draft.revision + 1, text="", attachments=[], pendingSend=none, task=(match draft.task { case some(stamp) => some(TaskStamp(stamp, workspace=none)), case none => none }))
+
+component InlineControl
+  props
+    icon: string
+    label: string
+    chevron: bool
+    disabled: bool
+    accessibilityLabel: string
+    accessibilityHint: string
+    maxWidth: string
+    offline: bool
+    press: action
+    testId: string
+  view
+    button press=press disabled=disabled appearance="none" display="flex" flex-direction="row" align-items="center" gap=7 height=44 padding="0 7px" border-radius=10.5 min-width=0 flex-shrink=1 max-width=maxWidth opacity=(disabled ? 0.45 : 1) color="icon-muted" aria-label=accessibilityLabel aria-description=accessibilityHint testId=testId
+      if icon == "folder-branch"
+        view position="relative" width=16 height=16 flex-shrink=0
+          image "symbol:sf/folder" width=16 height=16 font-size=16 color="icon-muted"
+          view position="absolute" right=-2.7 bottom=-3.3 width=9 height=9
+            GitBranchIcon(size=9)
+      else if icon == "arrow.triangle.branch"
+        GitBranchIcon(size=16)
+      else
+        image `symbol:sf/${icon}` width=16 height=16 font-size=16 flex-shrink=0 color="icon-muted"
+      text label font-size=14 line-height="19px" font-weight=500 color="muted" line-clamp=1 min-width=0 flex-shrink=1
+      if offline
+        view width=6 height=6 border-radius=3 background-color="danger" flex-shrink=0
+      if chevron
+        image "symbol:sf/chevron.right" width=10 height=10 font-size=10 flex-shrink=0 color="icon-muted"
+
+component EnvironmentControl
+  props
+    view: NewTaskView
+    press: action
+  view
+    button press=press appearance="none" display="flex" flex-direction="row" align-items="center" gap=5.25 padding="7px 10.5px" border-radius=10.5 min-width=0 aria-label=view.environmentA11y testId="draft-environment"
+      image `symbol:sf/${view.environmentSymbol}` width=13 height=13 font-size=13 flex-shrink=0 color="icon-muted"
+      text `on ${view.environmentLabel}` font-size=14 line-height="19px" color="muted" line-clamp=1 flex-shrink=1 min-width=0
+      image "symbol:sf/chevron.right" width=11 height=11 font-size=11 flex-shrink=0 color="icon-muted"
+      if not view.environmentOnline
+        view width=6 height=6 border-radius=3 background-color="danger" flex-shrink=0
+
+component DraftHero
+  props
+    view: NewTaskView
+    openProject: action
+    openEnvironment: action
+  view
+    column min-height="100%" box-sizing="border-box" padding="24px 0 57px" testId="draft-hero"
+      view flex=1
+      if view.heroKind == "scratch"
+        column align-items="center" gap=7 padding="0 21px"
+          text view.question font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" text-align="center" testId="draft-question"
+          row flex-wrap="wrap" justify-content="center" align-items="center" column-gap=3.5
+            InlineControl(icon="folder", label="No project", chevron=true, disabled=false, accessibilityLabel="Project: No project", accessibilityHint="", maxWidth="100%", offline=false, press=openProject, testId="draft-no-project")
+            EnvironmentControl(view=view, press=openEnvironment)
+      else
+        column align-items="center" gap=21 padding="0 21px"
+          column width="100%" align-items="center" gap=5.25
+            text view.question font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" text-align="center" testId="draft-question"
+            row justify-content="center" align-items="flex-end" max-width="100%"
+              text "in " font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" white-space="pre"
+              button press=openProject appearance="none" min-width=0 max-width=250 padding-bottom=1.33 border-bottom="1px solid muted" aria-label=`Project, ${view.projectLabel}` testId="draft-project"
+                text view.projectLabel font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground" line-clamp=1
+              text "?" font-size=26 line-height="32px" font-weight=500 letter-spacing="-0.65px" color="foreground"
+          EnvironmentControl(view=view, press=openEnvironment)
+      view flex=2
+
+component DraftControls
+  props
+    view: NewTaskView
+    toggleWorkspace: action
+    openBranch: action
+    openProject: action
+    openEnvironment: action
+  view
+    column padding-bottom=3.5 testId="draft-controls"
+      if view.contextVisible
+        row align-items="center" gap=3.5 padding="0 7px"
+          InlineControl(icon="folder", label=view.projectLabel, chevron=true, disabled=false, accessibilityLabel=`Project: ${view.projectLabel}`, accessibilityHint="", maxWidth="100%", offline=false, press=openProject, testId="draft-context-project")
+          InlineControl(icon=view.environmentSymbol, label=view.environmentLabel, chevron=true, disabled=false, accessibilityLabel=view.environmentA11y, accessibilityHint="", maxWidth="100%", offline=not view.environmentOnline, press=openEnvironment, testId="draft-context-environment")
+      if view.workspaceVisible
+        row align-items="center" gap=3.5 padding="0 7px"
+          InlineControl(icon=view.workspaceIcon, label=view.workspaceLabel, chevron=false, disabled=view.workspaceDisabled, accessibilityLabel=view.workspaceLabel, accessibilityHint=view.workspaceHint, maxWidth="190px", offline=false, press=toggleWorkspace, testId="draft-workspace")
+          InlineControl(icon="arrow.triangle.branch", label=view.branchLabel, chevron=true, disabled=view.branchDisabled, accessibilityLabel=view.branchA11y, accessibilityHint="", maxWidth="190px", offline=false, press=openBranch, testId="draft-branch")
+
+component PreparingThread
+  props
+    text: string
+    failed: bool
+    reason: string
+    edit: action
+  view
+    column flex=1 min-height=0 padding="12px 16px" testId="preparing-thread"
+      if text != ""
+        column align-items="flex-end" width="100%"
+          column max-width="85%" padding="8.75px 12.25px" border-radius=20 background-color="bubble"
+            text text font-size=16 line-height="23px" color="foreground" user-select="text" white-space="pre-wrap" testId="preparing-message"
+      view flex=1
+      if failed
+        column gap=8.75 border-radius=20 border="1px solid border-subtle" background-color="card" padding=14 testId="launch-failed"
+          text "Could not start task" font-size=12 line-height="16px" font-weight=700 letter-spacing="1.1px" text-transform="uppercase" color="danger"
+          text reason font-size=14 line-height="21px" color="foreground" testId="launch-failed-reason"
+          text "Your prompt was kept in the project draft." font-size=13 line-height="19.5px" color="foreground"
+          row
+            button press=edit appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" border-radius=999 background-color="AccentColor" color="white" testId="edit-task"
+              text "Edit task" font-size=16 font-weight=500
+
+component ProjectMark
+  props
+    faviconUrl: string
+    monogram: string
+    color: string
+    size: number
+  view
+    if faviconUrl != ""
+      image faviconUrl width=size height=size border-radius=(size * 0.16) object-fit="contain"
+    else if monogram != ""
+      text monogram width=size height=size line-height=`${size}px` border-radius=(size * 0.25) font-family="Menlo" font-size=(monogram.length == 1 ? size * 0.6 : size * 0.515625) font-weight=700 color=color background-color=`${color}22` text-align="center" overflow="hidden"
+    else
+      image "symbol:sf/folder.fill" width=size height=size color="icon-muted"
+
+component ProjectPicker
+  props
+    scrollId: string
+    choices: ProjectChoices
+    busy: bool
+    pick: action
+    startScratch: action
+    addProject: action
+    addEnvironment: action
+  view
+    scroll id=scrollId flex=1 min-height=0 overscroll-behavior="auto" background-color="screen" testId="project-choices"
+      column gap=12 padding="8px 20px 36px"
+        if choices.scratchVisible and choices.items.length > 0
+          column border-radius=24 background-color="card" overflow="hidden"
+            button press=startScratch disabled=(not choices.scratchEnabled or busy) appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 padding="12.25px 14px" background-color="card" text-align="left" opacity=(choices.scratchEnabled ? 1 : 0.45) aria-label="No project, Start a task without a project" testId="project-scratch"
+              row width=24.5 height=24.5 align-items="center" justify-content="center" flex-shrink=0
+                image "symbol:sf/text.bubble" width=18 height=18 font-size=18 color="icon-muted"
+              column flex=1 min-width=0
+                text "No project" font-size=16 line-height="22px" font-weight=700 color="foreground"
+                text "Start a task without a project" font-size=13 line-height="18px" color="muted" line-clamp=1
+              image "symbol:sf/chevron.right" width=14 height=14 font-size=14 flex-shrink=0 color="chevron"
+        if choices.items.length > 0
+          column border-radius=24 background-color="card" overflow="hidden"
+            for item, index in choices.items key=item.key
+              button press=pick(item.environmentId, item.projectId) disabled=busy appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 padding="12.25px 14px" background-color="card" border-top=(index > 0 ? "1px solid border-subtle" : "none") text-align="left" aria-label=`${item.title}, ${item.subtitle}` testId=`project-choice-${item.title}`
+                row width=24.5 height=24.5 align-items="center" justify-content="center" flex-shrink=0
+                  ProjectMark(faviconUrl=item.faviconUrl, monogram=item.monogram, color=item.monogramColor, size=20)
+                column flex=1 min-width=0
+                  text item.title font-size=16 line-height="22px" font-weight=700 color="foreground" line-clamp=1
+                  text item.subtitle font-size=13 line-height="18px" color="muted" line-clamp=1
+                image "symbol:sf/chevron.right" width=14 height=14 font-size=14 flex-shrink=0 color="chevron"
+        else if choices.noMatch
+          column align-items="center" gap=7 padding="28px 21px"
+            text "No matching projects" font-size=18 line-height="23px" font-weight=700 color="foreground" text-align="center" testId="projects-no-match"
+            text "Try a different project name or workspace path." font-size=14 line-height="21px" color="muted" text-align="center"
+        else if choices.emptyTitle != ""
+          column align-items="center" gap=10.5 padding="28px 21px" border-radius=24 background-color="card" testId="projects-empty"
+            if choices.emptySpinner
+              progress width=20 height=20 color="icon-muted"
+            text choices.emptyTitle font-size=18 line-height="23px" font-weight=700 color="foreground" text-align="center" testId="projects-empty-title"
+            text choices.emptyDetail font-size=14 line-height="21px" color="muted" text-align="center"
+            if choices.emptyAction == "add-environment"
+              button press=addEnvironment appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" border-radius=999 background-color="AccentColor" color="white" testId="projects-add-environment"
+                text "Add environment" font-size=16 font-weight=500
+            if choices.emptyAction == "add-project"
+              button press=addProject appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 margin-top=3.5 padding="0 21px" border-radius=999 background-color="AccentColor" color="white" testId="projects-add-project"
+                text "Add new project" font-size=16 font-weight=500
+              if choices.scratchVisible
+                button press=startScratch disabled=(not choices.scratchEnabled or busy) appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground" testId="projects-start-scratch"
+                  text "Start without a project" font-size=16 font-weight=500
+
+component EnvironmentPicker
+  props
+    scrollId: string
+    choices: EnvironmentChoice[]
+    expanded: string
+    busy: bool
+    choose: action
+    toggle: action
+    reconnect: action
+  view
+    scroll id=scrollId flex=1 min-height=0 background-color="screen" testId="environment-choices"
+      column padding="16px 16px 32px"
+        column border-radius=14 background-color="card" overflow="hidden"
+          for choice, index in choices key=choice.id
+            column border-bottom=(index < choices.length - 1 ? "1px solid border-subtle" : "none")
+              row align-items="stretch"
+                button press=choose(choice.id) disabled=busy aria-selected=choice.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 flex=1 min-width=0 box-sizing="border-box" min-height=56 padding="10.5px 14px" text-align="left" aria-label=`${choice.label}, ${choice.statusText}` testId=`environment-choice-${choice.id}`
+                  image `symbol:sf/${choice.machineSymbol}` width=20 height=20 font-size=20 flex-shrink=0 color="icon-muted"
+                  column flex=1 min-width=0 gap=3.5
+                    text choice.label font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=1
+                    row align-items="center" gap=5.25
+                      view width=6 height=6 border-radius=3 flex-shrink=0 background-color=(choice.phase == "connected" ? "online" : choice.phase == "connecting" or choice.phase == "reconnecting" ? "status-warning" : choice.phase == "offline" or choice.phase == "error" ? "danger" : "icon-muted")
+                      text choice.statusText font-size=13 line-height="17px" color="muted" line-clamp=2
+                  if choice.selected
+                    image "symbol:checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
+                button press=toggle(choice.id) appearance="none" display="flex" align-items="center" justify-content="center" min-width=38.5 min-height=38.5 align-self="center" aria-label=(expanded == choice.id ? `Hide details for ${choice.label}` : `Show details for ${choice.label}`) testId=`environment-disclosure-${choice.id}`
+                  image (expanded == choice.id ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=13 height=13 font-size=13 color="icon-muted"
+              if expanded == choice.id
+                column gap=10.5 padding="0 14px 14px"
+                  text choice.statusText font-size=14 line-height="19px" color="muted"
+                  if choice.phase != "connected"
+                    row
+                      button press=reconnect(choice.id) appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground"
+                        text "Reconnect now" font-size=16 font-weight=500
+
+component BranchPicker
+  props
+    listId: string
+    choices: BranchChoices
+    worktree: bool
+    startFromOrigin: bool
+    busy: bool
+    loading: bool
+    choose: action
+    setStartFromOrigin: action
+    loadMore: action
+    retry: action
+  view
+    scroll id=listId flex=1 min-height=0 background-color="screen" testId="branch-choices"
+      column padding="16px 16px 72px"
+        if worktree
+          column margin-bottom=10.5 border-radius=14 overflow="hidden"
+            row align-items="center" gap=10.5 min-height=49 padding="10.5px 14px" background-color="card" box-sizing="border-box"
+              text "Start from remote" flex=1 font-size=16 line-height="23px" font-weight=500 color="foreground"
+              input type="checkbox" switch accent-color="AccentColor" checked=startFromOrigin change=setStartFromOrigin aria-label="Start from remote" testId="start-from-remote"
+        if choices.rows.length > 0
+          column border-radius=14 overflow="hidden" opacity=(busy ? 0.45 : 1)
+            for row, index in choices.rows key=row.key
+              button press=choose(row.name, row.isRemote, row.current, row.worktreePath) disabled=busy aria-selected=row.selected appearance="none" display="flex" flex-direction="row" align-items="center" gap=10.5 box-sizing="border-box" min-height=49 padding="10.5px 14px" background-color="card" border-bottom=(index < choices.rows.length - 1 ? "1px solid border-subtle" : "none") text-align="left" aria-label=(row.badge == "" ? row.name : `${row.name}, ${row.badge}`) testId=`branch-${row.name}`
+                GitBranchIcon(size=17)
+                column flex=1 min-width=0 gap=1.75
+                  text row.name font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=1
+                  if row.badge != ""
+                    text row.badge font-size=13 line-height="17px" color="muted" line-clamp=1
+                if row.selected
+                  image "symbol:checkmark" width=16 height=16 font-size=16 font-weight=600 flex-shrink=0 color="icon"
+            if choices.hasMore
+              view height=1 intersect=loadMore
+          if choices.hasMore
+            row justify-content="center" padding=12
+              progress width=18 height=18
+        else
+          column align-items="center" gap=10.5 padding="28px 14px"
+            if loading
+              progress width=20 height=20
+            text (loading ? "Loading branches…" : choices.error != "" ? choices.error : choices.message) font-size=14 line-height="19px" color="muted" text-align="center" testId="branches-message"
+            if choices.error != "" and not loading
+              button press=retry appearance="none" display="flex" align-items="center" justify-content="center" min-height=42 padding="0 21px" border-radius=999 background-color="control-secondary" color="foreground" testId="branches-retry"
+                text "Try again" font-size=16 font-weight=500
+
+component HomeDraftRowContent
+  props
+    draft: HomeDraftRow
+    sidebar: bool
+    showEnvironment: bool
+    last: bool
+  view
+    column width="100%"
+      column padding=(sidebar ? "8.75px 10.5px" : "8.75px 17.5px")
+        row align-items="flex-start" gap=7
+          row height=23 align-items="center" flex-shrink=0
+            ProjectMark(faviconUrl=draft.faviconUrl, monogram=draft.monogram, color=draft.monogramColor, size=20)
+          text draft.title flex=1 min-width=0 font-size=16 line-height="23px" font-weight=500 color="foreground" line-clamp=2 testId=`home-draft-title-${draft.key}`
+          if draft.kind == "draft"
+            row align-items="center" gap=3.5 min-height=23 flex-shrink=0
+              image "symbol:compose" width=13 height=13 font-size=13 font-weight=600 color="draft-amber"
+              text "Draft" font-size=13 line-height="17px" font-weight=700 color="draft-amber"
+        if draft.kind == "unsent"
+          text "Sends on reconnect" margin-top=3.5 padding-left=27 font-size=13 line-height="17px" color="muted"
+        if draft.branch != "" or showEnvironment
+          row align-items="center" gap=3.5 margin-top=4.5 padding-left=27 min-width=0
+            if showEnvironment
+              image `symbol:sf/${draft.machineSymbol}` width=13 height=13 font-size=13 color="muted"
+            if draft.branch != ""
+              text draft.branch font-family="Menlo" font-size=13 line-height="17px" color="muted" line-clamp=1 flex-shrink=1 min-width=0
+            if showEnvironment
+              text `${draft.branch != "" ? "  ·  " : ""}${draft.environmentLabel}` font-size=13 line-height="17px" color="muted" line-clamp=1 flex-shrink=1 min-width=0 white-space="pre"
+      if not last and not sidebar
+        view height=1 margin-left=20 background-color="border-subtle"
+
+component GitBranchIcon
+  props
+    size: number
+  view
+    svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="icon-muted" stroke-width=2 stroke-linecap="round" stroke-linejoin="round" flex-shrink=0
+      path d="M5 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"
+      path d="M5 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"
+      path d="M15 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"
+      path d="M7 8l0 8"
+      path d="M9 18h6a2 2 0 0 0 2 -2v-5"
+      path d="M14 14l3 -3l3 3"

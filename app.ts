@@ -3,7 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
-import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection } from "./drafts";
+import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection, parseLaunch, parseTaskStamp } from "./drafts";
 import { RpcFailure } from "./attachment-session";
 import { mediaSources, writeMediaData } from "./media-sources";
 import {
@@ -25,10 +25,13 @@ import {
 } from "./attachments";
 import { ComposerSettings } from "./composer-settings";
 import { loadModelDrafts, saveModelDrafts } from "./model-drafts";
+import { isDraftKey, planLaunch } from "./new-task";
+import { newTaskSources } from "./new-task-sources";
 import { controlKey } from "./thread-controls";
 import { questionAttachmentState } from "./question-attachments";
 import { ComposerSendScope, parseApprovalSend } from "./approval-send";
 import { projectTurnDiff } from "./turn-review";
+import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
@@ -46,7 +49,7 @@ import {
 } from "./connection";
 
 export const grants =
-  "fs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "fs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
@@ -395,8 +398,128 @@ async function loadCatalog(
   }
 }
 
+function allSessions(): DirectSession[] {
+  return [...[...connections.values()].map(({ session }) => session), ...(current ? [current] : [])];
+}
+
+const newTask = newTaskSources({
+  sessionFor,
+  sessions: allSessions,
+  sync: syncNativeConnections,
+  awaitReply,
+  composerSettings,
+});
+
+/** A thread's settings come from its shell; a new thread draft's from its project. */
+function settingsTarget(id: string, environmentId: string, projectId: string) {
+  if (isDraftKey(id)) return { threadId: id, session: newTask.draftHost(id, environmentId, projectId) };
+  const identity = threadIdentity(id);
+  return { threadId: identity.threadId, session: sessionFor(identity.environmentId) };
+}
+
+type PreparedSend = Result<"prepareSend">;
+
+function parsedDraft(draft: Parameters<Sources["prepareSend"]>[0][0]) {
+  return {
+    ...draft,
+    attachments: draft.attachments.map(parseDraftAttachment),
+    task: draft.task ? parseTaskStamp(draft.task) : null,
+    pendingSend: draft.pendingSend
+      ? { ...draft.pendingSend, launch: parseLaunch(draft.pendingSend.launch) }
+      : null,
+  };
+}
+
+/** A new thread draft's send: the launch plan, saved before anything goes on the wire. */
+function prepareLaunch(
+  draft: Parameters<Sources["prepareSend"]>[0][0],
+  view: Parameters<Sources["prepareSend"]>[0][2],
+): PreparedSend {
+  const refused = (error: string): PreparedSend => ({ id: draft.id, revision: draft.revision, pending: null, error });
+  try {
+    if (view.key !== draft.id || view.phase !== "ready") throw new Error("This draft is still loading.");
+    if (view.sendBlockedReason) throw new Error(view.sendBlockedReason);
+    const session = sessionFor(view.environmentId);
+    const items = draft.attachments.map(parseDraftAttachment);
+    if (!draft.text.trim() && !items.length) throw new Error("Write a message or add an attachment first.");
+    if (items.some((item) => item.state !== "uploaded"))
+      throw new Error("Wait for attachments to upload, or retry or remove failed attachments.");
+    validateAttachments(items, session.attachments.metadata().maxFileBytes, true);
+    const host = newTask.draftHost(draft.id, view.environmentId, view.projectId);
+    const picked = composerSettings.resolve(draft.id, draft.id, host) ?? host.settings(draft.id).selection;
+    const validated = host.validateSettings(draft.id, picked);
+    if (!validated.ok || !validated.selection)
+      throw new Error(validated.error || "Configure an available model in T3 Code before creating a thread.");
+    const threadUuid = crypto.randomUUID();
+    const planned = planLaunch(
+      {
+        text: draft.text.trim(),
+        attachments: items,
+        mode: view.mode === "worktree" ? "worktree" : "local",
+        branch: view.branch || null,
+        worktreePath: view.worktreePath || null,
+        startFromOrigin: view.startFromOrigin,
+        currentCheckoutBranch: view.currentBranch || null,
+        projectId: view.projectId,
+        projectTitle: view.projectLabel,
+        runtimeMode: validated.selection.runtimeMode,
+      },
+      {
+        threadId: scopedThreadId(view.environmentId, threadUuid),
+        branchHex8: crypto.randomUUID().replace(/-/g, "").slice(0, 8),
+      },
+    );
+    if (!planned.ok) throw new Error(planned.error);
+    return {
+      id: draft.id,
+      revision: draft.revision,
+      pending: {
+        commandId: crypto.randomUUID(),
+        messageId: crypto.randomUUID(),
+        revision: draft.revision + 1,
+        text: draft.text.trim(),
+        attachments: items.map(storedReference),
+        paths: items.map((item) => item.path),
+        selection: JSON.stringify({ ...validated.selection, threadId: threadUuid }),
+        approval: "",
+        state: "prepared",
+        error: "",
+        launch: planned.plan,
+      },
+      error: "",
+    };
+  } catch (error) {
+    return refused(error instanceof Error ? error.message : "The thread could not be prepared.");
+  }
+}
+
+const { draftHost: _draftHost, rememberStickyModel, refreshAfterCheckout: _refresh, ...newTaskReads } = newTask;
+
+const addProject = addProjectSources({
+  sessionFor,
+  sync: syncNativeConnections,
+  awaitReply,
+  scopes: async (environmentId, store) => {
+    const session = sessionFor(environmentId);
+    const token = credentials(store)[environmentId];
+    if (!token)
+      return { operate: false, sourceControlWrite: false, filesystemRead: false, error: "Reconnect to add projects." };
+    const response = await readJson(`${session.environment.url}/api/auth/session`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return {
+      operate: sessionScope(response, "orchestration:operate"),
+      sourceControlWrite: sessionScope(response, "source-control:write"),
+      filesystemRead: sessionScope(response, "filesystem:read"),
+      error: null,
+    };
+  },
+});
+
 const sources: Sources = {
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),
+  ...newTaskReads,
+  ...addProject,
   restoreModelSettings: async (_args, _store, storage) => {
     composerSettings.restore(await loadModelDrafts(storage));
     return { ok: true, error: "" };
@@ -405,7 +528,7 @@ const sources: Sources = {
     await saveModelDrafts(storage, composerSettings.snapshot());
     return { ok: true, error: "" };
   },
-  loadSettings: ([id], _store, _storage, native) => {
+  loadSettings: ([id, environmentId, projectId], _store, _storage, native) => {
     if (!id)
       return {
         groups: [],
@@ -420,23 +543,27 @@ const sources: Sources = {
       };
     native?.watch("connections");
     if (native?.available) syncNativeConnections(native);
-    const identity = threadIdentity(id);
-    return composerSettings.project(id, identity.threadId, sessionFor(identity.environmentId));
+    const target = settingsTarget(id, environmentId, projectId);
+    return composerSettings.project(id, target.threadId, target.session);
   },
-  loadComposerModel: ([id], _store, _storage, native) => {
+  loadComposerModel: ([id, _revision, _model, environmentId, projectId], _store, _storage, native) => {
     if (!id) return { provider: "", label: "", summary: "" };
     native?.watch("connections");
     if (native?.available) syncNativeConnections(native);
-    const identity = threadIdentity(id);
-    return composerSettings.summary(id, identity.threadId, sessionFor(identity.environmentId));
-  },
-  beginSettings: ([id]) => {
-    const identity = threadIdentity(id);
-    return composerSettings.begin(id, identity.threadId, sessionFor(identity.environmentId));
-  },
-  setModelFavorite: async ([id, modelId, favorite], _store, _storage, native) => {
     try {
-      const identity = threadIdentity(id);
+      const target = settingsTarget(id, environmentId, projectId);
+      return composerSettings.summary(id, target.threadId, target.session);
+    } catch {
+      return { provider: "", label: "", summary: "" };
+    }
+  },
+  beginSettings: ([id, environmentId, projectId]) => {
+    const target = settingsTarget(id, environmentId, projectId);
+    return composerSettings.begin(id, target.threadId, target.session);
+  },
+  setModelFavorite: async ([id, modelId, favorite, environmentId], _store, _storage, native) => {
+    try {
+      const identity = isDraftKey(id) ? { environmentId, threadId: id } : threadIdentity(id);
       return await awaitReply(
         sessionFor(identity.environmentId).setModelFavorite(identity.threadId, modelId, favorite),
         native,
@@ -448,12 +575,12 @@ const sources: Sources = {
       };
     }
   },
-  changeSettings: ([id, kind, option, value]) => {
-    const identity = threadIdentity(id);
+  changeSettings: ([id, kind, option, value, environmentId, projectId]) => {
+    const target = settingsTarget(id, environmentId, projectId);
     return composerSettings.change(
       id,
-      identity.threadId,
-      sessionFor(identity.environmentId),
+      target.threadId,
+      target.session,
       kind === "model"
         ? { type: "model", id: option }
         : kind === "runtime"
@@ -461,9 +588,11 @@ const sources: Sources = {
           : { type: "option", id: option, value },
     );
   },
-  closeSettings: ([id, save]) => {
-    const identity = threadIdentity(id);
-    return composerSettings.close(id, identity.threadId, sessionFor(identity.environmentId), save);
+  closeSettings: async ([id, save, environmentId, projectId], _store, storage) => {
+    const target = settingsTarget(id, environmentId, projectId);
+    const result = composerSettings.close(id, target.threadId, target.session, save);
+    if (result.ok && save && isDraftKey(id)) await rememberStickyModel(storage, id).catch(() => {});
+    return result;
   },
   loadDrafts: async (_args, _store, storage) => {
     const drafts = await loadDrafts(storage);
@@ -609,14 +738,8 @@ const sources: Sources = {
     questionAttachmentState(
       threadId,
       controls,
-      saved.map((draft) => ({
-        ...draft,
-        attachments: draft.attachments.map(parseDraftAttachment),
-      })),
-      edits.map((draft) => ({
-        ...draft,
-        attachments: draft.attachments.map(parseDraftAttachment),
-      })),
+      saved.map(parsedDraft),
+      edits.map(parsedDraft),
       answeredKeys,
     ),
   verifyAttachment: async ([threadId, draftId, accessKey, item], _store, _storage, native) => {
@@ -667,7 +790,8 @@ const sources: Sources = {
   observeComposerSend: ([id, routeId, revision]) => ({
     epoch: composerSendScope.observe(id, routeId, revision),
   }),
-  prepareSend: ([draft]) => {
+  prepareSend: ([draft, _scope, view]) => {
+    if (isDraftKey(draft.id)) return prepareLaunch(draft, view);
     try {
       const identity = threadIdentity(draft.id);
       const session = sessionFor(identity.environmentId);
@@ -694,6 +818,8 @@ const sources: Sources = {
           selection: selection ? JSON.stringify(selection) : "",
           approval: approval ? JSON.stringify(approval) : "",
           state: "prepared",
+          error: "",
+          launch: null,
         },
         error: "",
       };
@@ -706,7 +832,35 @@ const sources: Sources = {
       };
     }
   },
-  sendDraft: async ([id, snapshot], _store, _storage, native) => {
+  sendDraft: async ([id, snapshot], _store, storage, native) => {
+    if (snapshot.launch) {
+      try {
+        const plan = parseLaunch(snapshot.launch)!;
+        const selection = parseSendSelection(snapshot.selection);
+        if (!selection) throw new Error("The saved message settings are invalid.");
+        const reply = await awaitReply(
+          sessionFor(threadIdentity(plan.threadId).environmentId).launchThread(
+            plan,
+            snapshot,
+            selection.modelSelection,
+          ),
+          native,
+        );
+        if (reply.ok) {
+          composerSettings.forget(id);
+          await saveModelDrafts(storage, composerSettings.snapshot()).catch(() => {});
+        }
+        return { id, commandId: snapshot.commandId, ...reply };
+      } catch (error) {
+        return {
+          id,
+          commandId: snapshot.commandId,
+          state: "unknown",
+          ok: false,
+          error: error instanceof Error ? error.message : "Delivery could not be confirmed.",
+        };
+      }
+    }
     try {
       const identity = threadIdentity(id);
       const selection = parseSendSelection(snapshot.selection);
@@ -986,18 +1140,19 @@ const sources: Sources = {
     loaded: true,
     items: await loadEnvironments(storage),
   }),
-  loadControlAccess: async ([environmentId, key, _retry], store) => {
-    if (!environmentId || !key) return { key, allowed: false, error: "" };
+  loadControlAccess: async ([environmentId, key, _retry, forDraft], store) => {
+    if (!environmentId || (!key && !forDraft)) return { key, allowed: false, error: "" };
     try {
       const session = sessionFor(environmentId);
       const token = credentials(store)[environmentId];
-      if (!token || key !== session.controlAccessKey())
+      const accessKey = forDraft ? session.controlAccessKey() : key;
+      if (!token || !accessKey || accessKey !== session.controlAccessKey())
         return { key, allowed: false, error: "Reconnect to respond." };
-      session.installControlAccess(key, {});
+      session.installControlAccess(accessKey, {});
       const response = await readJson(`${session.environment.url}/api/auth/session`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const allowed = session.installControlAccess(key, response);
+      const allowed = session.installControlAccess(accessKey, response);
       return {
         key,
         allowed,
@@ -1105,6 +1260,7 @@ const sources: Sources = {
   loadCatalog: async ([selected, activeThreadId, environments, now], store, _storage, native) => {
     const catalog = await loadCatalog(selected, activeThreadId, environments, now, store, native);
     for (const { id } of composerSettings.snapshot()) {
+      if (isDraftKey(id)) continue;
       const identity = threadIdentity(id);
       const session =
         connections.get(identity.environmentId)?.session ??
@@ -1115,7 +1271,7 @@ const sources: Sources = {
     return { ...catalog, modelDraftRevision };
   },
 
-  loadGitStatus: async ([id], _store, _storage, native) => {
+  loadGitStatus: async ([id, _revision, draftEnvironmentId, draftCwd], _store, _storage, native) => {
     const empty = {
       cwd: "",
       isRepo: false,
@@ -1137,11 +1293,12 @@ const sources: Sources = {
     };
     if (!id) return empty;
     try {
-      const identity = threadIdentity(id);
-      const status = await awaitReply(
-        sessionFor(identity.environmentId).refreshGitStatus(identity.threadId),
-        native,
-      );
+      const status = isDraftKey(id)
+        ? await awaitReply(sessionFor(draftEnvironmentId).refreshStatusAt(draftCwd), native)
+        : await awaitReply(
+            sessionFor(threadIdentity(id).environmentId).refreshGitStatus(threadIdentity(id).threadId),
+            native,
+          );
       return {
         cwd: status.cwd,
         isRepo: status.isRepo,
@@ -1286,10 +1443,13 @@ const sources: Sources = {
       return empty;
     }
   },
-  pullGit: async ([id], _store, _storage, native) => {
+  pullGit: async ([id, draftEnvironmentId, draftCwd], _store, _storage, native) => {
     try {
-      const identity = threadIdentity(id);
-      await awaitReply(sessionFor(identity.environmentId).pullGit(identity.threadId), native);
+      if (isDraftKey(id)) await awaitReply(sessionFor(draftEnvironmentId).pullAt(draftCwd), native);
+      else {
+        const identity = threadIdentity(id);
+        await awaitReply(sessionFor(identity.environmentId).pullGit(identity.threadId), native);
+      }
       return { ok: true, error: "" };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Pull failed." };
@@ -1969,8 +2129,10 @@ const sources: Sources = {
       };
     }
   },
-  inspectThread: async ([id, kind, path], _store, _storage, native) => {
+  inspectThread: async ([id, kind, path, draftEnvironmentId, draftCwd], _store, _storage, native) => {
     try {
+      if (isDraftKey(id))
+        return await awaitReply(sessionFor(draftEnvironmentId).inspectAt(draftCwd, kind, path), native);
       const identity = threadIdentity(id);
       return await awaitReply(
         sessionFor(identity.environmentId).inspect(identity.threadId, kind, path),
@@ -2008,31 +2170,6 @@ const sources: Sources = {
       return {
         ok: false,
         error: error instanceof Error ? error.message : "The response could not be forked.",
-        threadId: "",
-      };
-    }
-  },
-  createThread: async ([projectId, title], _store, _storage, native) => {
-    try {
-      const identity = threadIdentity(projectId);
-      const threadId = crypto.randomUUID();
-      const reply = await awaitReply(
-        sessionFor(identity.environmentId).create(
-          identity.threadId,
-          title,
-          crypto.randomUUID(),
-          threadId,
-        ),
-        native,
-      );
-      return {
-        ...reply,
-        threadId: reply.ok ? scopedThreadId(identity.environmentId, threadId) : "",
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : "The thread could not be created.",
         threadId: "",
       };
     }

@@ -172,7 +172,8 @@ test("attachment drafts migrate old text and preserve pending delivery identitie
     text: "",
     revision: 4,
     attachments: [attachment],
-    pendingSend: pending,
+    pendingSend: { ...pending, error: "", launch: null },
+    task: null,
   });
   await expect(
     writeDraft(storage, {
