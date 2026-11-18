@@ -48,3 +48,73 @@ test "a new thread draft without a project opens Choose project, and Back closes
   tap "project-back"
   clock settle
   expect state current.name == "threads"
+
+test "composer commands filter and clear the message"
+  at "/threads/composer-test"
+  clock data
+  clock settle
+  type "composer" "/cl"
+  expect tree has "composer-commands"
+  expect tree has "composer-command-clear"
+  expect tree missing "composer-command-attach"
+  tap "composer-command-clear"
+  expect text "composer" == ""
+  expect tree missing "composer-commands"
+
+test "repository context can be inserted and removed without losing prose"
+  at "/threads/composer-test"
+  clock data
+  clock settle
+  type "composer" "Review @src/App.ts"
+  expect tree has "composer-command-path"
+  tap "composer-command-path"
+  expect text "composer" == "Review @src/App.ts "
+  expect tree has "composer-context-file:src/App.ts"
+  tap "composer-context-file:src/App.ts"
+  expect text "composer" == "Review  "
+  expect tree missing "composer-context"
+
+test "queued drafts can be edited and removed"
+  at "/threads/composer-test"
+  clock data
+  clock settle
+  type "composer" "Draft to queue /queue"
+  tap "composer-command-queue"
+  clock data
+  clock settle
+  expect text "composer" == ""
+  expect tree has "composer-queue-draft-1"
+  tap "composer-queue-edit-draft-1"
+  clock data
+  clock settle
+  expect text "composer" == "Draft to queue "
+  type "composer" "Edited queued draft"
+  tap "composer-queue-add"
+  clock data
+  clock settle
+  expect text "composer" == ""
+  tap "composer-queue-edit-draft-1"
+  clock data
+  clock settle
+  expect text "composer" == "Edited queued draft"
+  tap "composer-queue-use-draft"
+  expect tree missing "composer-queue"
+  expect text "composer" == "Edited queued draft"
+
+test "voice availability keeps the current draft intact"
+  at "/threads/composer-test"
+  clock data
+  clock settle
+  type "composer" "Keep this message"
+  tap "composer-voice"
+  expect tree has "composer-voice-status"
+  expect text "composer" == "Keep this message"
+  tap "composer-voice-dismiss"
+  expect tree missing "composer-voice-status"
+
+test "currency is not interpreted as a skill command"
+  at "/threads/composer-test"
+  clock data
+  clock settle
+  type "composer" "Budget $100"
+  expect tree missing "composer-commands"

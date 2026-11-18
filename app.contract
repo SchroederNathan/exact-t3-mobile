@@ -9,6 +9,7 @@ use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion,
 use ThreadScrollPosition from "./thread-scroll.contract"
 use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
 use ToolGroup from "./tool-group.contract"
+use ComposerSession, ComposerCommandSurface, ComposerContextChips, ComposerQueue, ComposerFileDetails from "./composer-parity.contract"
 
 font "DM Sans"
   400 = "assets/fonts/DMSans_400Regular.ttf"
@@ -470,6 +471,7 @@ component T3Code
   members "./question-attachments.contract"
   members "./new-task-state.contract"
   members "./add-project-state.contract"
+  members "./composer-parity.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -1100,6 +1102,10 @@ component T3Code
       let previous = threadDraft(savedDrafts, draftEdits, activeComposerId)
       persistDraft(ThreadDraft(previous, text=value, revision=previous.revision + 1))
 
+  action inputComposer(value: string, event: InputEvent)
+    editComposer(value)
+    observeComposerSelection(event)
+
   action copyMessage(body: string)
     copyText(body)
 
@@ -1126,7 +1132,7 @@ component T3Code
       let shown = composerFocus ? 0 : min(composerAttachments.length, limit)
       let thumbnails = shown == 0 ? 0 : 4 + shown * 30 + (shown - 1) * 4 + (composerAttachments.length > limit ? 34 : 0)
       composerThumbnailLimit = limit
-      composerWide = line.width > surface.width - 146 - thumbnails
+      composerWide = line.width > surface.width - 218 - thumbnails
 
   action inspect(kind: string)
     cancelForkNavigation()
@@ -1248,6 +1254,8 @@ component T3Code
     inspectorPath = parentDirectory(inspectorPath)
 
   action sendMessage
+    if composerSession.editingQueueId != "" and canSend
+      releaseComposerQueueEdit()
     if activeDraftKey != ""
       launchTask()
     else if canSend and activeThreadId != ""
@@ -1264,14 +1272,14 @@ component T3Code
               let state = reply.ok ? "accepted" : reply.state == "unknown" ? "unknown" : "rejected"
               persistDraft(ThreadDraft(draft, revision=draft.revision + 1, text=(reply.ok ? "" : draft.text), attachments=(reply.ok ? [] : draft.attachments), pendingSend=some(PendingSend(message, state=state, error=reply.error))))
               if reply.ok
-                attachmentCleanup = attachmentCleanup.concat(message.paths.map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=draft.revision + 1)))
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => allDrafts.filter(other => other.id.startsWith("composer-queue:") and other.attachments.filter(item => item.path == path).length > 0).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=draft.revision + 1)))
             else if message.commandId == reply.commandId
               let same = draft.revision == message.revision
               let revision = draft.revision + 1
               let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
               persistDraft(updated)
               if reply.state != "unknown"
-                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0 and allDrafts.filter(other => other.id.startsWith("composer-queue:") and other.attachments.filter(item => item.path == path).length > 0).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
           case none
             draftEdits = draftEdits
       case none
@@ -1592,6 +1600,15 @@ component T3Code
                           text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
                     column id="composer-dock-stack" flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                      if composerSession.queue.length > 0 or composerSession.editingQueueId != ""
+                        ComposerQueue(items=composerSession.queue, editing=composerSession.editingQueueId, canEdit=(composer.trim() == "" and composerAttachments.length == 0 and pendingMessage == none), edit=editQueuedComposer, remove=removeQueuedComposer, release=releaseComposerQueueEdit)
+                      if composerMenuVisible
+                        ComposerCommandSurface(trigger=composerToken, items=composerCommands, choose=chooseComposerCommand, dismiss=closeComposerCommands)
+                      if composerSession.voice.error != ""
+                        row align-items="center" gap=6 padding="4px 16px" testId="composer-voice-status"
+                          text composerSession.voice.error flex=1 font-size=12 line-height="17px" color="muted"
+                          button press=dismissComposerVoice appearance="none" width=32 height=32 aria-label="Dismiss voice status" testId="composer-voice-dismiss"
+                            image "symbol:sf/xmark" width=10 height=10 color="muted"
                       if e.params.id == newTask.key and newTask.phase == "ready" and newTask.clonePhase != ""
                         column padding="0 15.5px 7px" min-width=0
                           AddProjectCloneBanner(banner=CloneBannerModel(phase=newTask.clonePhase, title=newTask.cloneTitle, detail=newTask.cloneDetail), cancel=actOnClone("cancel"), retry=actOnClone("retry"), remove=actOnClone("remove"))
@@ -1604,12 +1621,15 @@ component T3Code
                         column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 border-radius=27 box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
                           // The glass draws a rim outside its bounds; upstream clips it with a rounded `overflow: hidden` host.
                           column flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" overflow="hidden"
+                            if composerContext.length > 0
+                              ComposerContextChips(items=composerContext, remove=removeComposerContext)
                             if composerFocus and composerAttachments.length > 0
-                              ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                              ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeComposerAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                              ComposerFileDetails(items=composerAttachments, preview=previewDraftAttachment)
                             row flex-wrap="wrap" align-items="flex-end" min-width=0
                               button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
                                 image "symbol:sf/plus" width=20 height=20
-                              textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                              textarea id="composer" disabled=not draftsReady value=composer input=inputComposer selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
                                 ::placeholder
                                   color="muted"
                               if not composerFocus and composerAttachments.length > 0
@@ -1620,6 +1640,13 @@ component T3Code
                                     button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
                                       text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
                               row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
+                                button press=openComposerCommands disabled=not draftsReady appearance="none" width=32 height=44 aria-label="Commands and context" testId="composer-command-open"
+                                  image "symbol:sf/command" width=16 height=16 color="muted"
+                                button press=requestComposerVoice appearance="none" width=32 height=44 aria-label="Voice input" testId="composer-voice"
+                                  image "symbol:sf/mic" width=16 height=16 color="muted"
+                                if composerExpanded or composerSession.editingQueueId != ""
+                                  button press=queueComposer disabled=not canQueueComposer appearance="none" width=32 height=44 aria-label=(composerSession.editingQueueId != "" ? "Save queued draft" : "Add to draft queue") testId="composer-queue-add"
+                                    image (composerSession.editingQueueId != "" ? "symbol:sf/checkmark" : "symbol:sf/text.badge.plus") width=16 height=16 color=(canQueueComposer ? "muted" : "send-disabled-ink")
                                 button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
                                   row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
                                     ProviderIcon(provider=composerModel.provider, size=16)
