@@ -1,0 +1,124 @@
+{
+  "baseline_commit": "dbea3fb2fb9a298eb8cb245b3e7d038f1850940a",
+  "reference_commit": "bfa91ccd7d5ea9f1df90f8be356bfa0125e2c7c4",
+  "exact_framework_commit": "9d64367a35bce599f38231f60f979988a1dc7e03",
+  "branch": "composer-parity",
+  "install_url": "https://appdrop.app/d/cxqg6yz52u",
+  "install_revision": 4,
+  "status": "Implementation and verification complete. Visual differences and remaining verification limits are listed explicitly.",
+  "checks": [
+    {
+      "name": "Unit tests",
+      "result": "346 passed, 0 failed; 2389 assertions across 37 files."
+    },
+    {
+      "name": "Production UIKit editor probe",
+      "result": "78 assertions passed. Includes UTF-16 selection, atomic chips, undo, hardware submit, first-tap focus, accessibility, dynamic palettes, structured thread transfer, clipboard formats, and keyboard geometry. Full probe log retained."
+    },
+    {
+      "name": "Contract compile",
+      "result": "No errors."
+    },
+    {
+      "name": "Web verifier",
+      "result": "8 tests passed. 13 largest-text screens had no spill. Contract semantic verification reported 0 findings. Full verifier reported 351 findings, including 310 fixed-font declarations, compiler/style warnings, and disconnected-catalog findings."
+    },
+    {
+      "name": "Native verifier",
+      "result": "5 native tests passed, 0 failed; no refusals or relaunch problems. 7 largest-text screens had no spill. Full verifier reported 347 findings, including fixed-font declarations, compiler diagnostics, and existing Add environment field tap-target sizes. Three composer-input contract tests are web-only; native input is separately exercised."
+    },
+    {
+      "name": "Connected regression suite",
+      "result": "2 tests passed against provider command/file/skill and server queue fixtures. The final rerun passed after all source changes."
+    },
+    {
+      "name": "Live native queue",
+      "result": "Edit, cancel, remove, resume, and send-now passed. The original unsent draft is restored after queue editing. RPC receipts are retained."
+    },
+    {
+      "name": "Live native raw paste",
+      "result": "Image and file paste produced inline chips and thumbnails, uploaded exact bytes, opened native previews, and deleted uploaded files after removal. RPC receipts are retained."
+    },
+    {
+      "name": "Live native context navigation",
+      "result": "A file chip in a new draft opened the server file contents. A skill chip opened its actual SKILL.md instructions."
+    },
+    {
+      "name": "Live native thread paste",
+      "result": "A local hosted URL became exactly one Thread chip. An unlinked URL remained plain text. Structured foreign context produced the unavailable warning and chip, with no Open thread action. Seven accessibility expectations are retained with full snapshots."
+    }
+  ],
+  "gallery": [
+    [
+      "after-native-context-sheet-air.png",
+      "Native skill context sheet."
+    ],
+    [
+      "after-native-new-draft-file-air.png",
+      "File opened from a chip in a new draft."
+    ],
+    [
+      "after-native-skill-instructions-air.png",
+      "Skill instructions opened from the context sheet."
+    ],
+    [
+      "after-native-queue-sheet-air.png",
+      "Server-backed queued messages."
+    ],
+    [
+      "after-native-queue-edit-air.png",
+      "Queued-message editing."
+    ],
+    [
+      "after-native-image-paste-final-air.png",
+      "Native image paste with an inline chip and attachment thumbnail."
+    ],
+    [
+      "after-native-image-preview-air.png",
+      "Native image preview."
+    ],
+    [
+      "after-native-file-paste-final-air.png",
+      "Native file paste with an inline chip and attachment thumbnail."
+    ],
+    [
+      "after-native-file-preview-air.png",
+      "Native file preview."
+    ],
+    [
+      "after-native-commands-dark-air.png",
+      "Exact command menu in dark mode."
+    ],
+    [
+      "after-native-context-dark-air.png",
+      "Exact skill chip in dark mode."
+    ],
+    [
+      "after-native-blurred-chip-focus-air.png",
+      "The first tap on a blurred chip focuses the composer without opening its sheet."
+    ],
+    [
+      "after-native-hosted-thread-paste-air.png",
+      "A local hosted thread link becomes one native chip."
+    ],
+    [
+      "after-native-foreign-thread-plain-air.png",
+      "An unlinked URL remains plain text."
+    ],
+    [
+      "after-native-foreign-thread-unavailable-air.png",
+      "Copied foreign context shows the unavailable warning."
+    ],
+    [
+      "after-native-foreign-thread-chip-air.png",
+      "The foreign chip is marked unavailable."
+    ]
+  ],
+  "limits": [
+    "Raw image differences are nonzero. The measured command menu borders differ by roughly 0.3 to 1 point. Cursor timing and native glass also differ. This is close visual parity, not proof of pixel-identical rendering.",
+    "The new-thread heading sits about 14 points lower with the keyboard shown. That surrounding page layout is outside the composer-focused changes.",
+    "Voice recording and transcription are implemented, but a live microphone-to-transcript session remains unverified. Both inspected environments hide voice because the provider reports it unavailable.",
+    "Dark chip colors were derived from the default Expo theme source. The reference app hit a runtime error during dark capture, so a matching native dark reference screenshot was not obtained.",
+    "The full verifiers still report app-wide fixed-font, compiler/style, and synthetic disconnected-catalog findings. Passing tests do not mean a clean full verification report."
+  ]
+}

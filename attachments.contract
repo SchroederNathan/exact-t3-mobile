@@ -1,6 +1,8 @@
 shape ThreadDraft
   id: string
   text: string
+  context: string
+  freshContext: bool
   revision: number
   attachments: DraftAttachment[]
   pendingSend: option<PendingSend>
@@ -74,6 +76,9 @@ shape PendingSend
   messageId: string
   revision: number
   text: string
+  context: string
+  freshContext: bool
+  dispatchMode: string
   attachments: StoredAttachment[]
   paths: string[]
   selection: string
@@ -361,4 +366,4 @@ fn attachmentIdentity(threadId: string, localId: string, attempt: number): strin
 fn slotIdentity(slot: AttachmentSlot): string = attachmentIdentity(slot.draftId, slot.localId, slot.attempt)
 fn uploadedVerified(verified: VerifiedAttachment[], draftId: string, item: DraftAttachment, accessKey: string): bool = verified.filter(entry => entry.draftId == draftId and entry.localId == item.localId and entry.attachmentId == item.id and entry.attempt == item.attempt and entry.accessKey == accessKey and entry.state == "ready").length > 0
 
-fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", revision=0, attachments=[], pendingSend=none, task=none) } }
+fn threadDraft(saved: ThreadDraft[], edits: ThreadDraft[], id: string): ThreadDraft = match first(edits.filter(draft => draft.id == id)) { case some(draft) => draft, case none => match first(saved.filter(draft => draft.id == id)) { case some(draft) => draft, case none => ThreadDraft(id=id, text="", context="", freshContext=false, revision=0, attachments=[], pendingSend=none, task=none) } }

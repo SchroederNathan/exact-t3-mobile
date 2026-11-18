@@ -49,72 +49,29 @@ test "a new thread draft without a project opens Choose project, and Back closes
   clock settle
   expect state current.name == "threads"
 
-test "composer commands filter and clear the message"
+test "composer command filtering leaves unknown commands in the draft" on web
   at "/threads/composer-test"
   clock data
   clock settle
-  type "composer" "/cl"
+  type "composer" "/does-not-exist"
+  clock data
+  clock settle
   expect tree has "composer-commands"
-  expect tree has "composer-command-clear"
-  expect tree missing "composer-command-attach"
-  tap "composer-command-clear"
-  expect text "composer" == ""
-  expect tree missing "composer-commands"
+  expect tree has "composer-commands-empty"
+  expect text "composer" == "/does-not-exist"
 
-test "repository context can be inserted and removed without losing prose"
+test "disconnected file context never fabricates a matching repository path" on web
   at "/threads/composer-test"
   clock data
   clock settle
   type "composer" "Review @src/App.ts"
-  expect tree has "composer-command-path"
-  tap "composer-command-path"
-  expect text "composer" == "Review @src/App.ts "
-  expect tree has "composer-context-file:src/App.ts"
-  tap "composer-context-file:src/App.ts"
-  expect text "composer" == "Review  "
-  expect tree missing "composer-context"
+  clock data
+  clock settle
+  expect tree has "composer-commands-empty"
+  expect tree missing "composer-command-path:src/App.ts"
+  expect text "composer" == "Review @src/App.ts"
 
-test "queued drafts can be edited and removed"
-  at "/threads/composer-test"
-  clock data
-  clock settle
-  type "composer" "Draft to queue /queue"
-  tap "composer-command-queue"
-  clock data
-  clock settle
-  expect text "composer" == ""
-  expect tree has "composer-queue-draft-1"
-  tap "composer-queue-edit-draft-1"
-  clock data
-  clock settle
-  expect text "composer" == "Draft to queue "
-  type "composer" "Edited queued draft /queue"
-  tap "composer-command-queue"
-  clock +2
-  clock data
-  clock settle
-  expect text "composer" == ""
-  tap "composer-queue-edit-draft-1"
-  clock data
-  clock settle
-  expect text "composer" == "Edited queued draft "
-  tap "composer-queue-use-draft"
-  expect tree missing "composer-queue"
-  expect text "composer" == "Edited queued draft "
-
-test "voice availability keeps the current draft intact"
-  at "/threads/composer-test"
-  clock data
-  clock settle
-  type "composer" "Keep this message /voice"
-  tap "composer-command-voice"
-  clock +2
-  expect tree has "composer-voice-status"
-  expect text "composer" == "Keep this message "
-  tap "composer-voice-dismiss"
-  expect tree missing "composer-voice-status"
-
-test "currency is not interpreted as a skill command"
+test "currency is not interpreted as a skill command" on web
   at "/threads/composer-test"
   clock data
   clock settle

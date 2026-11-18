@@ -46,6 +46,17 @@ import {
   type SettingsResult,
   type ThreadSettingsSelection,
 } from "./thread-settings";
+import {
+  buildComposerPathItems,
+  type ComposerCommandItem,
+  type ComposerModel,
+  type ComposerSkill,
+  type ComposerSlashCommand,
+} from "./composer-commands";
+import {
+  type ComposerQueueOperation,
+  type ComposerQueueState,
+} from "./composer-queue";
 
 export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
@@ -218,6 +229,19 @@ export function object(value: unknown): ObjectValue {
 
 function records(value: unknown): ObjectValue[] {
   return Array.isArray(value) ? value.map(object) : [];
+}
+
+function messageContext(value: string | undefined): ObjectValue | undefined {
+  if (!value?.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("The saved message context is invalid.");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("The saved message context is invalid.");
+  return parsed as ObjectValue;
 }
 
 export function string(value: unknown): string {
@@ -840,6 +864,21 @@ export interface TaskProject {
   defaultModelSelection: unknown;
 }
 
+export interface ComposerProviderCatalog {
+  instanceId: string;
+  driver: string;
+  slashCommands: ComposerSlashCommand[];
+  skills: ComposerSkill[];
+  models: ComposerModel[];
+}
+
+export interface ComposerCatalogTarget {
+  /** Unscoped thread id for an existing thread, or a draft id for a new task. */
+  threadId: string;
+  cwd?: string;
+  instanceId?: string;
+}
+
 export class DirectSession {
   readonly environment: Environment;
   private readonly serial = ++sessionSerial;
@@ -957,6 +996,117 @@ export class DirectSession {
       string(this.projects.get(string(shell.projectId))?.workspaceRoot);
     if (!cwd) throw new Error("This thread has no available workspace.");
     return cwd;
+  }
+
+  private composerCatalogProvider(value: unknown, cwd: string): ComposerProviderCatalog {
+    const raw = object(value);
+    const instanceId = string(raw.instanceId);
+    const driver = string(raw.driver);
+    const snapshots = records(raw.workspaceSnapshots);
+    const snapshot = snapshots.find((entry) => string(entry.cwd) === cwd);
+    const commands = records(snapshot?.slashCommands ?? raw.slashCommands)
+      .map((entry) => ({ name: string(entry.name), description: string(entry.description) }))
+      .filter((entry) => entry.name);
+    const skills = records(snapshot?.skills ?? raw.skills)
+      .map((entry) => ({
+        name: string(entry.name),
+        path: string(entry.path),
+        description: string(entry.description) || undefined,
+        shortDescription: string(entry.shortDescription) || undefined,
+        displayName: string(entry.displayName) || undefined,
+        scope: string(entry.scope) || undefined,
+        enabled: entry.enabled !== false,
+        ...(typeof entry.userInvocable === "boolean" ? { userInvocable: entry.userInvocable } : {}),
+        ...(typeof entry.userInvocationOnly === "boolean"
+          ? { userInvocationOnly: entry.userInvocationOnly }
+          : {}),
+      }))
+      .filter((entry) => entry.name && entry.path);
+    const models = records(raw.models)
+      .map((entry) => ({
+        instanceId,
+        slug: string(entry.slug),
+        name: string(entry.name) || string(entry.shortName) || string(entry.slug),
+        shortName: string(entry.shortName) || undefined,
+        provider: driver,
+        available: entry.available !== false,
+        legacy: entry.isLegacy === true || entry.legacy === true,
+        hidden: entry.hidden === true,
+      }))
+      .filter((entry) => entry.slug);
+    return { instanceId, driver, slashCommands: commands, skills, models };
+  }
+
+  /**
+   * Returns the provider and model catalog used by the composer. Workspace
+   * snapshots are selected by cwd, so slash commands and skills are scoped to
+   * the same project the draft will send to.
+   */
+  composerProviderCatalog(target: ComposerCatalogTarget): {
+    cwd: string;
+    selected: ComposerProviderCatalog | null;
+    providers: ComposerProviderCatalog[];
+  } {
+    const cwd = target.cwd || this.cwdForThread(target.threadId);
+    const shell = this.shells.get(target.threadId);
+    const selectedInstance =
+      target.instanceId || string(object(shell?.modelSelection).instanceId);
+    const providers = records(this.config.providers).map((provider) =>
+      this.composerCatalogProvider(provider, cwd),
+    );
+    const selected =
+      providers.find((provider) => provider.instanceId === selectedInstance) ??
+      (selectedInstance ? null : providers[0] ?? null);
+    return { cwd, selected, providers };
+  }
+
+  /** Request a fresh cwd-scoped provider catalog before opening the menu. */
+  async refreshComposerProviderCatalog(target: ComposerCatalogTarget): Promise<{
+    cwd: string;
+    selected: ComposerProviderCatalog | null;
+    providers: ComposerProviderCatalog[];
+  }> {
+    const cwd = target.cwd || this.cwdForThread(target.threadId);
+    const current = this.composerProviderCatalog({ ...target, cwd });
+    const instanceId = target.instanceId || current.selected?.instanceId;
+    const result = await this.query("server.refreshProviders", {
+      ...(instanceId ? { instanceId } : {}),
+      cwd,
+      fresh: true,
+      workspaceSnapshotsOnDemand: true,
+      providerCatalogsOnDemand: true,
+    });
+    const providers = records(result.providers).map((provider) =>
+      this.composerCatalogProvider(provider, cwd),
+    );
+    const selected =
+      providers.find((provider) => provider.instanceId === instanceId) ??
+      current.selected ??
+      providers[0] ??
+      null;
+    return { cwd, selected, providers };
+  }
+
+  async searchComposerEntries(cwd: string, query: string, limit = 100): Promise<{
+    entries: { path: string; kind: string }[];
+    truncated: boolean;
+  }> {
+    const result = await this.query("projects.searchEntries", {
+      cwd,
+      query,
+      limit,
+    });
+    return {
+      entries: records(result.entries)
+        .map((entry) => ({ path: string(entry.path), kind: string(entry.kind) || "file" }))
+        .filter((entry) => entry.path),
+      truncated: result.truncated === true,
+    };
+  }
+
+  async searchComposerPaths(cwd: string, query: string, limit = 20): Promise<ComposerCommandItem[]> {
+    const result = await this.searchComposerEntries(cwd, query, Math.max(limit, 100));
+    return buildComposerPathItems(result.entries, query, limit);
   }
 
   private normalizePullRequest(value: unknown): PullRequestSummary | null {
@@ -1611,6 +1761,71 @@ export class DirectSession {
         loading: false,
         error: "",
       }
+    );
+  }
+
+  composerQueue(threadId: string): ComposerQueueState & { accessKey: string; allowed: boolean } {
+    const history = this.transcripts.get(threadId);
+    const queue = history?.composerQueue() ?? {
+      items: [],
+      held: false,
+      ready: false,
+      canSendNow: false,
+      activeRunId: "",
+    };
+    return {
+      ...queue,
+      accessKey: this.controlAccessKey(),
+      allowed: this.hasControlAccess(),
+    };
+  }
+
+  operateComposerQueue(
+    threadId: string,
+    accessKey: string,
+    operation: ComposerQueueOperation,
+  ): Promise<Reply> {
+    if (!this.hasControlAccess() || accessKey !== this.controlAccessKey())
+      return Promise.resolve({ ok: false, error: "Reconnect and check your permission before editing the queue." });
+    const queue = this.transcripts.get(threadId)?.composerQueue();
+    if (!queue?.ready) return Promise.resolve({ ok: false, error: "Wait for the thread to finish reconnecting." });
+    if ((operation.type === "start" || operation.type === "cancel" || operation.type === "edit") &&
+      !queue.items.some((item) => item.id === operation.runId))
+      return Promise.resolve({ ok: false, error: "That queued message is no longer available." });
+    if (operation.type === "start" && queue.activeRunId && !queue.canSendNow)
+      return Promise.resolve({ ok: false, error: "The active turn cannot accept a queued message yet." });
+    let context: ObjectValue | undefined;
+    if (operation.type === "edit") {
+      try {
+        context = messageContext(operation.context);
+      } catch (error) {
+        return Promise.resolve({ ok: false, error: error instanceof Error ? error.message : "The saved message context is invalid." });
+      }
+    }
+    const commandId = crypto.randomUUID();
+    let payload: ObjectValue;
+    if (operation.type === "resume") {
+      payload = { type: "queue.resume", commandId, threadId };
+    } else if (operation.type === "start") {
+      payload = queue.activeRunId
+        ? { type: "queued-message.promote-to-steer", commandId, threadId, queuedRunId: operation.runId, targetRunId: queue.activeRunId }
+        : { type: "queued-run.start", commandId, threadId, runId: operation.runId };
+    } else if (operation.type === "cancel") {
+      payload = { type: "queued-run.cancel", commandId, threadId, runId: operation.runId };
+    } else {
+      payload = {
+        type: "queued-run.edit",
+        commandId,
+        threadId,
+        runId: operation.runId,
+        text: operation.text,
+        attachments: operation.attachments,
+        ...(context ? { context } : {}),
+      };
+    }
+    return this.query("orchestration.dispatchCommand", payload).then(
+      () => ({ ok: true, error: "" }),
+      (error: unknown) => ({ ok: false, error: error instanceof Error ? error.message : "The queued message could not be changed." }),
     );
   }
 
@@ -2439,7 +2654,15 @@ export class DirectSession {
     staged?: ThreadSettingsSelection | null,
     attachments: StoredAttachment[] = [],
     replayUnknown = false,
-    options: { approval?: ApprovalSend | null; isCurrent?: () => boolean } = {},
+    options: {
+      approval?: ApprovalSend | null;
+      isCurrent?: () => boolean;
+      /** Serialized ComposerContext payload from a durable draft. */
+      context?: string;
+      freshContext?: boolean;
+      /** Follow-up intent for an active turn; `auto` preserves queue-after-active. */
+      followUp?: "auto" | "queue" | "steer";
+    } = {},
   ): Promise<{ ok: boolean; error: string; state: string }> {
     const refused = (error: string) => ({
       ok: false,
@@ -2470,6 +2693,12 @@ export class DirectSession {
     }
     const dispatchMessage = (modelSelection?: ModelSelection) => {
       const shell = this.shells.get(threadId);
+      let context: ObjectValue | undefined;
+      try {
+        context = messageContext(options.context);
+      } catch (error) {
+        return Promise.resolve(refused(error instanceof Error ? error.message : "The saved message context is invalid."));
+      }
       return this.query("orchestration.dispatchCommand", {
         type: "message.dispatch",
         commandId,
@@ -2482,8 +2711,12 @@ export class DirectSession {
         dispatchMode:
           approval?.type === "redirect" && shell?.activeRunId
             ? { type: "steer_active", targetRunId: shell.activeRunId }
-            : { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
+            : options.followUp === "steer" && shell?.activeRunId
+              ? { type: "steer_active", targetRunId: shell.activeRunId }
+              : { type: shell?.activeRunId ? "queue_after_active" : "start_immediately" },
         ...(approval?.type === "redirect" ? { deliveryIntent: "steer" } : {}),
+        ...(context ? { context } : {}),
+        ...(options.freshContext === true ? { freshContext: true } : {}),
         ...(modelSelection ? { modelSelection } : {}),
       }).then(
         () => ({ ok: true, error: "", state: "accepted" }),
@@ -2653,6 +2886,16 @@ export class DirectSession {
     return this.configReady;
   }
 
+  async readableComposerEnvironmentIds(): Promise<string[]> {
+    if (object(object(this.config.environment).capabilities).peerLinks !== true || object(this.config.settings).linkedEnvironmentsEnabled !== true)
+      return [this.environment.id];
+    const reply = await this.query("peerLinks.list", {}).catch(() => ({ links: [] }));
+    return [...new Set([this.environment.id, ...records(reply.links)
+      .filter((link) => link.status !== "expired")
+      .map((link) => string(link.environmentId))
+      .filter(Boolean)])];
+  }
+
   activityByProject(): Map<string, number> {
     const activity = new Map<string, number>();
     for (const thread of this.shells.values()) {
@@ -2754,10 +2997,27 @@ export class DirectSession {
 
   launchThread(
     plan: LaunchPlan,
-    message: { commandId: string; messageId: string; text: string; attachments: StoredAttachment[] },
+    message: {
+      commandId: string;
+      messageId: string;
+      text: string;
+      attachments: StoredAttachment[];
+      context?: string;
+      freshContext?: boolean;
+    },
     modelSelection: ModelSelection,
   ): Promise<{ ok: boolean; error: string; state: string }> {
     const threadId = threadIdentity(plan.threadId).threadId;
+    let context: ObjectValue | undefined;
+    try {
+      context = messageContext(message.context);
+    } catch (error) {
+      return Promise.resolve({
+        ok: false,
+        error: error instanceof Error ? error.message : "The saved message context is invalid.",
+        state: "rejected",
+      });
+    }
     return this.query("orchestration.launchThread", {
       commandId: message.commandId,
       creationSource: "mobile",
@@ -2769,7 +3029,13 @@ export class DirectSession {
       runtimeMode: plan.runtimeMode,
       interactionMode: plan.interactionMode,
       workspaceStrategy: launchWorkspaceStrategy(plan),
-      initialMessage: { messageId: message.messageId, text: message.text, attachments: message.attachments },
+      initialMessage: {
+        messageId: message.messageId,
+        text: message.text,
+        attachments: message.attachments,
+        ...(context ? { context } : {}),
+        ...(message.freshContext === true ? { freshContext: true } : {}),
+      },
     }).then(
       () => ({ ok: true, error: "", state: "accepted" }),
       (error: unknown) => ({

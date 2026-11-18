@@ -1,0 +1,41 @@
+{
+  "method": "RGB difference at identical screen coordinates; no alignment, masks, or tolerance. Crops focus the composer and retain neighboring pixels, cursor timing, and glass rendering differences.",
+  "states": [
+    {
+      "state": "empty",
+      "crop": [
+        0,
+        2385,
+        1260,
+        2685
+      ],
+      "identical": false,
+      "reference_sha256": "ff123215c70da5ea961f252ce1ae32b5f8ef5d8e1ad630f1e556446597dd4459",
+      "current_sha256": "e6278cbcdd4654d862ae01f2495a154b6635a6708dea5b9b838ac8efe0725f71"
+    },
+    {
+      "state": "commands",
+      "crop": [
+        0,
+        840,
+        1260,
+        1740
+      ],
+      "identical": false,
+      "reference_sha256": "21f4465ebce65bc252c755ec5cc58d1fc8aa8a00db8e12678511a8f70efe469c",
+      "current_sha256": "46fa6b11be4e3f2da3e87fb26449bcdffd5cd58347900829ba2c3eea0d0634ab"
+    },
+    {
+      "state": "context",
+      "crop": [
+        0,
+        1512,
+        1260,
+        1740
+      ],
+      "identical": false,
+      "reference_sha256": "01ad74f8b227cf6ecc17f11ed06adf987a2d1b124013bb3bc6b338def0d2d27c",
+      "current_sha256": "14bd77fe0dbefe62637d51a3eee544c02aa8cefc1e6d265bf096b5408a742c31"
+    }
+  ]
+}

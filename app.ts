@@ -3,7 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
-import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection, parseLaunch, parseTaskStamp } from "./drafts";
+import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection, parseLaunch, parseTaskStamp, type Draft } from "./drafts";
 import { RpcFailure } from "./attachment-session";
 import { mediaSources, writeMediaData } from "./media-sources";
 import {
@@ -24,6 +24,9 @@ import {
   validateAttachments,
 } from "./attachments";
 import { ComposerSettings } from "./composer-settings";
+import { composerSources } from "./composer-sources";
+import { appendComposerAttachmentReferences, bindComposerAttachmentContext, composerImportSources } from "./composer-import";
+import { pruneComposerContext } from "./composer-context";
 import { loadModelDrafts, saveModelDrafts } from "./model-drafts";
 import { isDraftKey, planLaunch } from "./new-task";
 import { newTaskSources } from "./new-task-sources";
@@ -49,7 +52,7 @@ import {
 } from "./connection";
 
 export const grants =
-  "fs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "device.microphone purpose.microphone\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
@@ -362,7 +365,8 @@ async function loadCatalog(
   const session = new DirectSession(environment);
   current = session;
   if (activeThread?.environmentId === environment.id) session.select(activeThread.threadId);
-  const snapshot = (): Catalog => ({
+  const snapshot = (): Catalog & { modelDraftRevision: number } => ({
+    modelDraftRevision,
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,
     ),
@@ -418,6 +422,16 @@ function settingsTarget(id: string, environmentId: string, projectId: string) {
 }
 
 type PreparedSend = Result<"prepareSend">;
+type DispatchMode = "auto" | "queue" | "steer";
+
+function contractDraft(draft: Draft) {
+  return {
+    ...draft,
+    pendingSend: draft.pendingSend
+      ? { ...draft.pendingSend, dispatchMode: draft.pendingSend.dispatchMode || "auto" }
+      : null,
+  };
+}
 
 function parsedDraft(draft: Parameters<Sources["prepareSend"]>[0][0]) {
   return {
@@ -425,7 +439,7 @@ function parsedDraft(draft: Parameters<Sources["prepareSend"]>[0][0]) {
     attachments: draft.attachments.map(parseDraftAttachment),
     task: draft.task ? parseTaskStamp(draft.task) : null,
     pendingSend: draft.pendingSend
-      ? { ...draft.pendingSend, launch: parseLaunch(draft.pendingSend.launch) }
+      ? { ...draft.pendingSend, dispatchMode: draft.pendingSend.dispatchMode || "auto", launch: parseLaunch(draft.pendingSend.launch) }
       : null,
   };
 }
@@ -478,6 +492,9 @@ function prepareLaunch(
         messageId: crypto.randomUUID(),
         revision: draft.revision + 1,
         text: draft.text.trim(),
+        context: pruneComposerContext(draft.text.trim(), bindComposerAttachmentContext(draft.context, items)),
+        freshContext: draft.freshContext,
+        dispatchMode: "auto",
         attachments: items.map(storedReference),
         paths: items.map((item) => item.path),
         selection: JSON.stringify({ ...validated.selection, threadId: threadUuid }),
@@ -517,6 +534,8 @@ const addProject = addProjectSources({
 });
 
 const sources: Sources = {
+  ...composerSources({sessionFor, sessions: allSessions, composerSettings, awaitReply}),
+  ...composerImportSources({ sessionFor, awaitReply, readableEnvironmentIds: (environmentId) => sessionFor(environmentId).readableComposerEnvironmentIds() }),
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),
   ...newTaskReads,
   ...addProject,
@@ -596,6 +615,7 @@ const sources: Sources = {
   },
   loadDrafts: async (_args, _store, storage) => {
     const drafts = await loadDrafts(storage);
+    const contractDrafts = (values: typeof drafts) => values.map(contractDraft);
     const referenced = new Set(
       drafts.flatMap((draft) => [
         ...draft.attachments.map((item) => item.path),
@@ -603,7 +623,7 @@ const sources: Sources = {
       ]),
     );
     try {
-      if (attachmentFilesCleaned) return restoreDrafts(drafts);
+      if (attachmentFilesCleaned) return contractDrafts(restoreDrafts(drafts));
       attachmentFilesCleaned = true;
       await cleanPreviewDirectories(storage);
       const directories = await storage.fs.readdir(ATTACHMENT_DIRECTORY);
@@ -616,7 +636,7 @@ const sources: Sources = {
         }
       }
     } catch {}
-    return restoreDrafts(drafts);
+    return contractDrafts(restoreDrafts(drafts));
   },
   saveDraft: async ([draft], _store, storage) => {
     const result = {
@@ -673,6 +693,15 @@ const sources: Sources = {
       } catch {}
       return { key: `${slot.draftId}:${slot.localId}:${slot.attempt}`, valid };
     });
+  },
+  insertComposerAttachmentReferences: ([draft, attachments, start, end]) => {
+    const items = attachments.map(parseDraftAttachment);
+    const result = { id: draft.id, revision: draft.revision, text: draft.text, context: draft.context, cursor: start, attachments, error: "" };
+    try {
+      return { ...result, ...appendComposerAttachmentReferences(draft.text, draft.context, items, start, end) };
+    } catch (error) {
+      return { ...result, error: error instanceof Error ? error.message : "The attachment could not be inserted." };
+    }
   },
   stagePickedAttachments: async (
     [intent, files, existing, draft, maxFileBytes],
@@ -734,14 +763,10 @@ const sources: Sources = {
       };
     }
   },
-  loadQuestionAttachments: ([threadId, controls, saved, edits, answeredKeys]) =>
-    questionAttachmentState(
-      threadId,
-      controls,
-      saved.map(parsedDraft),
-      edits.map(parsedDraft),
-      answeredKeys,
-    ),
+  loadQuestionAttachments: ([threadId, controls, saved, edits, answeredKeys]) => {
+    const state = questionAttachmentState(threadId, controls, saved.map(parsedDraft), edits.map(parsedDraft), answeredKeys);
+    return { ...state, targets: state.targets.map((target) => ({ ...target, draft: contractDraft(target.draft) })), retired: state.retired.map(contractDraft) };
+  },
   verifyAttachment: async ([threadId, draftId, accessKey, item], _store, _storage, native) => {
     const result = {
       threadId,
@@ -790,7 +815,7 @@ const sources: Sources = {
   observeComposerSend: ([id, routeId, revision]) => ({
     epoch: composerSendScope.observe(id, routeId, revision),
   }),
-  prepareSend: ([draft, _scope, view]) => {
+  prepareSend: ([draft, _scope, view, requestedDispatchMode]) => {
     if (isDraftKey(draft.id)) return prepareLaunch(draft, view);
     try {
       const identity = threadIdentity(draft.id);
@@ -805,6 +830,7 @@ const sources: Sources = {
       const commandId = crypto.randomUUID();
       const approval = session.approvalSend(identity.threadId);
       composerSendScope.prepare(commandId, draft.id, draft.revision + 1);
+      const dispatchMode: DispatchMode = requestedDispatchMode === "queue" || requestedDispatchMode === "steer" ? requestedDispatchMode : "auto";
       return {
         id: draft.id,
         revision: draft.revision,
@@ -813,6 +839,9 @@ const sources: Sources = {
           messageId: crypto.randomUUID(),
           revision: draft.revision + 1,
           text: draft.text.trim(),
+          context: pruneComposerContext(draft.text.trim(), bindComposerAttachmentContext(draft.context, items)),
+          freshContext: draft.freshContext,
+          dispatchMode,
           attachments: items.map(storedReference),
           paths: items.map((item) => item.path),
           selection: selection ? JSON.stringify(selection) : "",
@@ -877,6 +906,9 @@ const sources: Sources = {
           snapshot.state === "unknown",
           {
             approval: parseApprovalSend(snapshot.approval),
+            context: snapshot.context,
+            freshContext: snapshot.freshContext,
+            followUp: snapshot.dispatchMode === "queue" || snapshot.dispatchMode === "steer" ? snapshot.dispatchMode : "auto",
             isCurrent: composerSendScope.take(
               snapshot.commandId,
               id,
@@ -2002,7 +2034,7 @@ const sources: Sources = {
       return empty;
     }
   },
-  resolveMarkdownLink: async ([originThreadId, href, originRoute], _store, _storage, native) => {
+  resolveMarkdownLink: async ([originThreadId, href, originRoute, draftEnvironmentId, draftCwd], _store, _storage, native) => {
     const result = {
       originThreadId,
       originRoute,
@@ -2014,7 +2046,10 @@ const sources: Sources = {
       error: "",
     };
     try {
-      const origin = threadIdentity(originThreadId);
+      const origin = isDraftKey(originThreadId)
+        ? { environmentId: draftEnvironmentId || "", threadId: originThreadId }
+        : threadIdentity(originThreadId);
+      if (!origin.environmentId) throw new Error("This draft has no connected environment.");
       const link = parseThreadLink(href);
       if (link) {
         const sessions = new Map([...connections].map(([id, entry]) => [id, entry.session]));
@@ -2034,6 +2069,8 @@ const sources: Sources = {
       }
       const file = parseFileLink(href);
       if (!file) throw new Error("This link cannot be opened.");
+      if (isDraftKey(originThreadId))
+        return { ...result, kind: "file", threadId: originThreadId, ...file, path: file.path };
       const path = await awaitReply(
         sessionFor(origin.environmentId).fileLinkPath(origin.threadId, file.path),
         native,
@@ -2046,14 +2083,12 @@ const sources: Sources = {
       };
     }
   },
-  loadLinkedFile: async ([id, path, line, column], _store, _storage, native) => {
+  loadLinkedFile: async ([id, path, line, column, draftEnvironmentId, draftCwd], _store, _storage, native) => {
     if (!id || !path) return { path, targetLine: "0", error: "", lines: [] };
     try {
-      const identity = threadIdentity(id);
-      const inspection = await awaitReply(
-        sessionFor(identity.environmentId).inspect(identity.threadId, "file", path),
-        native,
-      );
+      const inspection = isDraftKey(id)
+        ? await awaitReply(sessionFor(draftEnvironmentId).inspectAt(draftCwd, "file", path), native)
+        : await awaitReply(sessionFor(threadIdentity(id).environmentId).inspect(threadIdentity(id).threadId, "file", path), native);
       const rows = inspection.body.split("\n");
       const language = fileLanguage(path);
       let runs = codeRuns(inspection.body, {});

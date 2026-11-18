@@ -73,7 +73,7 @@ const PROJECT_WAIT_MS = 15000;
 const BROWSE_TTL_MS = 5000;
 const ADD_ROUTES = new Set(["addProject", "addProjectNew", "addProjectLocal", "addProjectRepository", "addProjectDestination"]);
 
-const EMPTY_DRAFT: Reply["draft"] = { id: "", text: "", revision: 0, attachments: [], pendingSend: null, task: null };
+const EMPTY_DRAFT: Reply["draft"] = { id: "", text: "", context: "", freshContext: false, revision: 0, attachments: [], pendingSend: null, task: null };
 
 const refused = (fields: Partial<Reply>): Reply => ({
   ok: false,
@@ -117,6 +117,8 @@ function opened(
     draft: {
       id: key,
       text: "",
+      context: "",
+      freshContext: false,
       revision: 1,
       attachments: [],
       pendingSend: null,

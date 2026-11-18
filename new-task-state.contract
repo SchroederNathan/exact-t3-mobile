@@ -196,7 +196,7 @@ members T3Code
     if canSend and newTask.phase == "ready" and newTask.sendBlockedReason == "" and activeDraftKey == newTask.key
       attachmentError = ""
       sendRouteId = `${threadRoute.id}`
-      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask)
+      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask, "auto")
 
   action flipToLaunch(draftId: string, threadId: string)
     let base = split ? threadNav : nav

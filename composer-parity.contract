@@ -1,12 +1,5 @@
-use DraftAttachment, ThreadDraft, CleanupAttachment, attachmentSize, draftReceiptRevision, threadDraft from "./attachments.contract"
-
-shape ComposerContextItem
-  id: string
-  label: string
-  kind: string
-  detail: string
-  path: string
-  insertText: string
+use ProviderIcon from "./provider-icon.contract"
+use DraftAttachment, StoredAttachment, ThreadDraft, CleanupAttachment, attachmentSize, threadDraft, PickerIntent from "./attachments.contract"
 
 shape ComposerCommandItem
   id: string
@@ -15,31 +8,115 @@ shape ComposerCommandItem
   kind: string
   insertText: string
   path: string
+  context: string
+  icon: string
+  provider: string
+
+shape ComposerReply
+  ok: bool
+  error: string
+
+shape ComposerCommands
+  items: ComposerCommandItem[]
+  error: string
+
+shape ComposerDocument
+  tokens: string
+  displayText: string
+  attachments: ComposerInlineAttachment[]
+
+shape ComposerInlineAttachment
+  source: string
+  attachmentId: string
+
+shape ComposerChoice
+  id: string
+  revision: number
+  text: string
+  context: string
+  cursor: number
+  action: string
+  freshContext: bool
+
+shape ComposerContextDetail
+  source: string
+  label: string
+  detail: string
+  fieldLabel: string
+  secondaryLabel: string
+  secondaryDetail: string
+  openLabel: string
+  href: string
+  kind: string
+  threadId: string
+
+shape ComposerNativeEvent
+  error: string
+  files: Picked[]
+  alternate: bool
+  fragment: string
+  pastedText: string
+  source: string
+  context: string
+  key: string
+  kind: string
+  text: string
+  revision: number
+  start: number
+  end: number
+
+shape ComposerAttachmentInsertion
+  id: string
+  revision: number
+  text: string
+  context: string
+  cursor: number
+  attachments: DraftAttachment[]
+  error: string
 
 shape ComposerQueueItem
   id: string
+  messageId: string
   text: string
-  attachments: DraftAttachment[]
-  context: ComposerContextItem[]
+  attachments: StoredAttachment[]
+  context: string
+  position: number
+
+shape ComposerQueueState
+  items: ComposerQueueItem[]
+  held: bool
+  ready: bool
+  canSendNow: bool
+  activeRunId: string
+  accessKey: string
+  allowed: bool
 
 shape ComposerVoice
+  available: bool
+  owner: string
   phase: string
   error: string
+  transcript: string
+  elapsed: number
+  levels: number[]
+
+shape ComposerEditTarget
+  id: string
+  runId: string
+  attachments: StoredAttachment[]
 
 shape ComposerSession
   id: string
-  context: ComposerContextItem[]
-  queue: ComposerQueueItem[]
-  queueMode: string
   editingQueueId: string
-  queueSerial: number
-  pendingQueueId: string
-  queuedDraftRevision: number
-  queuedRecordRevision: number
+  existingAttachments: StoredAttachment[]
+  backup: option<ThreadDraft>
   cursor: number
+  selectionEnd: number
+  selectionSerial: number
+  focusSerial: number
+  nativeRevision: number
   dismissedTrigger: string
-  pendingCommand: string
-  voice: ComposerVoice
+  queueVisible: bool
 
 shape ComposerTrigger
   kind: string
@@ -47,224 +124,321 @@ shape ComposerTrigger
   start: number
   end: number
 
-fn emptyComposerSession(id: string): ComposerSession = ComposerSession(id=id, context=[], queue=[], queueMode="normal", editingQueueId="", queueSerial=0, pendingQueueId="", queuedDraftRevision=0, queuedRecordRevision=0, cursor=-1, dismissedTrigger="", pendingCommand="", voice=ComposerVoice(phase="idle", error=""))
+fn emptyComposerSession(id: string): ComposerSession = ComposerSession(id=id, editingQueueId="", existingAttachments=[], backup=none, cursor=-1, selectionEnd=-1, selectionSerial=0, focusSerial=0, nativeRevision=0, dismissedTrigger="", queueVisible=false)
 fn sessionForComposer(sessions: ComposerSession[], id: string): ComposerSession = match first(sessions.filter(session => session.id == id)) { case some(session) => session, case none => emptyComposerSession(id) }
 fn composerLastToken(text: string): string = match first(text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ").slice(-1)) { case some(token) => token, case none => "" }
-fn composerTrigger(text: string, cursor: number): ComposerTrigger = ComposerTrigger(kind=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("/") ? "/" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("@") ? "@" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("$") and parseNumber(composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1)) == none ? "$" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("#") ? "#" : "", query=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1), start=(cursor < 0 ? text.length : cursor) - composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).length, end=(cursor < 0 ? text.length : cursor))
-fn composerContextSymbol(kind: string): string = kind == "file" ? "symbol:sf/doc" : kind == "thread" ? "symbol:sf/bubble.left" : kind == "environment" ? "symbol:sf/desktopcomputer" : kind == "pull-request" ? "symbol:sf/arrow.triangle.pull" : kind == "model" ? "symbol:sf/cpu" : "symbol:sf/terminal"
-fn composerCommandMatches(item: ComposerCommandItem, query: string): bool = query == "" or item.label.toLowerCase().includes(query.toLowerCase()) or item.description.toLowerCase().includes(query.toLowerCase())
-fn composerPathContexts(text: string): ComposerContextItem[] = text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ").slice(0, -1).filter(token => token.startsWith("@") and token.length > 1).map(token => ComposerContextItem(id=`file:${token.slice(1)}`, label=token.slice(1), kind="file", detail="Repository path", path=token.slice(1), insertText=token))
-fn composerBuiltins(): ComposerCommandItem[] = [ComposerCommandItem(id="clear", label="/clear", description="Clear the message text and context", kind="clear", insertText="", path=""), ComposerCommandItem(id="files", label="/files", description="Mention a file or thread", kind="trigger", insertText="@", path=""), ComposerCommandItem(id="models", label="/model", description="Choose a model and reasoning level", kind="model-settings", insertText="", path=""), ComposerCommandItem(id="queue", label="/queue", description="Save this message to the draft queue", kind="queue", insertText="", path=""), ComposerCommandItem(id="attach", label="/attach", description="Choose a document from Files", kind="attachment", insertText="", path=""), ComposerCommandItem(id="voice", label="/voice", description="Voice input availability", kind="voice", insertText="", path="")]
+fn composerTrigger(text: string, cursor: number): ComposerTrigger = ComposerTrigger(kind=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("/") and not composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1).includes("/") ? "/" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("@") ? "@" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("$") and parseNumber(composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1)) == none ? "$" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("#") ? "#" : "", query=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1), start=(cursor < 0 ? text.length : cursor) - composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).length, end=(cursor < 0 ? text.length : cursor))
 
 members T3Code
   state composerSessions: ComposerSession[] = []
-  state composerQueueSerial = 0 persist
-  derive composerQueuePrefix = `composer-queue:${encodeURIComponent(activeComposerId)}:`
-  derive composerSavedQueue = allDrafts.filter(draft => draft.id.startsWith(composerQueuePrefix) and (draft.text != "" or draft.attachments.length > 0)).map(draft => ComposerQueueItem(id=draft.id.slice(composerQueuePrefix.length), text=draft.text, attachments=draft.attachments, context=[]))
-  derive composerSession = ComposerSession(sessionForComposer(composerSessions, activeComposerId), queue=composerSavedQueue)
+  state composerEditTargets: ComposerEditTarget[] = []
+  derive composerEditTarget = first(composerEditTargets.filter(target => target.id == activeComposerId))
+  derive composerSession = ComposerSession(sessionForComposer(composerSessions, activeComposerId), editingQueueId=(match composerEditTarget { case some(target) => target.runId, case none => "" }), existingAttachments=(match composerEditTarget { case some(target) => target.attachments, case none => [] }))
+  derive composerEnvironmentId = activeDraftKey != "" ? newTask.environmentId : match first(catalog.threads.filter(thread => thread.id == activeThreadId)) { case some(thread) => thread.environmentId, case none => "" }
+  derive composerEditingDraftId = composerSession.editingQueueId == "" ? activeComposerId : `composer-edit:${encodeURIComponent(activeComposerId)}:${composerSession.editingQueueId}`
   derive composerToken = composerTrigger(composer, composerSession.cursor)
   derive composerTriggerKey = `${composerToken.kind}:${composerToken.start}:${composerToken.query}`
-  derive composerMenuVisible = composerToken.kind != "" and composerSession.dismissedTrigger != composerTriggerKey
-  derive composerContext = composerSession.context.filter(item => composer.includes(item.insertText)).concat(composerPathContexts(composer).filter(item => composerSession.context.filter(entry => entry.id == item.id).length == 0))
-  derive composerMentionItems = gitStatus.workingFiles.map(file => ComposerCommandItem(id=`file:${file.path}`, label=file.path, description=`Changed file · +${file.insertions} −${file.deletions}`, kind="file", insertText=`@${file.path}`, path=file.path)).concat(catalog.threads.filter(thread => thread.id != activeThreadId).map(thread => ComposerCommandItem(id=`thread:${thread.id}`, label=thread.title, description=`Thread · ${thread.project}`, kind="thread", insertText=`[${thread.title}](/threads/${thread.id})`, path=thread.id))).concat(catalog.environments.map(environment => ComposerCommandItem(id=`environment:${environment.id}`, label=environment.label, description=`Environment · ${environment.status}`, kind="environment", insertText=`Environment: ${environment.label}`, path=environment.id)))
-  derive composerPullRequestItems = pullRequests.items.map(item => ComposerCommandItem(id=`pr:${item.projectId}:${item.number}`, label=`#${item.number} ${item.title}`, description=item.repository, kind="pull-request", insertText=item.url, path=item.url))
-  derive composerCommands = (composerToken.kind == "/" ? composerBuiltins() : composerToken.kind == "@" ? composerMentionItems : composerToken.kind == "#" ? composerPullRequestItems : []).filter(item => composerCommandMatches(item, composerToken.query)).concat(composerToken.kind == "@" and composerToken.query != "" and composerMentionItems.filter(item => item.path == composerToken.query).length == 0 ? [ComposerCommandItem(id="path", label=composerToken.query, description="Mention repository path", kind="file", insertText=`@${composerToken.query}`, path=composerToken.query)] : []).slice(0, 8)
-  derive canQueueComposer = draftsReady and composerSession.pendingQueueId == "" and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend)
+  derive composerMenuVisible = composerToken.kind != "" and composerSession.cursor == composerSession.selectionEnd and composerSession.dismissedTrigger != composerTriggerKey and not composerVoiceBusy
+  resource commandCatalog = loadComposerCommands(activeComposerId, newTask.environmentId, newTask.projectId, newTask.cwd, composerMenuVisible ? composerToken.kind : "", composerToken.query, composerToken.start, `${catalog.modelDraftRevision}:${activeModelRevision}`) as shape ComposerCommands else empty()
+  resource composerDocument = composerDocument(composer, activeDraft.context) as shape ComposerDocument else empty()
+  resource serverQueue = loadComposerQueue(activeThreadId, catalog) as shape ComposerQueueState else empty()
+  state composerContextSource = ""
+  resource composerContextDetail = loadComposerContextDetail(composerContextSource, activeDraft.context) as shape ComposerContextDetail else empty()
+  resource voice = loadComposerVoice() as shape ComposerVoice else empty()
+  mutation composerChosen as shape ComposerChoice then afterComposerChoice
+  mutation composerNativeEvent as shape ComposerNativeEvent queue then afterNativeComposerEvent
+  mutation composerQueueChanged as shape ComposerReply refreshes serverQueue, catalog then afterComposerQueueChange
+  mutation composerVoiceChanged as shape ComposerVoice refreshes voice
+  mutation composerAttachmentsInserted as shape ComposerAttachmentInsertion queue then afterComposerAttachmentsInserted
+  state composerAttachmentStart = -1
+  state composerAttachmentEnd = -1
+  state composerAttachmentRevision = -1
+  state composerQueueOperation = ""
+  state composerQueueOwner = ""
+  state composerQueueRun = ""
+  state composerQueueNotice = ""
+  derive composerQueueError = composerQueueNotice != "" ? composerQueueNotice : failed(composerQueueChanged) ? "The queued message could not be updated." : match composerQueueChanged { case some(reply) => reply.error, case none => "" }
+  derive composerVoiceBusy = voice.owner == activeComposerId and ["preparing", "recording", "transcribing", "post-processing"].includes(voice.phase)
+  derive composerVoiceLabel = voice.phase == "recording" ? `${floor(voice.elapsed / 60)}:${floor(voice.elapsed % 60) < 10 ? "0" : ""}${floor(voice.elapsed % 60)}` : voice.phase == "preparing" ? "Preparing" : "Transcribing"
+  derive canSaveQueuedComposer = not composerImportBusy and not pending(composerAttachmentsInserted) and not pending(stagedAttachments) and composerSession.editingQueueId != "" and serverQueue.allowed and serverQueue.ready and not pending(composerQueueChanged) and not composerVoiceBusy and attachmentSendReady and (composer.trim() != "" or composerAttachments.length > 0 or composerSession.existingAttachments.length > 0)
 
-  task finishQueuedComposer when composerSession.queueMode == "saving" and draftReceiptRevision(persistedDrafts, `${composerQueuePrefix}${composerSession.pendingQueueId}`) >= composerSession.queuedRecordRevision key=`${activeComposerId}:${composerSession.pendingQueueId}:${composerSession.queuedRecordRevision}`
-    after(1, finishQueueComposer)
-  task finishLoadedComposer when composerSession.queueMode == "loading" and draftReceiptRevision(persistedDrafts, activeComposerId) >= composerSession.queuedDraftRevision key=`${activeComposerId}:${composerSession.pendingQueueId}:${composerSession.queuedDraftRevision}`
-    after(1, finishQueueEdit)
-  task applyComposerCommand when composerSession.pendingCommand != "" key=`${activeComposerId}:${composerSession.pendingCommand}`
-    after(1, finishComposerCommand)
+  task exitStartedQueueEdit when composerSession.editingQueueId != "" and serverQueue.ready and not pending(composerQueueChanged) and serverQueue.items.filter(item => item.id == composerSession.editingQueueId).length == 0 key=`${activeComposerId}:${composerSession.editingQueueId}`
+    after(1, queuedComposerStarted)
 
-  action finishComposerCommand
-    if composerSession.pendingCommand == "queue" and canQueueComposer
-      queueComposer()
-    else if composerSession.pendingCommand == "voice"
-      requestComposerVoice()
-    else
-      storeComposerSession(ComposerSession(composerSession, pendingCommand=""))
+  task receiveDictation when voice.owner == activeComposerId and voice.phase == "idle" and voice.transcript != "" key=`${voice.owner}:${voice.transcript}`
+    after(1, insertDictation)
+  task cancelOtherDictation when voice.owner != "" and voice.owner != activeComposerId and ["preparing", "recording", "transcribing"].includes(voice.phase) key=voice.owner
+    after(1, cancelDictation)
 
   action storeComposerSession(session: ComposerSession)
     composerSessions = composerSessions.filter(entry => entry.id != session.id).concat([session])
+    if session.editingQueueId != composerSession.editingQueueId or session.existingAttachments.length != composerSession.existingAttachments.length
+      composerEditTargets = composerEditTargets.filter(entry => entry.id != session.id).concat(session.editingQueueId == "" ? [] : [ComposerEditTarget(id=session.id, runId=session.editingQueueId, attachments=session.existingAttachments)])
 
   action observeComposerSelection(event: InputEvent)
-    storeComposerSession(ComposerSession(composerSession, cursor=event.selectionStart, dismissedTrigger=""))
+    storeComposerSession(ComposerSession(composerSession, cursor=event.selectionStart, selectionEnd=event.selectionEnd, dismissedTrigger=""))
+
+  action nativeComposerEvent(value: string)
+    send composerNativeEvent = parseNativeComposerEvent(value, activeDraft.context)
+
+  action afterNativeComposerEvent
+    match composerNativeEvent
+      case some(event)
+        if event.key == composerEditingDraftId and event.revision >= composerSession.nativeRevision
+          if event.kind == "edit" or event.kind == "paste" or event.kind == "selection"
+            if event.kind == "paste"
+              persistDraft(ThreadDraft(activeDraft, text=event.text, context=event.context, revision=activeDraft.revision + 1))
+            else if event.kind == "edit" and composer != event.text
+              editComposer(event.text)
+            storeComposerSession(ComposerSession(composerSession, cursor=event.start, selectionEnd=event.end, nativeRevision=event.revision, dismissedTrigger=""))
+          else if event.kind == "focus"
+            composerFocused()
+          else if event.kind == "blur"
+            composerBlurred()
+          else if event.kind == "submit"
+            sendMessage(event.alternate)
+          else if event.kind == "context"
+            match first(composerDocument.attachments.filter(ref => ref.source == event.source))
+              case some(ref)
+                match first(composerAttachments.filter(item => item.localId == ref.attachmentId or item.id == ref.attachmentId))
+                  case some(item)
+                    previewDraftAttachment(item)
+                  case none
+                    composerContextSource = event.source
+                    nav = push(split ? threadNav : nav, path("composerContext", activeComposerId))
+              case none
+                composerContextSource = event.source
+                nav = push(split ? threadNav : nav, path("composerContext", activeComposerId))
+          else if event.kind == "pasteFiles"
+            pasteComposerFiles(event.files, event.start, event.end)
+          else if event.kind == "pasteFragment"
+            importComposerFragment(event.fragment, event.pastedText, event.start, event.end)
+          else if event.kind == "pasteError"
+            attachmentError = event.error
+      case none
+        closeComposerCommands()
 
   action closeComposerCommands
     storeComposerSession(ComposerSession(composerSession, dismissedTrigger=composerTriggerKey))
 
-  action openComposerCommands
-    let position = composerSession.cursor < 0 ? composer.length : composerSession.cursor
-    let prefix = composer.slice(0, position)
-    let insert = prefix == "" or prefix.endsWith(" ") or prefix.endsWith("\n") ? "/" : " /"
-    editComposer(`${prefix}${insert}${composer.slice(position)}`)
-    storeComposerSession(ComposerSession(composerSession, cursor=position + insert.length, dismissedTrigger=""))
-    focus("composer")
-    setSelectionRange("composer", position + insert.length, position + insert.length)
+  action pasteComposerFiles(files: Picked[], start: number, end: number)
+    if draftsReady and attachmentAccess.allowed and attachmentAccess.uploads and not pending(stagedAttachments) and files.length > 0
+      let serial = pickerSerial + 1
+      let intent = PickerIntent(threadId=attachmentThreadId, draftId=composerEditingDraftId, routeId=`${threadRoute.id}`, serial=serial, photos=false)
+      pickerSerial = serial
+      pickerIntent = intent
+      composerAttachmentStart = start
+      composerAttachmentEnd = end
+      composerAttachmentRevision = activeDraft.revision
+      attachmentError = ""
+      send stagedAttachments = stagePickedAttachments(intent, files, [activeDraft], activeDraft, attachmentAccess.maxFileBytes)
+    else
+      attachmentError = attachmentAccess.uploads ? "Check your connection and attachment permission." : "This environment does not support attachment uploads."
+
+  action insertStagedComposerAttachments(draft: ThreadDraft, items: DraftAttachment[])
+    if items.length > 0
+      send composerAttachmentsInserted = insertComposerAttachmentReferences(draft, items, draft.revision == composerAttachmentRevision ? composerAttachmentStart : -1, draft.revision == composerAttachmentRevision ? composerAttachmentEnd : -1)
+
+  action afterComposerAttachmentsInserted
+    match composerAttachmentsInserted
+      case some(reply)
+        if reply.error != "" or reply.id != composerEditingDraftId
+          attachmentError = reply.error
+          send cleanedAttachment = cleanupStagedAttachments(reply.attachments)
+          composerAttachmentsInserted = none
+        else if reply.revision != activeDraft.revision
+          attachmentError = attachmentError
+        else
+          let revision = activeDraft.revision + 1
+          persistDraft(ThreadDraft(activeDraft, text=reply.text, context=reply.context, attachments=activeDraft.attachments.concat(reply.attachments.map(item => DraftAttachment(item, insertionRevision=revision))), revision=revision))
+          storeComposerSession(ComposerSession(composerSession, cursor=reply.cursor, selectionEnd=reply.cursor, selectionSerial=composerSession.selectionSerial + 1, focusSerial=composerSession.focusSerial + 1))
+          composerAttachmentsInserted = none
+      case none
+        attachmentError = "The attachment reference could not be inserted."
+
+  task retryComposerAttachmentInsertion when not pending(composerAttachmentsInserted) and (match composerAttachmentsInserted { case some(reply) => reply.error == "" and reply.id == composerEditingDraftId and reply.revision != activeDraft.revision and reply.attachments.filter(item => composerAttachments.filter(existing => existing.localId == item.localId).length > 0).length == 0, case none => false }) key=`${composerEditingDraftId}:${activeDraft.revision}`
+    after(1, retryComposerAttachmentInsertion)
+
+  action retryComposerAttachmentInsertion
+    match composerAttachmentsInserted
+      case some(reply)
+        send composerAttachmentsInserted = insertComposerAttachmentReferences(activeDraft, reply.attachments, -1, -1)
+      case none
+        attachmentError = attachmentError
 
   action chooseComposerCommand(item: ComposerCommandItem)
-    let start = composerToken.start
-    let replacement = item.insertText == "" ? "" : `${item.insertText}${item.kind == "trigger" ? "" : " "}`
-    let updated = `${composer.slice(0, composerToken.start)}${replacement}${composer.slice(composerToken.end)}`
-    if item.kind == "clear"
-      editComposer("")
-      storeComposerSession(ComposerSession(composerSession, context=[], cursor=0, dismissedTrigger=""))
-    else
-      editComposer(updated)
-      let id = item.kind == "file" ? `file:${item.path}` : item.id
-      let context = ["file", "thread", "environment", "pull-request", "model"].includes(item.kind) ? composerContext.filter(entry => entry.id != id).concat([ComposerContextItem(id=id, label=item.label, kind=item.kind, detail=item.description, path=item.path, insertText=item.insertText)]) : composerContext
-      storeComposerSession(ComposerSession(composerSession, context=context, cursor=start + replacement.length, dismissedTrigger="", pendingCommand=(item.kind == "queue" or item.kind == "voice" ? item.kind : "")))
-      if item.kind == "model-settings"
-        openModelSettings()
-      else if item.kind == "attachment"
-        pickAttachments(false)
-    focus("composer")
-    setSelectionRange("composer", item.kind == "clear" ? 0 : start + replacement.length, item.kind == "clear" ? 0 : start + replacement.length)
+    send composerChosen = selectComposerItem(activeDraft, item, composerToken.start, composerToken.end)
 
-  action removeComposerContext(id: string)
-    match first(composerContext.filter(item => item.id == id))
-      case some(item)
-        editComposer(composer.replaceAll(item.insertText, ""))
-        storeComposerSession(ComposerSession(composerSession, context=composerContext.filter(entry => entry.id != id), cursor=-1))
+  action afterComposerChoice
+    match composerChosen
+      case some(choice)
+        if choice.id == composerEditingDraftId and choice.revision == activeDraft.revision
+          persistDraft(ThreadDraft(activeDraft, text=choice.text, context=choice.context, freshContext=choice.freshContext, revision=activeDraft.revision + 1))
+          storeComposerSession(ComposerSession(composerSession, cursor=choice.cursor, selectionEnd=choice.cursor, selectionSerial=composerSession.selectionSerial + 1, focusSerial=composerSession.focusSerial + 1, dismissedTrigger=""))
+          if choice.action == "model-settings"
+            openModelSettings()
+          else
+            focus("composer")
+            setSelectionRange("composer", choice.cursor, choice.cursor)
       case none
         closeComposerCommands()
 
   action removeComposerAttachment(id: string)
-    match first(composerAttachments.filter(item => item.localId == id))
-      case some(item)
-        if allDrafts.filter(draft => draft.id.startsWith("composer-queue:") and draft.attachments.filter(attachment => attachment.path == item.path).length > 0).length > 0
-          persistDraft(ThreadDraft(activeDraft, attachments=composerAttachments.filter(attachment => attachment.localId != id), revision=activeDraft.revision + 1))
-        else
-          removeAttachment(id)
-      case none
-        closeComposerCommands()
+    removeAttachment(id)
 
-  action queueComposer
-    if canQueueComposer
-      let serial = composerQueueSerial + 1
-      let id = composerSession.editingQueueId != "" ? composerSession.editingQueueId : `draft-${serial}`
-      let previous = threadDraft(savedDrafts, draftEdits, `${composerQueuePrefix}${id}`)
-      composerQueueSerial = serial
-      storeComposerSession(ComposerSession(composerSession, queueMode="saving", pendingCommand="", pendingQueueId=id, queuedDraftRevision=activeDraft.revision, queuedRecordRevision=previous.revision + 1, queueSerial=serial))
-      persistDraft(ThreadDraft(previous, text=composer, attachments=composerAttachments, revision=previous.revision + 1))
+  action closeComposerPanel
+    nav = back(nav)
 
-  action finishQueueComposer
-    if activeDraft.revision == composerSession.queuedDraftRevision
-      persistDraft(ThreadDraft(activeDraft, text="", attachments=[], revision=activeDraft.revision + 1))
-      storeComposerSession(ComposerSession(composerSession, context=[], queueMode="normal", pendingQueueId="", editingQueueId="", cursor=0))
-    else
-      storeComposerSession(ComposerSession(composerSession, queueMode="normal", pendingQueueId="", editingQueueId=""))
+  action openSelectedContext
+    let threadId = composerContextDetail.threadId
+    let href = composerContextDetail.href
+    if threadId != ""
+      nav = push(back(split ? threadNav : nav), path("thread", threadId))
+    else if href != ""
+      followMarkdownLink(activeComposerId, href)
+
+  action removeSelectedContext
+    editComposer(composer.replaceAll(composerContextSource, ""))
+    nav = back(nav)
+
+  action toggleComposerQueue
+    nav = push(split ? threadNav : nav, path("composerQueue", activeComposerId))
 
   action editQueuedComposer(id: string)
-    if composer.trim() == "" and composerAttachments.length == 0 and pendingMessage == none
-      match first(composerSession.queue.filter(item => item.id == id))
+    if serverQueue.allowed and composerSession.editingQueueId == "" and not pending(composerQueueChanged) and not composerVoiceBusy
+      match first(serverQueue.items.filter(item => item.id == id))
         case some(item)
-          let revision = activeDraft.revision + 1
-          persistDraft(ThreadDraft(activeDraft, text=item.text, attachments=item.attachments, revision=activeDraft.revision + 1))
-          storeComposerSession(ComposerSession(composerSession, context=item.context, queueMode="loading", pendingQueueId=id, queuedDraftRevision=revision, editingQueueId=id, cursor=item.text.length))
+          let edit = threadDraft(savedDrafts, draftEdits, `composer-edit:${encodeURIComponent(activeComposerId)}:${id}`)
+          persistDraft(ThreadDraft(edit, text=item.text, context=item.context, freshContext=false, attachments=[], revision=edit.revision + 1))
+          storeComposerSession(ComposerSession(composerSession, editingQueueId=id, existingAttachments=item.attachments, backup=none, cursor=item.text.length, selectionEnd=item.text.length, selectionSerial=composerSession.selectionSerial + 1, focusSerial=composerSession.focusSerial + 1, queueVisible=false))
+          if threadRoute.name == "composerQueue"
+            nav = back(nav)
           focus("composer")
         case none
           closeComposerCommands()
 
-  action finishQueueEdit
-    let draft = threadDraft(savedDrafts, draftEdits, `${composerQueuePrefix}${composerSession.pendingQueueId}`)
-    persistDraft(ThreadDraft(draft, text="", attachments=[], revision=draft.revision + 1))
-    storeComposerSession(ComposerSession(composerSession, queueMode="editing", pendingQueueId=""))
+  action queuedComposerStarted
+    let normal = threadDraft(savedDrafts, draftEdits, activeComposerId)
+    if normal.text == "" and normal.attachments.length == 0
+      persistDraft(ThreadDraft(normal, text=composer, context=activeDraft.context, attachments=composerAttachments, revision=normal.revision + 1))
+      composerQueueNotice = "That message already started. Your edit is back in the composer."
+    else
+      composerQueueNotice = "That message already started, so the edit was discarded."
+    restoreComposerDraft()
 
-  action removeQueuedComposer(id: string)
-    if composerSession.editingQueueId != id
-      let draft = threadDraft(savedDrafts, draftEdits, `${composerQueuePrefix}${id}`)
-      persistDraft(ThreadDraft(draft, text="", attachments=[], revision=draft.revision + 1))
-      match first(composerSession.queue.filter(item => item.id == id))
-        case some(item)
-          attachmentCleanup = attachmentCleanup.concat(item.attachments.filter(attachment => allDrafts.filter(other => other.id != draft.id and other.attachments.filter(active => active.path == attachment.path).length > 0).length == 0).map(attachment => CleanupAttachment(threadId=attachmentThreadId, draftId=draft.id, accessKey=attachmentAccess.accessKey, attachmentId=attachment.id, path=attachment.path, revision=draft.revision + 1)))
-        case none
-          closeComposerCommands()
+  action cancelQueuedComposer
+    if not pending(composerQueueChanged)
+      restoreComposerDraft()
 
-  action releaseComposerQueueEdit
-    let draft = threadDraft(savedDrafts, draftEdits, `${composerQueuePrefix}${composerSession.editingQueueId}`)
-    persistDraft(ThreadDraft(draft, text="", attachments=[], revision=draft.revision + 1))
-    storeComposerSession(ComposerSession(composerSession, queueMode="normal", pendingQueueId="", editingQueueId=""))
+  action restoreComposerDraft
+    persistDraft(ThreadDraft(activeDraft, text="", context="", attachments=[], freshContext=false, revision=activeDraft.revision + 1))
+    storeComposerSession(ComposerSession(composerSession, editingQueueId="", existingAttachments=[], backup=none, cursor=-1, selectionEnd=-1))
+
+  action removeQueuedAttachment(id: string)
+    if not pending(composerQueueChanged)
+      storeComposerSession(ComposerSession(composerSession, existingAttachments=composerSession.existingAttachments.filter(item => item.id != id)))
+
+  action changeQueuedComposer(operation: string, id: string)
+    if serverQueue.allowed and not pending(composerQueueChanged)
+      composerQueueNotice = ""
+      composerQueueOperation = operation
+      composerQueueRun = id
+      composerQueueOwner = activeComposerId
+      send composerQueueChanged = changeComposerQueue(activeThreadId, serverQueue.accessKey, operation, id, composer, activeDraft.context, composerSession.existingAttachments.concat(composerAttachments.map(item => StoredAttachment(type=item.type, id=item.id, name=item.name, mimeType=item.mimeType, sizeBytes=item.sizeBytes))), composerAttachments)
+
+  action saveQueuedComposer
+    if canSaveQueuedComposer
+      changeQueuedComposer("edit", composerSession.editingQueueId)
+
+  action afterComposerQueueChange
+    match composerQueueChanged
+      case some(reply)
+        if reply.ok and composerQueueOperation == "edit"
+          let draft = threadDraft(savedDrafts, draftEdits, `composer-edit:${encodeURIComponent(composerQueueOwner)}:${composerQueueRun}`)
+          persistDraft(ThreadDraft(draft, text="", context="", attachments=[], freshContext=false, revision=draft.revision + 1))
+          composerEditTargets = composerEditTargets.filter(target => target.id != composerQueueOwner or target.runId != composerQueueRun)
+      case none
+        closeComposerCommands()
 
   action requestComposerVoice
-    storeComposerSession(ComposerSession(composerSession, pendingCommand="", voice=ComposerVoice(phase="unavailable", error="Voice input is unavailable on this build. Use your keyboard’s dictation to add speech.")))
+    if voice.available and not composerVoiceBusy
+      send composerVoiceChanged = controlComposerVoice(activeComposerId, voice.phase == "error" and voice.error.includes("Microphone access is off") ? "settings" : "start")
+
+  action confirmDictation
+    if voice.owner == activeComposerId and voice.phase == "recording"
+      send composerVoiceChanged = controlComposerVoice(activeComposerId, "confirm")
+
+  action cancelDictation
+    send composerVoiceChanged = controlComposerVoice(voice.owner, "cancel")
 
   action dismissComposerVoice
-    storeComposerSession(ComposerSession(composerSession, voice=ComposerVoice(phase="idle", error="")))
+    cancelDictation()
+
+  action insertDictation
+    if voice.owner == activeComposerId and voice.transcript != ""
+      let position = composerSession.cursor < 0 ? composer.length : composerSession.cursor
+      let prefix = composer.slice(0, position)
+      let insertion = `${prefix != "" and not prefix.endsWith(" ") and not prefix.endsWith("\n") ? " " : ""}${voice.transcript} `
+      editComposer(`${prefix}${insertion}${composer.slice(composerSession.selectionEnd < 0 ? position : composerSession.selectionEnd)}`)
+      storeComposerSession(ComposerSession(composerSession, cursor=position + insertion.length, selectionEnd=position + insertion.length, selectionSerial=composerSession.selectionSerial + 1, focusSerial=composerSession.focusSerial + 1))
+      cancelDictation()
+      focus("composer")
 
 component ComposerCommandSurface
   props
     trigger: ComposerTrigger
     items: ComposerCommandItem[]
+    loading: bool
+    error: string
     choose: action
     dismiss: action
   view
-    column border-radius=16 backgroundMaterial="glass" overflow="hidden" margin="0 12px 8px" max-height=180 testId="composer-commands"
-      if trigger.kind == "/" or trigger.kind == "@" or trigger.kind == "$" or trigger.kind == "#"
-        text (trigger.kind == "/" ? "Commands" : trigger.kind == "@" ? "Files & context" : trigger.kind == "$" ? "Skills" : "Pull requests") padding="10px 14px 4px" font-size=10 line-height="13px" font-weight=700 letter-spacing="0.8px" text-transform="uppercase" color="muted"
+    column position="absolute" left=0 right=0 bottom="100%" z-index=10 border-radius=16 border="1px solid var(--edge)" backgroundMaterial="glass-clear" overflow="hidden" margin="0 12px 4px" testId="composer-commands"
+      text (trigger.kind == "/" ? "Commands" : trigger.kind == "@" ? (items.filter(item => item.kind != "file" and item.kind != "directory").length == 0 ? "Files" : "Mentions") : trigger.kind == "$" ? "Skills" : "Pull requests") padding="9px 12px 3px" font-size=11 line-height="14px" font-weight=700 letter-spacing="0.8px" text-transform="uppercase" color="composer-menu-muted"
       scroll min-height=0 overflow-x="hidden" max-height=180
         column
           if items.length == 0
-            text (trigger.kind == "$" ? "No skills found." : trigger.kind == "@" ? "No matching files or context." : "No matching commands.") padding="10px 14px" font-size=12 line-height="17px" color="muted" testId="composer-commands-empty"
+            text (error != "" ? error : loading ? (trigger.kind == "@" ? "Searching files…" : "Loading…") : trigger.kind == "$" ? "No skills found." : trigger.kind == "@" ? "No matching files or folders." : trigger.kind == "#" ? "No matching pull requests." : "No matching commands.") padding="10px 14px" font-size=13 line-height="17px" color="composer-menu-muted" testId="composer-commands-empty"
           for item, index in items key=item.id
-            column border-bottom=(index < items.length - 1 ? "1px solid border-subtle" : "none")
-              button press=choose(item) appearance="none" display="flex" align-items="center" gap=10 text-align="left" min-height=50 padding="10px 14px" width="100%" box-sizing="border-box" retainFocus=true testId=`composer-command-${item.id}`
-                image composerContextSymbol(item.kind) width=16 height=16 color="muted"
-                text item.label flex-shrink=0 font-size=16 line-height="20px" font-weight=500 line-clamp=1 text-overflow="ellipsis"
+            column border-bottom=(index < items.length - 1 ? "0.333333px solid var(--edge)" : "none")
+              button press=choose(item) appearance="none" display="flex" align-items="center" gap=9 text-align="left" padding="9px 12px" width="100%" box-sizing="border-box" retainFocus=true testId=`composer-command-${item.id}`
+                if item.kind == "model"
+                  ProviderIcon(provider=item.provider, size=16)
+                else
+                  image (item.icon == "" ? "symbol:sf/terminal" : item.icon) width=(item.kind == "file" or item.kind == "directory" ? 16 : 14) height=(item.kind == "file" or item.kind == "directory" ? 16 : 14) color="composer-menu-muted"
+                text flex-shrink=0 font-size=16 line-height="23px" font-weight=500 line-clamp=1 text-overflow="ellipsis"
+                  if item.kind == "skill" and trigger.kind == "/" and item.label.startsWith("skill:")
+                    text "skill:" color="composer-menu-muted"
+                    text item.label.slice(6)
+                  else
+                    text item.label
                 if item.description != ""
-                  text item.description flex=1 min-width=0 font-size=12 line-height="16px" color="muted" line-clamp=1 text-overflow="ellipsis"
-
-component ComposerContextChips
-  props
-    items: ComposerContextItem[]
-    remove: action
-  view
-    scroll overflow-x="auto" overflow-y="hidden" min-width=0 testId="composer-context"
-      row gap=2 padding="4px 14px 0"
-        for item in items key=item.id
-          button press=remove(item.id) appearance="none" display="flex" align-items="center" gap=3 flex-shrink=0 max-width=240 min-height=24 padding="1px 5px" border-radius=4 background-color="transparent" color="AccentColor" aria-label=`Remove ${item.label} context` testId=`composer-context-${item.id}`
-            image composerContextSymbol(item.kind) width=14 height=14 color="AccentColor"
-            text item.label min-width=0 font-size=15 line-height="19px" font-weight=500 line-clamp=1 text-overflow="ellipsis" color="AccentColor"
+                  text item.description flex=1 min-width=0 font-size=13 line-height="17px" color="composer-menu-muted" line-clamp=1 text-overflow="ellipsis"
 
 component ComposerQueue
   props
     items: ComposerQueueItem[]
-    editing: string
-    canEdit: bool
+    held: bool
+    canSend: bool
+    busy: bool
     edit: action
-    remove: action
-    release: action
+    change: action
   view
-    column margin="0 12px 6px" padding="8px 12px" border-radius=16 background-color="card" border="1px solid var(--edge)" gap=4 testId="composer-queue"
-      text (items.length > 0 ? `Draft queue · ${items.length}` : "Draft queue") font-size=12 line-height="17px" font-weight=700 color="muted"
-      if editing != ""
-        row align-items="center" gap=8 min-height=34
-          text "Editing queued draft" flex=1 font-size=13 color="muted" testId="composer-queue-editing"
-          button press=release appearance="none" min-height=32 color="AccentColor" testId="composer-queue-use-draft"
-            text "Use as draft" font-size=13
+    column padding="0 20px 24px" testId="composer-queue"
+      if held
+        column padding="12px 0" gap=8
+          text "Queue paused" font-size=14 color="muted"
+          button press=change("resume", "") disabled=busy appearance="none" background-color="AccentColor" color="white" min-height=44 border-radius=12 testId="composer-queue-resume"
+            text "Resume queue" font-size=16 font-weight=500
       for item in items key=item.id
-        row align-items="center" gap=8 min-height=38 testId=`composer-queue-${item.id}`
-          image "symbol:sf/text.line.first.and.arrowtriangle.forward" width=14 height=14 color="muted"
-          column flex=1 min-width=0 gap=2
-            text (item.text.trim() == "" ? "Attachments" : item.text) font-size=13 line-height="18px" line-clamp=1 text-overflow="ellipsis"
-            if item.attachments.length > 0
-              text `${item.attachments.length} ${item.attachments.length == 1 ? "attachment" : "attachments"}` font-size=11 color="muted"
-          button press=edit(item.id) disabled=(not canEdit or editing != "") appearance="none" width=32 height=32 aria-label="Edit queued draft" testId=`composer-queue-edit-${item.id}`
-            image "symbol:sf/pencil" width=13 height=13 color="muted"
-          button press=remove(item.id) disabled=(editing == item.id) appearance="none" width=32 height=32 aria-label="Remove queued draft" testId=`composer-queue-remove-${item.id}`
-            image "symbol:sf/xmark" width=11 height=11 color="muted"
-
-component ComposerFileDetails
-  props
-    items: DraftAttachment[]
-    preview: action
-  view
-    column padding="0 14px 6px" gap=4 testId="composer-file-details"
-      for item in items.filter(item => item.type != "image") key=item.localId
-        button press=preview(item) appearance="none" display="flex" align-items="center" gap=8 text-align="left" min-height=34 testId=`composer-file-detail-${item.localId}`
-          image "symbol:sf/doc.text" width=15 height=15 color="muted"
-          column flex=1 min-width=0
-            text item.name font-size=12 line-height="17px" line-clamp=1 text-overflow="ellipsis"
-            text `${attachmentSize(item.sizeBytes)} · ${item.mimeType}` font-size=11 line-height="15px" color="muted" line-clamp=1 text-overflow="ellipsis"
+        scroll swipeContent=`queued-content-${item.id}` swipeTrailing=`queued-remove-${item.id}` display="flex" overflow-x="scroll" overflow-y="hidden" scrollbar-width="none" scroll-snap-type="x mandatory" min-width=0
+          row id=`queued-content-${item.id}` width="100%" box-sizing="border-box" flex-shrink=0 scroll-snap-align="start" align-items="center" gap=10 padding="10px 0" min-height=56 border-bottom="0.5px solid var(--edge)" testId=`composer-queue-${item.id}`
+            button press=edit(item.id) disabled=busy appearance="none" flex=1 min-width=0 text-align="left" min-height=36 testId=`composer-queue-edit-${item.id}`
+              text (item.text.trim() == "" ? "Attachments" : item.text) font-size=14 line-height="19px" line-clamp=1 text-overflow="ellipsis"
+            if canSend
+              button press=change("start", item.id) disabled=busy appearance="none" display="flex" align-items="center" gap=6 padding="8px 16px" min-height=36 border-radius=18 background-color="AccentColor" color="white" testId=`composer-queue-send-${item.id}`
+                image "symbol:sf/arrow.up" width=13 height=13
+                text "Send now" font-size=14 font-weight=500
+          button id=`queued-remove-${item.id}` press=change("cancel", item.id) disabled=busy appearance="none" flex-shrink=0 scroll-snap-align="start" width=76 background-color="danger" color="white" display="flex" flex-direction="column" align-items="center" justify-content="center" gap=4 aria-label="Remove queued message" testId=`composer-queue-remove-${item.id}`
+            image "symbol:sf/trash" width=16 height=16
+            text "Remove" font-size=11 font-weight=500

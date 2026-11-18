@@ -177,11 +177,15 @@ final class T3NativeModule: ExactModule {
   private var device = DeviceTraits(kind: "phone", rail: false, split: false)
   private weak var container: WorkspaceContainer?
   private lazy var attachmentPreview = MainActor.assumeIsolated { AttachmentPreview(context: context) }
+  private lazy var voice = MainActor.assumeIsolated { ComposerVoice(context: context, changed: { [weak self] in self?.context.changed("voice") }) }
   private lazy var connections = WorkspaceConnections { [weak self] in
     self?.context.changed("connections")
   }
 
   override func call(_ request: [String: Any]) throws -> [String: Any] {
+    if (request["op"] as? String)?.hasPrefix("voice.") == true {
+      return try MainActor.assumeIsolated { try voice.call(request) }
+    }
     if let operation = request["op"] as? String, operation.hasPrefix("attachments.") {
       return try MainActor.assumeIsolated {
         switch operation {
@@ -200,12 +204,14 @@ final class T3NativeModule: ExactModule {
   }
 
   override func destroy() {
-    MainActor.assumeIsolated { attachmentPreview.end() }
+    MainActor.assumeIsolated { attachmentPreview.end(); voice.cancel() }
     connections.destroy()
   }
 
   override func later(_ request: [String: Any], reply: ExactReply) {
-    if request["op"] as? String == "attachments.preview" {
+    if (request["op"] as? String)?.hasPrefix("voice.") == true {
+      MainActor.assumeIsolated { voice.later(request, reply: reply) }
+    } else if request["op"] as? String == "attachments.preview" {
       MainActor.assumeIsolated { attachmentPreview.present(request, reply: reply) }
     } else if let op = request["op"] as? String, op == "markdown.highlight" || op == "markdown.measureTable" {
       MarkdownHighlight.later(request, reply: reply)
@@ -251,6 +257,7 @@ final class T3NativeModule: ExactModule {
   override func windowEnded(_ window: ExactWindow) {
     MainActor.assumeIsolated {
       attachmentPreview.end()
+      voice.cancel()
       probe?.removeFromSuperview()
       probe = nil
     }
@@ -351,6 +358,9 @@ final class T3NativeModule: ExactModule {
       },
       "workspace-composer-metrics": ExactNativeFactory { props, events in
         ComposerMetricsInstance(props: props, events: events)
+      },
+      "workspace-composer-editor": ExactNativeFactory(for: T3NativeModule.self) { module, props, events in
+        ComposerEditorInstance(props: props, events: events, temporary: module.context.temporary)
       },
       "workspace-filter-menu": ExactNativeFactory { props, events in
         try WorkspaceFilterMenuInstance(props: props, events: events)

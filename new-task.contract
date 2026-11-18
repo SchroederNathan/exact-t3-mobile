@@ -140,7 +140,7 @@ fn withWorkspace(draft: ThreadDraft, pick: WorkspacePick): ThreadDraft = ThreadD
 fn currentPick(draft: ThreadDraft, view: NewTaskView): WorkspacePick = match draft.task { case some(stamp) => match stamp.workspace { case some(pick) => pick, case none => WorkspacePick(mode=view.mode, branch=none, worktreePath=none, startFromOrigin=none, followsCurrentCheckout=false) }, case none => WorkspacePick(mode=view.mode, branch=none, worktreePath=none, startFromOrigin=none, followsCurrentCheckout=false) }
 fn toggledPick(draft: ThreadDraft, view: NewTaskView): WorkspacePick = WorkspacePick(mode=view.workspaceNext, branch=(view.workspaceNext == "local" and view.currentBranch != "" ? some(view.currentBranch) : none), worktreePath=none, startFromOrigin=currentPick(draft, view).startFromOrigin, followsCurrentCheckout=(view.workspaceNext == "local" and view.currentBranch == ""))
 fn branchPick(draft: ThreadDraft, view: NewTaskView, name: string, worktreePath: string): WorkspacePick = WorkspacePick(currentPick(draft, view), mode=view.mode, branch=some(name), worktreePath=(view.mode == "local" and worktreePath != "" and worktreePath != view.rootCwd ? some(worktreePath) : none), followsCurrentCheckout=false)
-fn clearedDraft(draft: ThreadDraft): ThreadDraft = ThreadDraft(draft, revision=draft.revision + 1, text="", attachments=[], pendingSend=none, task=(match draft.task { case some(stamp) => some(TaskStamp(stamp, workspace=none)), case none => none }))
+fn clearedDraft(draft: ThreadDraft): ThreadDraft = ThreadDraft(draft, revision=draft.revision + 1, text="", context="", freshContext=false, attachments=[], pendingSend=none, task=(match draft.task { case some(stamp) => some(TaskStamp(stamp, workspace=none)), case none => none }))
 
 component InlineControl
   props

@@ -1,0 +1,47 @@
+verify web: about 51 s, as its last run took; one report when it ends
+web: exact-ios-app served at http://127.0.0.1:22892/ (--port <n> or EXACT_PORT picks the port)
+refused at run time: 2 (the host's journal, 'logs'; each is a call or a wiring the app got wrong)
+  refused reply catalog; wall 17 ms: This thread is not associated with a connected environment. (test "composer command filtering …", test "disconnected file context n…")
+  refused reply catalog; wall 18 ms: This thread is not associated with a connected environment. (test "currency is not interpreted…")
+built web (7.3 s)
+compiler: 35 warnings
+  lower-colour-one-scheme ×17
+    app.contract:1418:94 warning [lower-colour-one-scheme] `#4d4d4d` on `border` stays the same in dark mode: name a role (`-exact-separator`) or leave it unsaid
+    also app.contract:1419:111; app.contract:1420:75; app.contract:1421:104; attachments.contract:274:101 and 12 more
+  lower-symbol-alias ×9
+    app.contract:1399:41 warning [lower-symbol-alias] symbol `sf/checkmark` is the role `checkmark`: write `symbol:checkmark`
+    also app.contract:1402:41; app.contract:1404:41; app.contract:1414:29; app.contract:1445:31 and 4 more
+  analyze-read-after-assign ×5
+    attachment-state.contract:492:27 warning [analyze-read-after-assign] `attachmentError` here is its value from before the action, not the one assigned at line 487: writes land when the action ends. Bind the new value and read it: `let next = …`, `attachmentError = next`, then `next`
+    also tool-row.contract:229:45; tool-row.contract:234:14; tool-group.contract:143:40; attachment-state.contract:69:18
+  lower-count-plural ×2
+    app.contract:1827:292 warning [lower-count-plural] this count reads "1 models" when it is 1: choose the noun by the number, `${n} ${n == 1 ? "model" : "models"}` with the count as `n`, or a `fn` that words every count (`contract vocab plural`)
+    also markdown.contract:223:262
+  lower-key-position ×2
+    app.contract:2441:72 warning [lower-key-position] this key reads `groupIndex`, the row's position: after a row is inserted or removed before others, their keys name other records, so what a row holds (its state, a field's focus or text, its motion) follows the position; key by something the record keeps, such as its id
+    also tool-row.contract:122:55
+compiler: 1 note, not counted (the platform's own look stands there; LLP 1121 D9)
+  app.tamber:4:3 warning [tamber-unreachable] accent-color on iOS disabled prominent buttons: iOS draws a disabled prominent glass button grey; style a pressable instead (LLP 1121 D8) (the first at line 181; LLP 1121 D9). The app ships ios (app.json `host.ios`, app.json `deploy.store.ios`); not shipping it? delete those keys
+tests: 8 passed, 0 failed
+failed and not arranged: 3 findings
+  "composer command filtering leaves unknown commands in the draft": resource catalog was refused once (This thread is not associated with a connected environment.)
+  "disconnected file context never fabricates a matching repository path": resource catalog was refused once (This thread is not associated with a connected environment.)
+  "currency is not interpreted as a skill command": resource catalog was refused once (This thread is not associated with a connected environment.)
+check first screen, 8 test ends, relaunch · 390x844, 1280x900 · light, dark: 1 finding
+  ("composer command filtering …", "disconnected file context n…", "currency is not interpreted…" only) failed   resource catalog: This thread is not associated with a connected environment.; the screen shows its placeholder or last value
+fixed type: 310 findings: a size the reader's text size does not move, or a word broken inside
+  fixed ×310
+    fixed    add-project.contract:209 text font-size=16: stays 16 px as Dynamic Type grows; a role (`font="-exact-title1"`) or a `rem` size ("1rem") scales
+    also add-project.contract:210 text font-size=13; add-project.contract:215 text font-size=14; add-project.contract:264 text font-size=14; add-project.contract:286 text font-size=14 and 305 more
+reload 5 test ends: no findings
+reload note: 1 screen reloads into another state (not counted)
+  note     /environments/new reloads into another state: "Use an HTTP or HTTPS server…" → "T3 Code", "Exact iOS", "Environments", … (2 more) ("a refused pairing keeps the address…")
+  a saved value must survive a reload; a game or a draft in progress may not
+largest text size (root font size 53 px at 390x844, iOS's body at its largest), 13 screens: nothing spills
+relaunch on "disconnected file context never fabrica…"'s store (0.3 s of real time): its state holds what the test left, though the first screen's text is a fresh launch's
+screenshots (.exact/verify): web-390x844-light.png web-390x844-dark.png web-1280x900-light.png web-1280x900-dark.png
+  test ends: web-t1-fresh-install-has-no.png web-t2-a-refused-pairing-keeps-the.png web-t3-back-from-add-environment.png web-t4-a-phone-keeps-the-list-tab.png web-t5-a-new-thread-draft-without-a.png web-t6-composer-command-filtering.png web-t7-disconnected-file-context.png web-t8-currency-is-not-interpreted.png; relaunch: web-relaunch.png
+open it: bun exact.mjs web (serves what verify checked)
+every finding, one a line: .exact/verify/web-findings.txt
+most findings are fixed (310): fix them, or, where the design means them, app.json's verify.accept takes each by its kind and testId (docs/recipes/tests.md)
+verify: 351 problems (351 findings: 310 fixed, 17 lower-colour-one-scheme, 9 lower-symbol-alias, 15 other; the tests passed) in 33.9 s; contract verify: done; 0 findings; properties: 0 held, 0 false, 0 counted only, 0 not exercised; 32 suggested properties (observed, not proved: keep the ones the app means); report and receipt: .exact/verify/properties.txt

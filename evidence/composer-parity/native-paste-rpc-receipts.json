@@ -1,0 +1,28 @@
+{
+  "environmentId": "fixture",
+  "uploadBodies": [
+    {
+      "attachmentId": "pending-1",
+      "bytes": 2431,
+      "sha256": "77ab9ff41898243826f6f10d0e8c097821a6c3124bab658d173323a36255fc66",
+      "mimeType": "image/png",
+      "leakedCredentials": false,
+      "environmentId": "fixture"
+    },
+    {
+      "attachmentId": "pending-2",
+      "bytes": 85,
+      "sha256": "c3acab986f97985a6d00940193e66b9d3ef7810531f74909ec16d0da38430998",
+      "mimeType": "text/plain",
+      "leakedCredentials": false,
+      "environmentId": "fixture"
+    }
+  ],
+  "stored": [],
+  "deletions": [
+    "pending-1",
+    "pending-2"
+  ],
+  "readRequests": [],
+  "httpReads": []
+}

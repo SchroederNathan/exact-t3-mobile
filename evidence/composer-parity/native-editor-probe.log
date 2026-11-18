@@ -1,0 +1,116 @@
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/native/composer/tests/EditorProbe.swift:133:35: warning: 'UITextItemInteraction' was deprecated in iOS 17.0: UITextItemInteraction has been replaced by text item methods on UITextViewDelegate [#DeprecatedDeclaration]
+131 |     check(input.selectedRange.location == mention.location + 1, "source caret maps over emoji and chip")
+132 |     let contextAttachment = input.attributedText.attribute(.attachment, at: mention.location, effectiveRange: nil) as! NSTextAttachment
+133 |     for (interaction, label) in [(UITextItemInteraction.invokeDefaultAction, "default action"), (.presentActions, "attachment actions"), (.preview, "system preview")] {
+    |                                   `- warning: 'UITextItemInteraction' was deprecated in iOS 17.0: UITextItemInteraction has been replaced by text item methods on UITextViewDelegate [#DeprecatedDeclaration]
+134 |       check(input.delegate?.textView?(input, shouldInteractWith: contextAttachment, in: NSRange(location: mention.location, length: 1), interaction: interaction) == false, "context blocks UIKit \(label)")
+135 |     }
+
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/native/composer/tests/EditorProbe.swift:134:29: warning: 'textView(_:shouldInteractWith:in:interaction:)' was deprecated in iOS 17.0: Replaced by primaryActionForTextItem: and menuConfigurationForTextItem: for additional customization options. [#DeprecatedDeclaration]
+132 |     let contextAttachment = input.attributedText.attribute(.attachment, at: mention.location, effectiveRange: nil) as! NSTextAttachment
+133 |     for (interaction, label) in [(UITextItemInteraction.invokeDefaultAction, "default action"), (.presentActions, "attachment actions"), (.preview, "system preview")] {
+134 |       check(input.delegate?.textView?(input, shouldInteractWith: contextAttachment, in: NSRange(location: mention.location, length: 1), interaction: interaction) == false, "context blocks UIKit \(label)")
+    |                             `- warning: 'textView(_:shouldInteractWith:in:interaction:)' was deprecated in iOS 17.0: Replaced by primaryActionForTextItem: and menuConfigurationForTextItem: for additional customization options. [#DeprecatedDeclaration]
+135 |     }
+136 |     check(input.delegate?.textView?(input, shouldInteractWith: NSTextAttachment(), in: NSRange(location: 0, length: 1), interaction: .invokeDefaultAction) == true, "ordinary attachments retain UIKit interaction")
+
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/native/composer/tests/EditorProbe.swift:136:27: warning: 'textView(_:shouldInteractWith:in:interaction:)' was deprecated in iOS 17.0: Replaced by primaryActionForTextItem: and menuConfigurationForTextItem: for additional customization options. [#DeprecatedDeclaration]
+134 |       check(input.delegate?.textView?(input, shouldInteractWith: contextAttachment, in: NSRange(location: mention.location, length: 1), interaction: interaction) == false, "context blocks UIKit \(label)")
+135 |     }
+136 |     check(input.delegate?.textView?(input, shouldInteractWith: NSTextAttachment(), in: NSRange(location: 0, length: 1), interaction: .invokeDefaultAction) == true, "ordinary attachments retain UIKit interaction")
+    |                           `- warning: 'textView(_:shouldInteractWith:in:interaction:)' was deprecated in iOS 17.0: Replaced by primaryActionForTextItem: and menuConfigurationForTextItem: for additional customization options. [#DeprecatedDeclaration]
+137 |     let chipActions = editor.view.accessibilityElements?.compactMap { $0 as? UIAccessibilityElement } ?? []
+138 |     check(chipActions.count == 1 && chipActions[0].accessibilityLabel == "a.ts" && chipActions[0].accessibilityTraits.contains(.button), "inline context exposes a labeled accessibility button")
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/modules/apple/ComposerEditor.swift:449:122: warning: 'UITextItemInteraction' was deprecated in iOS 17.0: UITextItemInteraction has been replaced by text item methods on UITextViewDelegate [#DeprecatedDeclaration]
+447 |     return true
+448 |   }
+449 |   func textView(_ textView: UITextView, shouldInteractWith attachment: NSTextAttachment, in range: NSRange, interaction: UITextItemInteraction) -> Bool {
+    |                                                                                                                          `- warning: 'UITextItemInteraction' was deprecated in iOS 17.0: UITextItemInteraction has been replaced by text item methods on UITextViewDelegate [#DeprecatedDeclaration]
+450 |     !(attachment is ContextAttachment)
+451 |   }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/var/folders/1c/fycb3xvd6fl1xrk0nyjjq3mm0000gn/T/exact-composer-probe-wv3na0z9/ComposerProbe.app: replacing existing signature
+START: native composer probe
+PASS: hidden keyboard retains resting composer inset
+PASS: software keyboard applies upstream opened offset
+PASS: hardware keyboard accessory does not move composer
+PASS: floating keyboard does not move bottom composer
+PASS: keyboard dismissal restores resting composer inset
+PASS: rendered light file chip meets reference contrast on all message surfaces
+PASS: rendered light image chip meets reference contrast on all message surfaces
+PASS: rendered light skill chip meets reference contrast on all message surfaces
+PASS: rendered light thread chip meets reference contrast on all message surfaces
+PASS: rendered light environment chip meets reference contrast on all message surfaces
+PASS: rendered light mention chip meets reference contrast on all message surfaces
+PASS: rendered light review-comment chip meets reference contrast on all message surfaces
+PASS: rendered dark file chip meets reference contrast on all message surfaces
+PASS: rendered dark image chip meets reference contrast on all message surfaces
+PASS: rendered dark skill chip meets reference contrast on all message surfaces
+PASS: rendered dark thread chip meets reference contrast on all message surfaces
+PASS: rendered dark environment chip meets reference contrast on all message surfaces
+PASS: rendered dark mention chip meets reference contrast on all message surfaces
+PASS: rendered dark review-comment chip meets reference contrast on all message surfaces
+PASS: first blurred chip activation focuses the composer
+PASS: first blurred chip activation does not open context
+PASS: context is a real inline attachment
+PASS: context source is compact in display
+PASS: source caret maps over emoji and chip
+PASS: context blocks UIKit default action
+PASS: context blocks UIKit attachment actions
+PASS: context blocks UIKit system preview
+PASS: ordinary attachments retain UIKit interaction
+PASS: inline context exposes a labeled accessibility button
+PASS: accessibility activation opens the matching context
+PASS: copy preserves complete context source
+PASS: backspace removes context atomically
+PASS: native edit has increasing revision
+PASS: deleted context cannot activate a stale accessibility button
+PASS: stale controlled echo cannot restore deleted chip
+PASS: acknowledged external changes apply
+PASS: Unicode typing serializes losslessly
+PASS: agent typing uses native revision protocol
+PASS: stale echo cannot replace newer typing
+PASS: switching draft resets the revision scope
+PASS: software Return inserts a newline
+PASS: hardware Return submits by default
+PASS: hardware Shift Return inserts a newline
+PASS: hardware Command Return requests alternate send
+PASS: undo restores deleted context after controlled acknowledgement
+PASS: rich copy includes only selected context records
+PASS: clipboard envelope includes source environment
+PASS: clipboard schema removes unrelated attachment identifiers
+PASS: native fragment imports supported thread context
+PASS: identical context keeps its identity on repeated paste
+PASS: conflicting paste receives a new identity and matching source link
+PASS: paste preserves existing thread and attachment metadata
+PASS: environment and review-comment context survive rich clipboard round trip
+PASS: rich local paste emits full text with one document revision
+PASS: rich paste preserves UTF16 cursor (got 107, expected 107)
+PASS: rich local paste includes imported context records
+PASS: consecutive paste publishes full metadata before any controlled acknowledgement
+PASS: consecutive paste retains both source links and advances one revision
+PASS: image paste creates an owned picker-compatible file
+PASS: image paste waits for staged attachment insertion without changing text
+PASS: file URL paste stages readable bytes with file metadata
+PASS: remote attachment clipboard retains source environment for explicit transfer
+PASS: remote attachment identifiers are never inserted before transfer
+PASS: structured thread context routes through TypeScript transfer resolution without native merge
+PASS: mixed thread and attachment context stays on the TypeScript transfer path
+PASS: local non-transfer context remains on the native merge path
+PASS: local skill text is not promoted to peer transfer
+PASS: HTML clipboard envelope imports across compatible clients
+PASS: valid HTML recovers context when custom clipboard data is malformed
+PASS: valid HTML recovers context when custom clipboard schema is unsupported
+PASS: plain thread links defer to context resolution without duplicate text insertion
+PASS: HTTPS thread links use the same context resolution path
+PASS: multiple clipboard items retain native plain-paste handling
+PASS: unsupported file fragment falls back to ordinary text
+PASS: fallback never imports cross-environment attachment IDs
+PASS: malformed clipboard envelope is ignored
+PASS: initial focus request does not open keyboard
+PASS: changed focus request reaches native editor after mount
+PASS: native composer checks complete
+

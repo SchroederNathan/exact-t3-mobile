@@ -168,11 +168,13 @@ test("attachment drafts migrate old text and preserve pending delivery identitie
     pendingSend: pending,
   });
   expect((await loadDrafts(fixture(state.contents).storage))[0]).toEqual({
+    context: "",
+    freshContext: false,
     id: "a:thread",
     text: "",
     revision: 4,
     attachments: [attachment],
-    pendingSend: { ...pending, error: "", launch: null },
+    pendingSend: { ...pending, context: "", freshContext: false, error: "", launch: null },
     task: null,
   });
   await expect(
@@ -237,4 +239,18 @@ test("attachment drafts migrate old text and preserve pending delivery identitie
     error: "Upload was interrupted. Retry or remove this attachment.",
     path: attachment.path,
   });
+});
+
+test("structured inline context and fresh-session intent survive saves, reload, and interrupted send recovery", async () => {
+  const { storage, state } = fixture();
+  const context = JSON.stringify({ version: 1, records: [{ version: 1, kind: "thread", contextId: "related", label: "Related thread", environmentId: "env", threadId: "related" }] });
+  const text = "Review [Related thread](t3-context://v1/thread/related)";
+  const pendingSend = { commandId: "command", messageId: "message", revision: 3, text, context, freshContext: true, attachments: [], paths: [], selection: "", approval: "", state: "prepared", error: "", launch: null };
+  await writeDraft(storage, { ...emptyDraft("env:thread"), revision: 3, text, context, freshContext: true, pendingSend });
+  const reloaded = await loadDrafts(fixture(state.contents).storage);
+  expect(reloaded[0]).toMatchObject({ text, context, freshContext: true, pendingSend });
+  expect(restoreDrafts(reloaded)[0]).toMatchObject({ revision: 4, text, context, freshContext: true, pendingSend: { ...pendingSend, revision: 4, state: "unknown" } });
+  await expect(writeDraft(storage, { ...reloaded[0]!, context: "" })).rejects.toThrow("different content");
+  await writeDraft(storage, { ...reloaded[0]!, revision: 4, text: "", context: "", freshContext: false, pendingSend: null });
+  expect((await loadDrafts(fixture(state.contents).storage))[0]).toEqual({ ...emptyDraft("env:thread"), revision: 4 });
 });

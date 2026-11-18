@@ -458,6 +458,8 @@ export function newTaskSources(boundary: NewTaskBoundary): Pick<
         draft: {
           id: key,
           text: "",
+          context: "",
+          freshContext: false,
           revision: 1,
           attachments: [],
           pendingSend: null,

@@ -39,11 +39,11 @@ members T3Code
   resource attachmentUpload1 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 1 and slot.state == "uploading"))) as shape UploadProgress else empty()
   resource attachmentUpload2 = uploadAttachment(first(transferSlots.filter(slot => slot.index == 2 and slot.state == "uploading"))) as shape UploadProgress else empty()
   resource attachmentPreviews = loadAttachmentPreviews(activeToolThreadId, toolViewKey, attachmentDemands.filter(demand => demand.threadId == activeToolThreadId).map(demand => AttachmentDemand(demand, viewKey=toolViewKey)), previewClock) with time.epochAtZero + previewNow as shape AttachmentBatch else empty()
-  derive activeDraft = threadDraft(savedDrafts, draftEdits, activeComposerId)
+  derive activeDraft = threadDraft(savedDrafts, draftEdits, composerEditingDraftId)
   resource composerSendScope = observeComposerSend(activeToolThreadId, `${threadRoute.id}`, activeDraft.revision) as shape ComposerSendContext else empty()
   derive composerAttachments = activeDraft.attachments
   derive uploadProgresses = [attachmentUpload0, attachmentUpload1, attachmentUpload2]
-  derive attachmentSendReady = composerAttachments.filter(item => item.state != "uploaded" or not uploadedVerified(verifiedAttachments, activeComposerId, item, attachmentAccess.accessKey)).length == 0
+  derive attachmentSendReady = composerAttachments.filter(item => item.state != "uploaded" or not uploadedVerified(verifiedAttachments, composerEditingDraftId, item, attachmentAccess.accessKey)).length == 0
   derive pendingMessage = activeDraft.pendingSend
   derive attachmentStatus = composerAttachments.filter(item => item.state == "failed").length > 0 ? composerAttachments.filter(item => item.state == "failed").map(item => `${item.name}: ${item.error}`).join("\n") : composerAttachments.filter(item => item.state == "local" or item.state == "uploading").length > 0 ? "Uploading attachments…" : not attachmentSendReady ? "Checking attachments…" : ""
   derive galleryNext = match attachmentViewer { case some(viewer) => first(viewer.items.filter(item => item.state == "loading" and item.index == (gallerySelection.presentationId == viewer.presentationId ? gallerySelection.selectedIndex : viewer.selectedIndex))), case none => none }
@@ -114,13 +114,17 @@ members T3Code
         persistDraft(activeDraft)
 
   action pickAttachments(photos: bool)
-    pickDraftAttachments(activeComposerId, photos)
+    pickDraftAttachments(composerEditingDraftId, photos)
 
   action pickDraftAttachments(draftId: string, photos: bool)
     if draftsReady and attachmentAccess.allowed and attachmentAccess.uploads and not pending(stagedAttachments) and attachmentDrafts.filter(draft => draft.id == draftId).length > 0
       let serial = pickerSerial + 1
       pickerSerial = serial
       pickerIntent = PickerIntent(threadId=attachmentThreadId, draftId=draftId, routeId=`${threadRoute.id}`, serial=serial, photos=photos)
+      if draftId == composerEditingDraftId
+        composerAttachmentStart = composerSession.cursor
+        composerAttachmentEnd = composerSession.selectionEnd
+        composerAttachmentRevision = activeDraft.revision
       attachmentError = ""
       showPicker(photos ? "attachment-photos" : "attachment-files")
     else
@@ -129,7 +133,7 @@ members T3Code
   action pickedAttachments(files: Picked[])
     if pickerIntent.threadId == attachmentThreadId and pickerIntent.routeId == `${threadRoute.id}` and files.length > 0 and attachmentDrafts.filter(draft => draft.id == pickerIntent.draftId).length > 0
       let draft = threadDraft(savedDrafts, draftEdits, pickerIntent.draftId)
-      send stagedAttachments = stagePickedAttachments(pickerIntent, files, pickerIntent.draftId == activeComposerId ? [activeDraft] : questionAttachmentTargets.filter(target => target.key == (match first(questionAttachmentTargets.filter(entry => entry.draft.id == pickerIntent.draftId)) { case some(target) => target.key, case none => "" })).map(target => threadDraft(savedDrafts, draftEdits, target.draft.id)), draft, attachmentAccess.maxFileBytes)
+      send stagedAttachments = stagePickedAttachments(pickerIntent, files, pickerIntent.draftId == composerEditingDraftId ? [activeDraft] : questionAttachmentTargets.filter(target => target.key == (match first(questionAttachmentTargets.filter(entry => entry.draft.id == pickerIntent.draftId)) { case some(target) => target.key, case none => "" })).map(target => threadDraft(savedDrafts, draftEdits, target.draft.id)), draft, attachmentAccess.maxFileBytes)
 
   action cancelledAttachments
     pickerIntent = PickerIntent(threadId="", draftId="", routeId="", serial=pickerSerial, photos=true)
@@ -141,7 +145,10 @@ members T3Code
           let draft = threadDraft(savedDrafts, draftEdits, reply.intent.draftId)
           let revision = draft.revision + 1
           let items = reply.attachments.map(item => DraftAttachment(item, insertionRevision=revision))
-          persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.concat(items)))
+          if reply.intent.draftId == composerEditingDraftId
+            insertStagedComposerAttachments(draft, items)
+          else
+            persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.concat(items)))
           attachmentError = reply.error
         else
           send cleanedAttachment = cleanupStagedAttachments(reply.attachments)
@@ -227,14 +234,15 @@ members T3Code
         transferSlots = transferSlots
 
   action removeAttachment(localId: string)
-    removeDraftAttachment(activeComposerId, localId)
+    removeDraftAttachment(composerEditingDraftId, localId)
 
   action removeDraftAttachment(draftId: string, localId: string)
     let draft = threadDraft(savedDrafts, draftEdits, draftId)
     match first(draft.attachments.filter(item => item.localId == localId))
       case some(item)
         let revision = draft.revision + 1
-        persistDraft(ThreadDraft(draft, revision=revision, attachments=draft.attachments.filter(entry => entry.localId != localId)))
+        let source = draftId == composerEditingDraftId ? (match first(composerDocument.attachments.filter(ref => ref.attachmentId == item.localId or ref.attachmentId == item.id)) { case some(ref) => ref.source, case none => "" }) : ""
+        persistDraft(ThreadDraft(draft, revision=revision, text=(source == "" ? draft.text : draft.text.replaceAll(source, "")), attachments=draft.attachments.filter(entry => entry.localId != localId)))
         transferSlots = transferSlots.filter(slot => slot.draftId != draftId or slot.localId != localId)
         if draft.pendingSend == none
           attachmentCleanup = attachmentCleanup.concat([CleanupAttachment(threadId=attachmentThreadId, draftId=draftId, accessKey=attachmentAccess.accessKey, attachmentId=item.id, path=item.path, revision=revision)])
@@ -242,7 +250,7 @@ members T3Code
         attachmentError = attachmentError
 
   action retryAttachment(localId: string)
-    retryDraftAttachment(activeComposerId, localId)
+    retryDraftAttachment(composerEditingDraftId, localId)
 
   action retryDraftAttachment(draftId: string, localId: string)
     let draft = threadDraft(savedDrafts, draftEdits, draftId)
@@ -353,7 +361,7 @@ members T3Code
       send viewerPrepared = prepareToolImageViewer(threadId, `${threadRoute.id}`, rowId, index)
 
   action previewDraftAttachment(item: DraftAttachment)
-    previewAttachmentDraft(activeComposerId, item)
+    previewAttachmentDraft(composerEditingDraftId, item)
 
   action previewAttachmentDraft(draftId: string, item: DraftAttachment)
     if not pending(viewerPresented) and not pending(viewerPrepared)
