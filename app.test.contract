@@ -88,27 +88,29 @@ test "queued drafts can be edited and removed"
   clock data
   clock settle
   expect text "composer" == "Draft to queue "
-  type "composer" "Edited queued draft"
-  tap "composer-queue-add"
+  type "composer" "Edited queued draft /queue"
+  tap "composer-command-queue"
+  clock +2
   clock data
   clock settle
   expect text "composer" == ""
   tap "composer-queue-edit-draft-1"
   clock data
   clock settle
-  expect text "composer" == "Edited queued draft"
+  expect text "composer" == "Edited queued draft "
   tap "composer-queue-use-draft"
   expect tree missing "composer-queue"
-  expect text "composer" == "Edited queued draft"
+  expect text "composer" == "Edited queued draft "
 
 test "voice availability keeps the current draft intact"
   at "/threads/composer-test"
   clock data
   clock settle
-  type "composer" "Keep this message"
-  tap "composer-voice"
+  type "composer" "Keep this message /voice"
+  tap "composer-command-voice"
+  clock +2
   expect tree has "composer-voice-status"
-  expect text "composer" == "Keep this message"
+  expect text "composer" == "Keep this message "
   tap "composer-voice-dismiss"
   expect tree missing "composer-voice-status"
 

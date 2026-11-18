@@ -51,7 +51,7 @@ fn emptyComposerSession(id: string): ComposerSession = ComposerSession(id=id, co
 fn sessionForComposer(sessions: ComposerSession[], id: string): ComposerSession = match first(sessions.filter(session => session.id == id)) { case some(session) => session, case none => emptyComposerSession(id) }
 fn composerLastToken(text: string): string = match first(text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ").slice(-1)) { case some(token) => token, case none => "" }
 fn composerTrigger(text: string, cursor: number): ComposerTrigger = ComposerTrigger(kind=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("/") ? "/" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("@") ? "@" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("$") and parseNumber(composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1)) == none ? "$" : composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).startsWith("#") ? "#" : "", query=composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).slice(1), start=(cursor < 0 ? text.length : cursor) - composerLastToken(text.slice(0, cursor < 0 ? text.length : cursor)).length, end=(cursor < 0 ? text.length : cursor))
-fn composerContextSymbol(kind: string): string = kind == "file" ? "symbol:sf/doc" : kind == "thread" ? "symbol:sf/bubble.left" : kind == "environment" ? "symbol:sf/desktopcomputer" : kind == "pull-request" ? "symbol:sf/arrow.triangle.pull" : kind == "model" ? "symbol:sf/cpu" : "symbol:sf/command"
+fn composerContextSymbol(kind: string): string = kind == "file" ? "symbol:sf/doc" : kind == "thread" ? "symbol:sf/bubble.left" : kind == "environment" ? "symbol:sf/desktopcomputer" : kind == "pull-request" ? "symbol:sf/arrow.triangle.pull" : kind == "model" ? "symbol:sf/cpu" : "symbol:sf/terminal"
 fn composerCommandMatches(item: ComposerCommandItem, query: string): bool = query == "" or item.label.toLowerCase().includes(query.toLowerCase()) or item.description.toLowerCase().includes(query.toLowerCase())
 fn composerPathContexts(text: string): ComposerContextItem[] = text.replaceAll("\n", " ").replaceAll("\t", " ").split(" ").slice(0, -1).filter(token => token.startsWith("@") and token.length > 1).map(token => ComposerContextItem(id=`file:${token.slice(1)}`, label=token.slice(1), kind="file", detail="Repository path", path=token.slice(1), insertText=token))
 fn composerBuiltins(): ComposerCommandItem[] = [ComposerCommandItem(id="clear", label="/clear", description="Clear the message text and context", kind="clear", insertText="", path=""), ComposerCommandItem(id="files", label="/files", description="Mention a file or thread", kind="trigger", insertText="@", path=""), ComposerCommandItem(id="models", label="/model", description="Choose a model and reasoning level", kind="model-settings", insertText="", path=""), ComposerCommandItem(id="queue", label="/queue", description="Save this message to the draft queue", kind="queue", insertText="", path=""), ComposerCommandItem(id="attach", label="/attach", description="Choose a document from Files", kind="attachment", insertText="", path=""), ComposerCommandItem(id="voice", label="/voice", description="Voice input availability", kind="voice", insertText="", path="")]
@@ -201,21 +201,20 @@ component ComposerCommandSurface
     choose: action
     dismiss: action
   view
-    column border-radius=18 background-color="card" border="1px solid var(--edge)" margin="0 12px 6px" max-height=260 overflow="hidden" testId="composer-commands"
-      row align-items="center" padding="4px 8px 0 14px"
-        text (trigger.kind == "/" ? "Commands" : trigger.kind == "@" ? "Files & context" : trigger.kind == "$" ? "Skills" : "Pull requests") flex=1 font-size=12 font-weight=700 color="muted"
-        button press=dismiss appearance="none" width=32 height=32 aria-label="Close commands" testId="composer-commands-close"
-          image "symbol:sf/xmark" width=10 height=10 color="muted"
-      scroll min-height=0 overflow-x="hidden" max-height=220
+    column border-radius=16 backgroundMaterial="glass" overflow="hidden" margin="0 12px 8px" max-height=180 testId="composer-commands"
+      if trigger.kind == "/" or trigger.kind == "@" or trigger.kind == "$" or trigger.kind == "#"
+        text (trigger.kind == "/" ? "Commands" : trigger.kind == "@" ? "Files & context" : trigger.kind == "$" ? "Skills" : "Pull requests") padding="10px 14px 4px" font-size=10 line-height="13px" font-weight=700 letter-spacing="0.8px" text-transform="uppercase" color="muted"
+      scroll min-height=0 overflow-x="hidden" max-height=180
         column
           if items.length == 0
-            text (trigger.kind == "$" ? "This connection has not provided any skills." : trigger.kind == "@" ? "No matching files or context. Type a repository path after @." : "No matching commands") padding="10px 14px 16px" font-size=13 line-height="18px" color="muted" testId="composer-commands-empty"
-          for item in items key=item.id
-            button press=choose(item) appearance="none" display="flex" align-items="center" gap=10 text-align="left" min-height=50 padding="7px 14px" width="100%" box-sizing="border-box" retainFocus=true testId=`composer-command-${item.id}`
-              image composerContextSymbol(item.kind) width=18 height=18 color="muted"
-              column flex=1 min-width=0 gap=2
-                text item.label font-size=14 line-height="19px" font-weight=500 line-clamp=1 text-overflow="ellipsis"
-                text item.description font-size=12 line-height="16px" color="muted" line-clamp=1 text-overflow="ellipsis"
+            text (trigger.kind == "$" ? "No skills found." : trigger.kind == "@" ? "No matching files or context." : "No matching commands.") padding="10px 14px" font-size=12 line-height="17px" color="muted" testId="composer-commands-empty"
+          for item, index in items key=item.id
+            column border-bottom=(index < items.length - 1 ? "1px solid border-subtle" : "none")
+              button press=choose(item) appearance="none" display="flex" align-items="center" gap=10 text-align="left" min-height=50 padding="10px 14px" width="100%" box-sizing="border-box" retainFocus=true testId=`composer-command-${item.id}`
+                image composerContextSymbol(item.kind) width=16 height=16 color="muted"
+                text item.label flex-shrink=0 font-size=16 line-height="20px" font-weight=500 line-clamp=1 text-overflow="ellipsis"
+                if item.description != ""
+                  text item.description flex=1 min-width=0 font-size=12 line-height="16px" color="muted" line-clamp=1 text-overflow="ellipsis"
 
 component ComposerContextChips
   props
@@ -223,12 +222,11 @@ component ComposerContextChips
     remove: action
   view
     scroll overflow-x="auto" overflow-y="hidden" min-width=0 testId="composer-context"
-      row gap=6 padding="8px 14px 4px"
+      row gap=2 padding="4px 14px 0"
         for item in items key=item.id
-          button press=remove(item.id) appearance="none" display="flex" align-items="center" gap=6 flex-shrink=0 max-width=240 min-height=30 padding="4px 9px" border-radius=9 background-color="bubble" aria-label=`Remove ${item.label} context` testId=`composer-context-${item.id}`
-            image composerContextSymbol(item.kind) width=12 height=12 color="muted"
-            text item.label min-width=0 font-size=12 line-height="17px" line-clamp=1 text-overflow="ellipsis"
-            image "symbol:sf/xmark" width=8 height=8 color="muted"
+          button press=remove(item.id) appearance="none" display="flex" align-items="center" gap=3 flex-shrink=0 max-width=240 min-height=24 padding="1px 5px" border-radius=4 background-color="transparent" color="AccentColor" aria-label=`Remove ${item.label} context` testId=`composer-context-${item.id}`
+            image composerContextSymbol(item.kind) width=14 height=14 color="AccentColor"
+            text item.label min-width=0 font-size=15 line-height="19px" font-weight=500 line-clamp=1 text-overflow="ellipsis" color="AccentColor"
 
 component ComposerQueue
   props

@@ -1640,13 +1640,6 @@ component T3Code
                                     button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
                                       text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
                               row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
-                                button press=openComposerCommands disabled=not draftsReady appearance="none" width=32 height=44 aria-label="Commands and context" testId="composer-command-open"
-                                  image "symbol:sf/command" width=16 height=16 color="muted"
-                                button press=requestComposerVoice appearance="none" width=32 height=44 aria-label="Voice input" testId="composer-voice"
-                                  image "symbol:sf/mic" width=16 height=16 color="muted"
-                                if composerExpanded or composerSession.editingQueueId != ""
-                                  button press=queueComposer disabled=not canQueueComposer appearance="none" width=32 height=44 aria-label=(composerSession.editingQueueId != "" ? "Save queued draft" : "Add to draft queue") testId="composer-queue-add"
-                                    image (composerSession.editingQueueId != "" ? "symbol:sf/checkmark" : "symbol:sf/text.badge.plus") width=16 height=16 color=(canQueueComposer ? "muted" : "send-disabled-ink")
                                 button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
                                   row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
                                     ProviderIcon(provider=composerModel.provider, size=16)
