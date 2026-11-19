@@ -1509,7 +1509,7 @@ component T3Code
                         scroll id="draft-viewport" flex=1 min-height=0 testId="preparing-viewport"
                           PreparingThread(text=(match launchOf(allDrafts, e.params.id) { case some(draft) => launchText(allDrafts, e.params.id), case none => "" }), failed=(routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "failed"), reason=launchError(allDrafts, e.params.id), edit=editLaunchedTask(e.params.id))
                       else
-                        list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
+                        list id="thread-messages" testId="thread-messages" min-width=0 appearance="none" virtualized=true scroll-start="end" scrollFollowEnd=threadFollowing scroll=threadScrolled(`${e.params.id}:${e.id}`) flex=1 min-height=0 padding-top=12 padding-left=16 padding-right=16 padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12) scroll-padding-bottom=(e.params.id == activeThreadId and workingStatus.length > 0 ? 48.5 : 12)
                           for item in threadRows(selectedThread(catalog, e.params.id), expandedTools, e.params.id) key=(match item { case some(row) => row.id, case none => "history" })
                             column width="100%" box-sizing="border-box"
                               match item
