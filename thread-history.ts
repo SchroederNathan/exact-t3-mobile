@@ -2,6 +2,7 @@ import { displayAttachments, type DisplayAttachment } from "./attachments";
 import { markdownBlocks } from "./markdown";
 import { liveToolTitle, toolSummary, type ToolSummary } from "./tool-activity";
 import { projectControls } from "./thread-controls";
+import { projectComposerQueue } from "./composer-queue";
 
 export type HistoryRecord = Record<string, unknown>;
 export interface TimelineRow {
@@ -208,6 +209,14 @@ export class ThreadHistory {
 
   visibleRows(): readonly TimelineRow[] {
     return this.rows;
+  }
+
+  composerQueue() {
+    const messages = new Map(this.rawMessages);
+    for (const item of this.items.values()) {
+      if (item.type === "user_message") messages.set(text(item.messageId) || text(item.id), { ...item, id: text(item.messageId) || text(item.id) });
+    }
+    return projectComposerQueue(this.runs.values(), messages.values(), this.providerSessions.values(), this.synchronized && !this.deleted, this.providerThreads.values());
   }
 
   controls(environmentId: string) {

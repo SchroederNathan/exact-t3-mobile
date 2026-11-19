@@ -1,0 +1,91 @@
+test "provider commands and real repository paths come from the connected environment"
+  request POST "http://127.0.0.1:0/fixture/composer/reset"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:composer"
+  clock data
+  clock settle
+  type "composer" "/go"
+  clock data
+  clock settle
+  expect tree has "composer-command-pcmd:goal"
+  expect tree missing "composer-command-cmd:model"
+  tap "composer-command-pcmd:goal"
+  clock data
+  clock settle
+  expect text "composer" == "/goal "
+  type "composer" "Review @src/App"
+  clock data
+  clock settle
+  expect tree has "composer-command-path:src/App.ts"
+  tap "composer-command-path:src/App.ts"
+  clock data
+  clock settle
+  expect state composer == "Review [App.ts](src/App.ts) "
+  type "composer" "$rev"
+  clock data
+  clock settle
+  expect tree has "composer-command-skill:review"
+  tap "composer-command-skill:review"
+  clock data
+  clock settle
+  expect state composer == "$review "
+
+test "editing, cancelling, removing, resuming and sending queued messages use the server queue"
+  request POST "http://127.0.0.1:0/fixture/composer/reset"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:composer"
+  clock data
+  clock settle
+  type "composer" "Keep my unsent draft"
+  tap "composer-queue-toggle"
+  clock settle
+  expect tree has "composer-queue-edit-queued-1"
+  tap "composer-queue-edit-queued-1"
+  clock data
+  clock settle
+  expect state composer == "Queued message 1"
+  type "composer" "Cancelled edit"
+  tap "composer-queue-cancel"
+  clock data
+  clock settle
+  expect state composer == "Keep my unsent draft"
+  tap "composer-queue-toggle"
+  clock settle
+  tap "composer-queue-edit-queued-1"
+  clock data
+  clock settle
+  type "composer" "Edited server message"
+  tap "send"
+  clock data
+  clock settle
+  expect state composer == "Keep my unsent draft"
+  tap "composer-queue-toggle"
+  clock settle
+  expect text "composer-queue-edit-queued-1" == "Edited server message"
+  tap "composer-queue-remove-queued-2"
+  clock data
+  clock settle
+  expect tree missing "composer-queue-edit-queued-2"
+  tap "composer-queue-resume"
+  clock data
+  clock settle
+  expect tree missing "composer-queue-resume"
+  tap "composer-queue-send-queued-1"
+  clock data
+  clock settle
+  expect tree missing "composer-queue-edit-queued-1"
+  request POST "http://127.0.0.1:0/fixture/composer/assert-queue"

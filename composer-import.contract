@@ -1,0 +1,73 @@
+use ThreadDraft, DraftAttachment from "./attachments.contract"
+use ComposerReply, ComposerSession from "./composer-parity.contract"
+
+shape ComposerImportPrepared
+  id: string
+  revision: number
+  plan: string
+  error: string
+
+shape ComposerImportCompleted
+  id: string
+  revision: number
+  text: string
+  context: string
+  cursor: number
+  attachments: DraftAttachment[]
+  failures: string[]
+  skippedThreads: string[]
+  error: string
+
+members T3Code
+  state composerImportAlertTitle = ""
+  state composerImportAlertBody = ""
+  mutation composerImportPrepared as shape ComposerImportPrepared then afterComposerImportPrepared
+  mutation composerImportCompleted as shape ComposerImportCompleted then afterComposerImportCompleted
+  mutation composerImportDiscarded as shape ComposerReply queue
+  derive composerImportBusy = pending(composerImportPrepared) or pending(composerImportCompleted)
+
+  action importComposerFragment(fragment: string, pastedText: string, start: number, end: number)
+    if draftsReady and attachmentAccess.allowed and not composerImportBusy
+      attachmentError = ""
+      send composerImportPrepared = prepareComposerImport(activeDraft, composerEnvironmentId, fragment, pastedText, start, end, savedDrafts.concat(draftEdits))
+    else
+      attachmentError = composerImportBusy ? "Wait for the copied attachments to finish importing." : "Check your connection and attachment permission."
+
+  action afterComposerImportPrepared
+    match composerImportPrepared
+      case some(reply)
+        if reply.error != ""
+          composerImportAlertTitle = "Could not paste context"
+          composerImportAlertBody = reply.error
+          showModal("composer-import-alert")
+        else if reply.id == composerEditingDraftId and reply.revision == activeDraft.revision
+          send composerImportCompleted = materializeComposerImport(reply.plan)
+        else
+          send composerImportDiscarded = discardComposerImport(reply.plan)
+      case none
+        composerImportAlertTitle = "Could not paste context"
+        composerImportAlertBody = "The copied context could not be prepared."
+        showModal("composer-import-alert")
+
+  action afterComposerImportCompleted
+    match composerImportCompleted
+      case some(reply)
+        if reply.error != ""
+          composerImportAlertTitle = "Could not paste context"
+          composerImportAlertBody = reply.error
+          showModal("composer-import-alert")
+        else if reply.id == composerEditingDraftId and reply.revision == activeDraft.revision
+          persistDraft(ThreadDraft(activeDraft, text=reply.text, context=reply.context, attachments=activeDraft.attachments.concat(reply.attachments), revision=activeDraft.revision + 1))
+          storeComposerSession(ComposerSession(composerSession, cursor=reply.cursor, selectionEnd=reply.cursor, selectionSerial=composerSession.selectionSerial + 1, focusSerial=composerSession.focusSerial + 1))
+          if reply.failures.length > 0 or reply.skippedThreads.length > 0
+            let attachmentWarning = reply.failures.length > 0 ? "Some attachments could not be copied. Reconnect to the source environment and copy them again." : ""
+            let threadWarning = reply.skippedThreads.length > 0 ? `${reply.skippedThreads.map(title => `"${title}"`).join(", ")} ${reply.skippedThreads.length == 1 ? "is" : "are"} on another machine.` : ""
+            composerImportAlertTitle = "Some context is unavailable"
+            composerImportAlertBody = [attachmentWarning, threadWarning, "Those references are marked unavailable."].filter(warning => warning != "").join("\n\n")
+            showModal("composer-import-alert")
+        else
+          send cleanedAttachment = cleanupStagedAttachments(reply.attachments)
+      case none
+        composerImportAlertTitle = "Could not paste context"
+        composerImportAlertBody = "The copied context could not be imported."
+        showModal("composer-import-alert")

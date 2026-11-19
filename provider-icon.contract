@@ -1,0 +1,16 @@
+component ProviderIcon
+  props
+    provider: string
+    size: number
+  derive monochrome = provider == "codex" or provider == "cursor" or provider == "grok" or provider == "fx" or provider == "pi" or provider == "openrouter" or provider == "acpRegistry" or provider == ""
+  derive source = provider == "claudeAgent" ? "assets/provider-claude.svg" : provider == "antigravity" ? "assets/provider-antigravity.png" : provider == "acpRegistry" ? "assets/provider-acp-registry.svg" : ["codex", "cursor", "grok", "fx", "kiro", "muse", "pi", "openrouter"].includes(provider) ? `assets/provider-${provider}.svg` : "assets/provider-codex.svg"
+  derive ink = provider == "cursor" ? "provider-cursor-ink" : provider == "grok" or provider == "fx" or provider == "pi" ? "provider-neutral-ink" : provider == "openrouter" ? "provider-openrouter-ink" : "provider-ink"
+  view
+    if provider == "opencode"
+      svg width=size height=size viewBox="0 0 32 40" fill="none"
+        path d="M24 32H8V16H24V32Z" fill="provider-opencode-inner"
+        path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="provider-opencode-outer"
+    else if monochrome or source == "assets/provider-codex.svg"
+      image source width=size height=size -exact-tint-color=ink
+    else
+      image source width=size height=size

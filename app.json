@@ -15,6 +15,7 @@
   "modules": [
     "workspace-tab-bar",
     "workspace-composer-metrics",
+    "workspace-composer-editor",
     "workspace-filter-menu",
     "workspace-tool-label",
     "workspace-markdown-table",

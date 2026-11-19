@@ -7,6 +7,7 @@ import { AttachmentFixture } from "./attachment-fixture";
 import { ControlsFixture } from "./controls-fixture";
 import { MarkdownFixture } from "./markdown-fixture";
 import { projectFixture } from "./project-fixture";
+import { ComposerFixture } from "./composer-fixture";
 
 const app = NodePath.resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
@@ -14,6 +15,7 @@ const activityMode = process.argv.includes("--activities");
 const attachmentMode = process.argv.includes("--attachments");
 const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
+const composerMode = process.argv.includes("--composer");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
@@ -25,6 +27,7 @@ for (let index = 2; index < process.argv.length; index++) {
       "--no-command-stream",
       "--markdown",
       "--controls",
+      "--composer",
       "--attachments",
       "--third-environment",
     ].includes(argument)
@@ -102,6 +105,7 @@ function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
 
 function environment(id: string, label: string, secondary = false, port = 0) {
   const sockets = new Set<Socket>();
+  const composer = composerMode ? new ComposerFixture() : undefined;
   const activities =
     activityMode && !secondary
       ? new ActivityFixture(!process.argv.includes("--no-command-stream"))
@@ -210,7 +214,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         ? { capabilities: { ...activities?.config, ...attachments?.config, ...controls?.config } }
         : {}),
     },
-    ...(activities || markdown || controls || attachments
+    ...(activities || markdown || controls || attachments || composer
       ? { threadResumeCompletionMarker: true }
       : {}),
     ...(controls || attachments ? { threadSnapshotPagination: true } : {}),
@@ -221,6 +225,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         installed: true,
         enabled: true,
         auth: { status: "authenticated" },
+        ...composer?.provider,
         models: ["fixture-model", "fixture-fast"].map((slug) => ({
           slug,
           name: slug === "fixture-model" ? "Fixture model" : "Fixture fast",
@@ -253,6 +258,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
   ).map((project) => ({
     ...project,
     ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}),
+    ...(composer ? { workspaceRoot: composer.cwd } : {}),
   }));
   const threads = (secondary ? ["gamma"] : ["alpha", "beta"])
     .map((id) => ({
@@ -273,6 +279,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     idleTimeout: 0,
     async fetch(request, server) {
       const path = new URL(request.url).pathname;
+      const composerResponse = composer?.http(request);
+      if (composerResponse) return composerResponse;
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
       const attachmentResponse = await attachments?.http(request);
       if (attachmentResponse) return attachmentResponse;
@@ -362,6 +370,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           return;
         }
         if (
+          composer?.receive(socket, frame) ||
           attachments?.receive(socket, frame) ||
           controls?.receive(socket, frame) ||
           markdown?.receive(socket, frame) ||
@@ -384,6 +393,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
                 ...(markdown?.threads ?? []),
                 ...(controls?.threads ?? []),
                 ...(attachments?.threads ?? []),
+                ...(composer?.threads ?? []),
               ],
             },
           });
@@ -462,6 +472,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         activities?.close(socket);
         controls?.close(socket);
         attachments?.close(socket);
+        composer?.close(socket);
         for (let i = held.length - 1; i >= 0; i--) {
           if (held[i]?.socket === socket) held.splice(i, 1);
         }
@@ -557,7 +568,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

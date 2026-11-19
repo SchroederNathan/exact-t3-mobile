@@ -1,0 +1,7 @@
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/target/web-dist/.gen: app.js 2233287 B, app.css 126167 B, 37 warnings, 1 note
+/Volumes/ExternalSSD/T3Worktrees/exact-t3-mobile/98881f7e-f2ab963ee79f0fb0/target/web-dist: built
+compiler: 35 warnings and 1 note (not counted), as before (.exact/warnings-web.txt lists them; bun exact.mjs contract build quotes each line)
+web: exact-ios-app served at http://127.0.0.1:53947/ (--port <n> or EXACT_PORT picks the port)
+test "provider commands and real repository paths come from the connected environment": ok
+test "editing, cancelling, removing, resuming and sending queued messages use the server queue": ok
+2 passed, 0 failed

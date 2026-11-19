@@ -1,0 +1,5043 @@
+{
+  "recordedAt": "2026-11-18T22:01:35.923784+00:00",
+  "ok": true,
+  "device": "F154CFD6-7066-4CC8-A490-10699B7C43C2",
+  "checks": {
+    "hostedThread": {
+      "input": "https://app.t3.codes/threads/fixture/composer",
+      "editorValue": "\ufffc",
+      "chips": [
+        "Thread"
+      ],
+      "valid": true
+    },
+    "foreignRawLink": {
+      "input": "https://app.t3.codes/threads/unlinked-foreign/foreign-thread",
+      "editorValue": "https://app.t3.codes/threads/unlinked-foreign/foreign-thread",
+      "remainedPlain": true
+    },
+    "foreignStructuredContext": {
+      "clipboardType": "app.t3.context-fragment",
+      "warning": "Some context is unavailable",
+      "detail": "\"Remote discussion\" is on another machine. Those references are marked unavailable.",
+      "editorValue": "\ufffc",
+      "chips": [
+        "Remote discussion \u00b7 unavailable"
+      ]
+    }
+  },
+  "snapshots": {
+    "hosted": [
+      {
+        "index": 0,
+        "type": "Application",
+        "role": "UIApplication",
+        "label": "T3 Code Exact iOS",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 0,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e1",
+        "kind": "application"
+      },
+      {
+        "index": 1,
+        "parentIndex": 0,
+        "type": "ScrollView",
+        "role": "ExactKit.Viewport",
+        "subrole": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e2",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 2,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "root",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e3",
+        "kind": "other"
+      },
+      {
+        "index": 3,
+        "parentIndex": 2,
+        "type": "Other",
+        "role": "UILayoutContainerView",
+        "identifier": "exact-navigation-D30B36E5-0C97-424B-816A-C11D0DD6D278",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e4",
+        "kind": "other"
+      },
+      {
+        "index": 4,
+        "parentIndex": 3,
+        "type": "Other",
+        "role": "UILayoutContainerView",
+        "identifier": "exact-navigation-92F96509-6B64-472C-9DE9-BA200F79B4DA",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e5",
+        "kind": "other"
+      },
+      {
+        "index": 5,
+        "parentIndex": 4,
+        "type": "NavigationBar",
+        "role": "UINavigationBar",
+        "identifier": "Composer parity",
+        "rect": {
+          "x": 0,
+          "y": 68,
+          "width": 420,
+          "height": 54
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e6",
+        "kind": "navigation-bar"
+      },
+      {
+        "index": 6,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "UIAccessibilityBackButtonElement",
+        "subrole": "UIAccessibilityElement",
+        "label": "Back",
+        "identifier": "BackButton",
+        "rect": {
+          "x": 20,
+          "y": 68,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e7",
+        "kind": "button"
+      },
+      {
+        "index": 7,
+        "parentIndex": 5,
+        "type": "StaticText",
+        "role": "UILabel",
+        "label": "Composer parity",
+        "rect": {
+          "x": 76.00000000000001,
+          "y": 72,
+          "width": 149.33333333333337,
+          "height": 21.66666666666667
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e8",
+        "kind": "text"
+      },
+      {
+        "index": 8,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "_UIButtonBarButton",
+        "label": "Git controls",
+        "identifier": "thread-git",
+        "rect": {
+          "x": 297.3333333333333,
+          "y": 72,
+          "width": 38.666666666666686,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e9",
+        "kind": "button"
+      },
+      {
+        "index": 9,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "_UIButtonBarButton",
+        "label": "Open files",
+        "identifier": "thread-files",
+        "rect": {
+          "x": 352,
+          "y": 72,
+          "width": 44,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e10",
+        "kind": "button"
+      },
+      {
+        "index": 10,
+        "parentIndex": 5,
+        "type": "StaticText",
+        "role": "UILabel",
+        "label": "Active project \u00b7 Fixture Mac",
+        "rect": {
+          "x": 75.99999999999999,
+          "y": 93.66666666666667,
+          "width": 154.66666666666663,
+          "height": 14.333333333333329
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e11",
+        "kind": "text"
+      },
+      {
+        "index": 11,
+        "parentIndex": 4,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "thread-messages",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 475
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e12",
+        "kind": "other"
+      },
+      {
+        "index": 12,
+        "parentIndex": 11,
+        "type": "ScrollView",
+        "role": "ExactKit.ScrollView",
+        "subrole": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 122,
+          "width": 420,
+          "height": 353
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "hiddenContentBelow": true,
+        "ref": "e13",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 13,
+        "parentIndex": 12,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "message-message-1",
+        "rect": {
+          "x": 241.33333333333337,
+          "y": 146,
+          "width": 162.66666666666663,
+          "height": 40.66666666666666
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e14",
+        "kind": "other"
+      },
+      {
+        "index": 14,
+        "parentIndex": 13,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Queued message 1",
+        "rect": {
+          "x": 253.66666666666669,
+          "y": 154.66666666666669,
+          "width": 138,
+          "height": 23
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e15",
+        "kind": "text"
+      },
+      {
+        "index": 15,
+        "parentIndex": 12,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "7:00\u202fAM",
+        "rect": {
+          "x": 321.3333333333333,
+          "y": 195.66666666666669,
+          "width": 49.333333333333314,
+          "height": 17
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e16",
+        "kind": "text"
+      },
+      {
+        "index": 16,
+        "parentIndex": 12,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Copy message",
+        "rect": {
+          "x": 374.3333333333333,
+          "y": 190,
+          "width": 28,
+          "height": 28
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e17",
+        "kind": "button"
+      },
+      {
+        "index": 17,
+        "parentIndex": 12,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "message-message-2",
+        "rect": {
+          "x": 237,
+          "y": 235.66666666666669,
+          "width": 167,
+          "height": 40.333333333333314
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e18",
+        "kind": "other"
+      },
+      {
+        "index": 18,
+        "parentIndex": 17,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Queued message 2",
+        "rect": {
+          "x": 249.33333333333331,
+          "y": 244.33333333333334,
+          "width": 142.33333333333331,
+          "height": 23.00000000000003
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e19",
+        "kind": "text"
+      },
+      {
+        "index": 19,
+        "parentIndex": 12,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "7:00\u202fAM",
+        "rect": {
+          "x": 321.3333333333333,
+          "y": 285,
+          "width": 49.333333333333314,
+          "height": 17
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e20",
+        "kind": "text"
+      },
+      {
+        "index": 20,
+        "parentIndex": 12,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Copy message",
+        "rect": {
+          "x": 374.3333333333333,
+          "y": 279.6666666666667,
+          "width": 28,
+          "height": 28
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e21",
+        "kind": "button"
+      },
+      {
+        "index": 21,
+        "parentIndex": 4,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-dock-stack",
+        "rect": {
+          "x": 0,
+          "y": 475,
+          "width": 420,
+          "height": 90
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e22",
+        "kind": "other"
+      },
+      {
+        "index": 22,
+        "parentIndex": 21,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "2 queued",
+        "identifier": "composer-queue-toggle",
+        "rect": {
+          "x": 16,
+          "y": 475,
+          "width": 70.66666666666667,
+          "height": 32
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e23",
+        "kind": "button"
+      },
+      {
+        "index": 23,
+        "parentIndex": 21,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Resume",
+        "rect": {
+          "x": 360,
+          "y": 475,
+          "width": 44,
+          "height": 32
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e24",
+        "kind": "button"
+      },
+      {
+        "index": 24,
+        "parentIndex": 21,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-dock",
+        "rect": {
+          "x": 0,
+          "y": 513,
+          "width": 420,
+          "height": 60
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e25",
+        "kind": "other"
+      },
+      {
+        "index": 25,
+        "parentIndex": 24,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-surface",
+        "rect": {
+          "x": 12,
+          "y": 519,
+          "width": 396,
+          "height": 48
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e26",
+        "kind": "other"
+      },
+      {
+        "index": 26,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Add attachment",
+        "identifier": "add-attachment",
+        "rect": {
+          "x": 12,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e27",
+        "kind": "button"
+      },
+      {
+        "index": 27,
+        "parentIndex": 26,
+        "type": "Button",
+        "role": "ExactKit.MenuButton",
+        "subrole": "UIButton",
+        "label": "Add attachment",
+        "identifier": "add-attachment",
+        "rect": {
+          "x": 12,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 8,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e28",
+        "kind": "button"
+      },
+      {
+        "index": 28,
+        "parentIndex": 25,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Message",
+        "identifier": "composer",
+        "rect": {
+          "x": 60,
+          "y": 525,
+          "width": 250,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e29",
+        "kind": "other"
+      },
+      {
+        "index": 29,
+        "parentIndex": 28,
+        "type": "TextView",
+        "role": "_TtC15ExactAppModulesP33_73544EF0500EE51074B913B52B90308D13ComposerInput",
+        "subrole": "UITextView",
+        "label": "Message",
+        "value": "\ufffc",
+        "rect": {
+          "x": 60,
+          "y": 525,
+          "width": 250,
+          "height": 36
+        },
+        "enabled": true,
+        "focused": true,
+        "depth": 8,
+        "password": false,
+        "editable": true,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e30",
+        "kind": "text-view"
+      },
+      {
+        "index": 30,
+        "parentIndex": 29,
+        "type": "Other",
+        "role": "_UITextSelectionRangeAdjustmentContainerView",
+        "identifier": "_UITextSelectionRangeAdjustmentContainerView",
+        "rect": {
+          "x": 60,
+          "y": 525,
+          "width": 250,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 9,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e31",
+        "kind": "other"
+      },
+      {
+        "index": 31,
+        "parentIndex": 30,
+        "type": "Other",
+        "role": "_UITextSelectionLollipopView",
+        "identifier": "com.apple.text.grabber.leading",
+        "rect": {
+          "x": 60,
+          "y": 530,
+          "width": 16.5,
+          "height": 24.66666666666663
+        },
+        "enabled": true,
+        "depth": 10,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e32",
+        "kind": "other"
+      },
+      {
+        "index": 32,
+        "parentIndex": 30,
+        "type": "Other",
+        "role": "_UITextSelectionLollipopView",
+        "identifier": "com.apple.text.grabber.trailing",
+        "rect": {
+          "x": 219,
+          "y": 530,
+          "width": 16.5,
+          "height": 24.66666666666663
+        },
+        "enabled": true,
+        "depth": 10,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e33",
+        "kind": "other"
+      },
+      {
+        "index": 33,
+        "parentIndex": 28,
+        "type": "Button",
+        "role": "_TtC15ExactAppModulesP33_73544EF0500EE51074B913B52B90308D21ComposerContextAction",
+        "subrole": "UIAccessibilityElement",
+        "label": "Thread",
+        "rect": {
+          "x": 60,
+          "y": 530,
+          "width": 83,
+          "height": 25
+        },
+        "enabled": true,
+        "depth": 8,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e34",
+        "kind": "button"
+      },
+      {
+        "index": 34,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Model and reasoning settings, Fixture model, Medium",
+        "identifier": "model-settings",
+        "rect": {
+          "x": 314,
+          "y": 521,
+          "width": 50,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e35",
+        "kind": "button"
+      },
+      {
+        "index": 35,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Send",
+        "identifier": "send",
+        "rect": {
+          "x": 364,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e36",
+        "kind": "button"
+      },
+      {
+        "index": 36,
+        "parentIndex": 4,
+        "type": "Toolbar",
+        "role": "_UIFloatingBarContainerView",
+        "label": "Toolbar",
+        "identifier": "Toolbar",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e37",
+        "kind": "toolbar"
+      },
+      {
+        "index": 37,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "_UIRemoteKeyboardPlaceholderView",
+        "identifier": "inputView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 347
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e38",
+        "kind": "other"
+      },
+      {
+        "index": 38,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "TUISystemInputAssistantView",
+        "subrole": "UIView",
+        "identifier": "SystemInputAssistantView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e39",
+        "kind": "other"
+      },
+      {
+        "index": 39,
+        "parentIndex": 38,
+        "type": "Other",
+        "role": "TUISystemInputAssistantPageView",
+        "subrole": "UIView",
+        "identifier": "CenterPageView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e40",
+        "kind": "other"
+      },
+      {
+        "index": 40,
+        "parentIndex": 39,
+        "type": "ScrollView",
+        "role": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e41",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 41,
+        "parentIndex": 39,
+        "type": "Other",
+        "role": "TUIPredictionView",
+        "subrole": "UIView",
+        "label": "Typing Predictions",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e42",
+        "kind": "other"
+      },
+      {
+        "index": 42,
+        "parentIndex": 41,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e43",
+        "kind": "button"
+      },
+      {
+        "index": 43,
+        "parentIndex": 41,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "rect": {
+          "x": 140,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e44",
+        "kind": "button"
+      },
+      {
+        "index": 44,
+        "parentIndex": 41,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "rect": {
+          "x": 280,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e45",
+        "kind": "button"
+      },
+      {
+        "index": 45,
+        "parentIndex": 0,
+        "type": "Keyboard",
+        "role": "UIKeyboardAutomatic",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 420,
+          "height": 245
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e46",
+        "kind": "keyboard"
+      },
+      {
+        "index": 46,
+        "parentIndex": 45,
+        "type": "Other",
+        "role": "UIKeyboardLayoutStar",
+        "identifier": "UIKeyboardLayoutStar Preview",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 420,
+          "height": 245
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e47",
+        "kind": "other"
+      },
+      {
+        "index": 47,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e48",
+        "kind": "key"
+      },
+      {
+        "index": 48,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e49",
+        "kind": "key"
+      },
+      {
+        "index": 49,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e50",
+        "kind": "key"
+      },
+      {
+        "index": 50,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e51",
+        "kind": "key"
+      },
+      {
+        "index": 51,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e52",
+        "kind": "key"
+      },
+      {
+        "index": 52,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e53",
+        "kind": "key"
+      },
+      {
+        "index": 53,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "q",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 616,
+          "width": 41,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e54",
+        "kind": "key"
+      },
+      {
+        "index": 54,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "w",
+        "rect": {
+          "x": 45.66666666666666,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e55",
+        "kind": "key"
+      },
+      {
+        "index": 55,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "e",
+        "rect": {
+          "x": 86.99999999999999,
+          "y": 616,
+          "width": 41.33333333333333,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e56",
+        "kind": "key"
+      },
+      {
+        "index": 56,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "r",
+        "rect": {
+          "x": 128.33333333333331,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e57",
+        "kind": "key"
+      },
+      {
+        "index": 57,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "t",
+        "rect": {
+          "x": 169.66666666666666,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e58",
+        "kind": "key"
+      },
+      {
+        "index": 58,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "y",
+        "rect": {
+          "x": 211,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e59",
+        "kind": "key"
+      },
+      {
+        "index": 59,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "u",
+        "rect": {
+          "x": 252.33333333333337,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e60",
+        "kind": "key"
+      },
+      {
+        "index": 60,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "i",
+        "rect": {
+          "x": 293.66666666666663,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e61",
+        "kind": "key"
+      },
+      {
+        "index": 61,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "o",
+        "rect": {
+          "x": 335,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e62",
+        "kind": "key"
+      },
+      {
+        "index": 62,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "p",
+        "rect": {
+          "x": 376.33333333333326,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e63",
+        "kind": "key"
+      },
+      {
+        "index": 63,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "a",
+        "rect": {
+          "x": 24.99999999999999,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e64",
+        "kind": "key"
+      },
+      {
+        "index": 64,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "s",
+        "rect": {
+          "x": 66.33333333333331,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e65",
+        "kind": "key"
+      },
+      {
+        "index": 65,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "d",
+        "rect": {
+          "x": 107.66666666666666,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e66",
+        "kind": "key"
+      },
+      {
+        "index": 66,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "f",
+        "rect": {
+          "x": 149,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e67",
+        "kind": "key"
+      },
+      {
+        "index": 67,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "g",
+        "rect": {
+          "x": 190.33333333333334,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e68",
+        "kind": "key"
+      },
+      {
+        "index": 68,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "h",
+        "rect": {
+          "x": 231.66666666666666,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e69",
+        "kind": "key"
+      },
+      {
+        "index": 69,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "j",
+        "rect": {
+          "x": 273,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e70",
+        "kind": "key"
+      },
+      {
+        "index": 70,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "k",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e71",
+        "kind": "key"
+      },
+      {
+        "index": 71,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "l",
+        "rect": {
+          "x": 355.66666666666663,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e72",
+        "kind": "key"
+      },
+      {
+        "index": 72,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "shift",
+        "identifier": "shift",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 728,
+          "width": 53.666666666666664,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e73",
+        "kind": "key"
+      },
+      {
+        "index": 73,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "z",
+        "rect": {
+          "x": 66.33333333333331,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e74",
+        "kind": "key"
+      },
+      {
+        "index": 74,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "x",
+        "rect": {
+          "x": 107.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e75",
+        "kind": "key"
+      },
+      {
+        "index": 75,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "c",
+        "rect": {
+          "x": 149,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e76",
+        "kind": "key"
+      },
+      {
+        "index": 76,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "v",
+        "rect": {
+          "x": 190.33333333333334,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e77",
+        "kind": "key"
+      },
+      {
+        "index": 77,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "b",
+        "rect": {
+          "x": 231.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e78",
+        "kind": "key"
+      },
+      {
+        "index": 78,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "n",
+        "rect": {
+          "x": 273,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e79",
+        "kind": "key"
+      },
+      {
+        "index": 79,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "m",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e80",
+        "kind": "key"
+      },
+      {
+        "index": 80,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "delete",
+        "identifier": "delete",
+        "rect": {
+          "x": 363.66666666666663,
+          "y": 728,
+          "width": 54,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e81",
+        "kind": "key"
+      },
+      {
+        "index": 81,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "numbers",
+        "identifier": "more",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 784,
+          "width": 103,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e82",
+        "kind": "key"
+      },
+      {
+        "index": 82,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "space",
+        "identifier": "space",
+        "rect": {
+          "x": 107.66666666666664,
+          "y": 784,
+          "width": 206.66666666666669,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e83",
+        "kind": "key"
+      },
+      {
+        "index": 83,
+        "parentIndex": 46,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "return",
+        "identifier": "Return",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 784,
+          "width": 103.33333333333331,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e84",
+        "kind": "key"
+      },
+      {
+        "index": 84,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Emoji",
+        "rect": {
+          "x": 2.4525937651487624,
+          "y": 843.6989567998571,
+          "width": 80.1346396795296,
+          "height": 68.30104320014289
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e85",
+        "kind": "button"
+      },
+      {
+        "index": 85,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Dictate",
+        "identifier": "dictation",
+        "rect": {
+          "x": 337.41276655532164,
+          "y": 843.3656234665239,
+          "width": 80.13463967952958,
+          "height": 68.63437653347614
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e86",
+        "kind": "button"
+      },
+      {
+        "index": 86,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Dictate",
+        "identifier": "dictation",
+        "rect": {
+          "x": 337.41276655532164,
+          "y": 843.3656234665239,
+          "width": 80.13463967952958,
+          "height": 68.63437653347614
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e87",
+        "kind": "button"
+      }
+    ],
+    "foreign-plain": [
+      {
+        "index": 0,
+        "type": "Application",
+        "role": "UIApplication",
+        "label": "T3 Code Exact iOS",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 0,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e1",
+        "kind": "application"
+      },
+      {
+        "index": 1,
+        "parentIndex": 0,
+        "type": "ScrollView",
+        "role": "ExactKit.Viewport",
+        "subrole": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e2",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 2,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "root",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e3",
+        "kind": "other"
+      },
+      {
+        "index": 3,
+        "parentIndex": 2,
+        "type": "Other",
+        "role": "UILayoutContainerView",
+        "identifier": "exact-navigation-D30B36E5-0C97-424B-816A-C11D0DD6D278",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e4",
+        "kind": "other"
+      },
+      {
+        "index": 4,
+        "parentIndex": 3,
+        "type": "Other",
+        "role": "UILayoutContainerView",
+        "identifier": "exact-navigation-92F96509-6B64-472C-9DE9-BA200F79B4DA",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e5",
+        "kind": "other"
+      },
+      {
+        "index": 5,
+        "parentIndex": 4,
+        "type": "NavigationBar",
+        "role": "UINavigationBar",
+        "identifier": "Composer parity",
+        "rect": {
+          "x": 0,
+          "y": 68,
+          "width": 420,
+          "height": 54
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e6",
+        "kind": "navigation-bar"
+      },
+      {
+        "index": 6,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "UIAccessibilityBackButtonElement",
+        "subrole": "UIAccessibilityElement",
+        "label": "Back",
+        "identifier": "BackButton",
+        "rect": {
+          "x": 20,
+          "y": 68,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e7",
+        "kind": "button"
+      },
+      {
+        "index": 7,
+        "parentIndex": 5,
+        "type": "StaticText",
+        "role": "UILabel",
+        "label": "Composer parity",
+        "rect": {
+          "x": 76.00000000000001,
+          "y": 72,
+          "width": 149.33333333333337,
+          "height": 21.66666666666667
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e8",
+        "kind": "text"
+      },
+      {
+        "index": 8,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "_UIButtonBarButton",
+        "label": "Git controls",
+        "identifier": "thread-git",
+        "rect": {
+          "x": 297.3333333333333,
+          "y": 72,
+          "width": 38.666666666666686,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e9",
+        "kind": "button"
+      },
+      {
+        "index": 9,
+        "parentIndex": 5,
+        "type": "Button",
+        "role": "_UIButtonBarButton",
+        "label": "Open files",
+        "identifier": "thread-files",
+        "rect": {
+          "x": 352,
+          "y": 72,
+          "width": 44,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e10",
+        "kind": "button"
+      },
+      {
+        "index": 10,
+        "parentIndex": 5,
+        "type": "StaticText",
+        "role": "UILabel",
+        "label": "Active project \u00b7 Fixture Mac",
+        "rect": {
+          "x": 75.99999999999999,
+          "y": 93.66666666666667,
+          "width": 154.66666666666663,
+          "height": 14.333333333333329
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e11",
+        "kind": "text"
+      },
+      {
+        "index": 11,
+        "parentIndex": 4,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "thread-messages",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 409
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e12",
+        "kind": "other"
+      },
+      {
+        "index": 12,
+        "parentIndex": 11,
+        "type": "ScrollView",
+        "role": "ExactKit.ScrollView",
+        "subrole": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 122,
+          "width": 420,
+          "height": 287
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "hiddenContentBelow": true,
+        "ref": "e13",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 13,
+        "parentIndex": 12,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "message-message-1",
+        "rect": {
+          "x": 241.33333333333337,
+          "y": 146,
+          "width": 162.66666666666663,
+          "height": 40.66666666666666
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e14",
+        "kind": "other"
+      },
+      {
+        "index": 14,
+        "parentIndex": 13,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Queued message 1",
+        "rect": {
+          "x": 253.66666666666669,
+          "y": 154.66666666666669,
+          "width": 138,
+          "height": 23
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e15",
+        "kind": "text"
+      },
+      {
+        "index": 15,
+        "parentIndex": 12,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "7:00\u202fAM",
+        "rect": {
+          "x": 321.3333333333333,
+          "y": 195.66666666666669,
+          "width": 49.333333333333314,
+          "height": 17
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e16",
+        "kind": "text"
+      },
+      {
+        "index": 16,
+        "parentIndex": 12,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Copy message",
+        "rect": {
+          "x": 374.3333333333333,
+          "y": 190,
+          "width": 28,
+          "height": 28
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e17",
+        "kind": "button"
+      },
+      {
+        "index": 17,
+        "parentIndex": 12,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "message-message-2",
+        "rect": {
+          "x": 237,
+          "y": 235.66666666666669,
+          "width": 167,
+          "height": 40.333333333333314
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e18",
+        "kind": "other"
+      },
+      {
+        "index": 18,
+        "parentIndex": 17,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Queued message 2",
+        "rect": {
+          "x": 249.33333333333331,
+          "y": 244.33333333333334,
+          "width": 142.33333333333331,
+          "height": 23.00000000000003
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e19",
+        "kind": "text"
+      },
+      {
+        "index": 19,
+        "parentIndex": 12,
+        "type": "StaticText",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "7:00\u202fAM",
+        "rect": {
+          "x": 321.3333333333333,
+          "y": 285,
+          "width": 49.333333333333314,
+          "height": 17
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e20",
+        "kind": "text"
+      },
+      {
+        "index": 20,
+        "parentIndex": 12,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Copy message",
+        "rect": {
+          "x": 374.3333333333333,
+          "y": 279.6666666666667,
+          "width": 28,
+          "height": 28
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e21",
+        "kind": "button"
+      },
+      {
+        "index": 21,
+        "parentIndex": 4,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-dock-stack",
+        "rect": {
+          "x": 0,
+          "y": 409,
+          "width": 420,
+          "height": 156
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e22",
+        "kind": "other"
+      },
+      {
+        "index": 22,
+        "parentIndex": 21,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "2 queued",
+        "identifier": "composer-queue-toggle",
+        "rect": {
+          "x": 16,
+          "y": 409,
+          "width": 70.66666666666667,
+          "height": 32
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e23",
+        "kind": "button"
+      },
+      {
+        "index": 23,
+        "parentIndex": 21,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Resume",
+        "rect": {
+          "x": 360,
+          "y": 409,
+          "width": 44,
+          "height": 32
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e24",
+        "kind": "button"
+      },
+      {
+        "index": 24,
+        "parentIndex": 21,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-dock",
+        "rect": {
+          "x": 0,
+          "y": 447,
+          "width": 420,
+          "height": 126
+        },
+        "enabled": true,
+        "depth": 5,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e25",
+        "kind": "other"
+      },
+      {
+        "index": 25,
+        "parentIndex": 24,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "identifier": "composer-surface",
+        "rect": {
+          "x": 12,
+          "y": 453,
+          "width": 396,
+          "height": 114
+        },
+        "enabled": true,
+        "depth": 6,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e26",
+        "kind": "other"
+      },
+      {
+        "index": 26,
+        "parentIndex": 25,
+        "type": "Other",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Message",
+        "identifier": "composer",
+        "rect": {
+          "x": 26,
+          "y": 455,
+          "width": 368,
+          "height": 58
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e27",
+        "kind": "other"
+      },
+      {
+        "index": 27,
+        "parentIndex": 26,
+        "type": "TextView",
+        "role": "_TtC15ExactAppModulesP33_73544EF0500EE51074B913B52B90308D13ComposerInput",
+        "subrole": "UITextView",
+        "label": "Message",
+        "value": "https://app.t3.codes/threads/unlinked-foreign/foreign-thread",
+        "rect": {
+          "x": 26,
+          "y": 455,
+          "width": 368,
+          "height": 58
+        },
+        "enabled": true,
+        "focused": true,
+        "depth": 8,
+        "password": false,
+        "editable": true,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e28",
+        "kind": "text-view"
+      },
+      {
+        "index": 28,
+        "parentIndex": 27,
+        "type": "Other",
+        "role": "_UITextSelectionRangeAdjustmentContainerView",
+        "identifier": "_UITextSelectionRangeAdjustmentContainerView",
+        "rect": {
+          "x": 26,
+          "y": 455,
+          "width": 250,
+          "height": 36
+        },
+        "enabled": true,
+        "depth": 9,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e29",
+        "kind": "other"
+      },
+      {
+        "index": 29,
+        "parentIndex": 28,
+        "type": "Other",
+        "role": "_UITextSelectionLollipopView",
+        "identifier": "com.apple.text.grabber.leading",
+        "rect": {
+          "x": 26,
+          "y": 460,
+          "width": 16.5,
+          "height": 24.666666666666686
+        },
+        "enabled": true,
+        "depth": 10,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e30",
+        "kind": "other"
+      },
+      {
+        "index": 30,
+        "parentIndex": 28,
+        "type": "Other",
+        "role": "_UITextSelectionLollipopView",
+        "identifier": "com.apple.text.grabber.trailing",
+        "rect": {
+          "x": 185,
+          "y": 460,
+          "width": 16.5,
+          "height": 24.666666666666686
+        },
+        "enabled": true,
+        "depth": 10,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e31",
+        "kind": "other"
+      },
+      {
+        "index": 31,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Add attachment",
+        "identifier": "add-attachment",
+        "rect": {
+          "x": 12,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e32",
+        "kind": "button"
+      },
+      {
+        "index": 32,
+        "parentIndex": 31,
+        "type": "Button",
+        "role": "ExactKit.MenuButton",
+        "subrole": "UIButton",
+        "label": "Add attachment",
+        "identifier": "add-attachment",
+        "rect": {
+          "x": 12,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 8,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e33",
+        "kind": "button"
+      },
+      {
+        "index": 33,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Model and reasoning settings, Fixture model, Medium",
+        "identifier": "model-settings",
+        "rect": {
+          "x": 159,
+          "y": 521,
+          "width": 205,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e34",
+        "kind": "button"
+      },
+      {
+        "index": 34,
+        "parentIndex": 25,
+        "type": "Button",
+        "role": "ExactKit.NodeView",
+        "subrole": "UIView",
+        "label": "Send",
+        "identifier": "send",
+        "rect": {
+          "x": 364,
+          "y": 521,
+          "width": 44,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 7,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e35",
+        "kind": "button"
+      },
+      {
+        "index": 35,
+        "parentIndex": 4,
+        "type": "Toolbar",
+        "role": "_UIFloatingBarContainerView",
+        "label": "Toolbar",
+        "identifier": "Toolbar",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e36",
+        "kind": "toolbar"
+      },
+      {
+        "index": 36,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "_UIRemoteKeyboardPlaceholderView",
+        "identifier": "inputView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 347
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e37",
+        "kind": "other"
+      },
+      {
+        "index": 37,
+        "parentIndex": 0,
+        "type": "Other",
+        "role": "TUISystemInputAssistantView",
+        "subrole": "UIView",
+        "identifier": "SystemInputAssistantView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e38",
+        "kind": "other"
+      },
+      {
+        "index": 38,
+        "parentIndex": 37,
+        "type": "Other",
+        "role": "TUISystemInputAssistantPageView",
+        "subrole": "UIView",
+        "identifier": "CenterPageView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e39",
+        "kind": "other"
+      },
+      {
+        "index": 39,
+        "parentIndex": 38,
+        "type": "ScrollView",
+        "role": "UIScrollView",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e40",
+        "kind": "scroll-area"
+      },
+      {
+        "index": 40,
+        "parentIndex": 38,
+        "type": "Other",
+        "role": "TUIPredictionView",
+        "subrole": "UIView",
+        "label": "Typing Predictions",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e41",
+        "kind": "other"
+      },
+      {
+        "index": 41,
+        "parentIndex": 40,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "label": "\u201cthread\u201d",
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e42",
+        "kind": "button"
+      },
+      {
+        "index": 42,
+        "parentIndex": 40,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "rect": {
+          "x": 140,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e43",
+        "kind": "button"
+      },
+      {
+        "index": 43,
+        "parentIndex": 40,
+        "type": "Button",
+        "role": "TUIPredictionViewCell",
+        "subrole": "UIView",
+        "rect": {
+          "x": 280,
+          "y": 565,
+          "width": 140,
+          "height": 44
+        },
+        "enabled": true,
+        "depth": 4,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e44",
+        "kind": "button"
+      },
+      {
+        "index": 44,
+        "parentIndex": 0,
+        "type": "Keyboard",
+        "role": "UIKeyboardAutomatic",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 420,
+          "height": 245
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e45",
+        "kind": "keyboard"
+      },
+      {
+        "index": 45,
+        "parentIndex": 44,
+        "type": "Other",
+        "role": "UIKeyboardLayoutStar",
+        "identifier": "UIKeyboardLayoutStar Preview",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 420,
+          "height": 245
+        },
+        "enabled": true,
+        "depth": 2,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e46",
+        "kind": "other"
+      },
+      {
+        "index": 46,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e47",
+        "kind": "key"
+      },
+      {
+        "index": 47,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e48",
+        "kind": "key"
+      },
+      {
+        "index": 48,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e49",
+        "kind": "key"
+      },
+      {
+        "index": 49,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e50",
+        "kind": "key"
+      },
+      {
+        "index": 50,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Left",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e51",
+        "kind": "key"
+      },
+      {
+        "index": 51,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "Padding-Right",
+        "rect": {
+          "x": 0,
+          "y": 609,
+          "width": 0,
+          "height": 0
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": false,
+        "ref": "e52",
+        "kind": "key"
+      },
+      {
+        "index": 52,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "q",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 616,
+          "width": 41,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e53",
+        "kind": "key"
+      },
+      {
+        "index": 53,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "w",
+        "rect": {
+          "x": 45.66666666666666,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e54",
+        "kind": "key"
+      },
+      {
+        "index": 54,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "e",
+        "rect": {
+          "x": 86.99999999999999,
+          "y": 616,
+          "width": 41.33333333333333,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e55",
+        "kind": "key"
+      },
+      {
+        "index": 55,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "r",
+        "rect": {
+          "x": 128.33333333333331,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e56",
+        "kind": "key"
+      },
+      {
+        "index": 56,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "t",
+        "rect": {
+          "x": 169.66666666666666,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e57",
+        "kind": "key"
+      },
+      {
+        "index": 57,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "y",
+        "rect": {
+          "x": 211,
+          "y": 616,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e58",
+        "kind": "key"
+      },
+      {
+        "index": 58,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "u",
+        "rect": {
+          "x": 252.33333333333337,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e59",
+        "kind": "key"
+      },
+      {
+        "index": 59,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "i",
+        "rect": {
+          "x": 293.66666666666663,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e60",
+        "kind": "key"
+      },
+      {
+        "index": 60,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "o",
+        "rect": {
+          "x": 335,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e61",
+        "kind": "key"
+      },
+      {
+        "index": 61,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "p",
+        "rect": {
+          "x": 376.33333333333326,
+          "y": 616,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e62",
+        "kind": "key"
+      },
+      {
+        "index": 62,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "a",
+        "rect": {
+          "x": 24.99999999999999,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e63",
+        "kind": "key"
+      },
+      {
+        "index": 63,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "s",
+        "rect": {
+          "x": 66.33333333333331,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e64",
+        "kind": "key"
+      },
+      {
+        "index": 64,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "d",
+        "rect": {
+          "x": 107.66666666666666,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e65",
+        "kind": "key"
+      },
+      {
+        "index": 65,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "f",
+        "rect": {
+          "x": 149,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e66",
+        "kind": "key"
+      },
+      {
+        "index": 66,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "g",
+        "rect": {
+          "x": 190.33333333333334,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e67",
+        "kind": "key"
+      },
+      {
+        "index": 67,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "h",
+        "rect": {
+          "x": 231.66666666666666,
+          "y": 672,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e68",
+        "kind": "key"
+      },
+      {
+        "index": 68,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "j",
+        "rect": {
+          "x": 273,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e69",
+        "kind": "key"
+      },
+      {
+        "index": 69,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "k",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e70",
+        "kind": "key"
+      },
+      {
+        "index": 70,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "l",
+        "rect": {
+          "x": 355.66666666666663,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e71",
+        "kind": "key"
+      },
+      {
+        "index": 71,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "shift",
+        "identifier": "shift",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 728,
+          "width": 53.666666666666664,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e72",
+        "kind": "key"
+      },
+      {
+        "index": 72,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "z",
+        "rect": {
+          "x": 66.33333333333331,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e73",
+        "kind": "key"
+      },
+      {
+        "index": 73,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "x",
+        "rect": {
+          "x": 107.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e74",
+        "kind": "key"
+      },
+      {
+        "index": 74,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "c",
+        "rect": {
+          "x": 149,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e75",
+        "kind": "key"
+      },
+      {
+        "index": 75,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "v",
+        "rect": {
+          "x": 190.33333333333334,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e76",
+        "kind": "key"
+      },
+      {
+        "index": 76,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "b",
+        "rect": {
+          "x": 231.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e77",
+        "kind": "key"
+      },
+      {
+        "index": 77,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "n",
+        "rect": {
+          "x": 273,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e78",
+        "kind": "key"
+      },
+      {
+        "index": 78,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "m",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e79",
+        "kind": "key"
+      },
+      {
+        "index": 79,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "delete",
+        "identifier": "delete",
+        "rect": {
+          "x": 363.66666666666663,
+          "y": 728,
+          "width": 54,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e80",
+        "kind": "key"
+      },
+      {
+        "index": 80,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "numbers",
+        "identifier": "more",
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 784,
+          "width": 103,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e81",
+        "kind": "key"
+      },
+      {
+        "index": 81,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "space",
+        "identifier": "space",
+        "rect": {
+          "x": 107.66666666666664,
+          "y": 784,
+          "width": 206.66666666666669,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e82",
+        "kind": "key"
+      },
+      {
+        "index": 82,
+        "parentIndex": 45,
+        "type": "Key",
+        "role": "UIAccessibilityElementKBKey",
+        "subrole": "UIAccessibilityElement",
+        "label": "return",
+        "identifier": "Return",
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 784,
+          "width": 103.33333333333331,
+          "height": 56
+        },
+        "enabled": true,
+        "depth": 3,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e83",
+        "kind": "key"
+      },
+      {
+        "index": 83,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Emoji",
+        "rect": {
+          "x": 2.4525937651487624,
+          "y": 843.6989567998571,
+          "width": 80.1346396795296,
+          "height": 68.30104320014289
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e84",
+        "kind": "button"
+      },
+      {
+        "index": 84,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Dictate",
+        "identifier": "dictation",
+        "rect": {
+          "x": 337.41276655532164,
+          "y": 843.3656234665239,
+          "width": 80.13463967952958,
+          "height": 68.63437653347614
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e85",
+        "kind": "button"
+      },
+      {
+        "index": 85,
+        "parentIndex": 0,
+        "type": "Button",
+        "role": "UIKeyboardDockItemButton",
+        "label": "Dictate",
+        "identifier": "dictation",
+        "rect": {
+          "x": 337.41276655532164,
+          "y": 843.3656234665239,
+          "width": 80.13463967952958,
+          "height": 68.63437653347614
+        },
+        "enabled": true,
+        "depth": 1,
+        "pid": 43103,
+        "hittable": true,
+        "ref": "e86",
+        "kind": "button"
+      }
+    ],
+    "foreign-structured": [
+      {
+        "rect": {
+          "width": 420,
+          "y": 0,
+          "x": 0,
+          "height": 912
+        },
+        "label": "T3 Code Exact iOS",
+        "type": "Application",
+        "hittable": false,
+        "index": 0,
+        "depth": 0,
+        "enabled": true,
+        "ref": "e1",
+        "kind": "application"
+      },
+      {
+        "rect": {
+          "width": 420,
+          "y": 0,
+          "x": 0,
+          "height": 912
+        },
+        "label": "Some context is unavailable",
+        "type": "Window",
+        "hittable": true,
+        "index": 1,
+        "depth": 1,
+        "parentIndex": 0,
+        "enabled": true,
+        "ref": "e2",
+        "kind": "window"
+      },
+      {
+        "rect": {
+          "width": 320,
+          "y": 377,
+          "x": 50,
+          "height": 192
+        },
+        "type": "Element(7)",
+        "hittable": true,
+        "index": 2,
+        "depth": 3,
+        "parentIndex": 1,
+        "enabled": true,
+        "ref": "e3",
+        "kind": "element(7)",
+        "inheritsLabel": true
+      },
+      {
+        "rect": {
+          "height": 112,
+          "y": 377,
+          "x": 50,
+          "width": 320
+        },
+        "type": "ScrollView",
+        "hittable": true,
+        "hiddenContentAbove": true,
+        "index": 3,
+        "depth": 6,
+        "parentIndex": 2,
+        "enabled": true,
+        "hiddenContentBelow": true,
+        "ref": "e4",
+        "kind": "scroll-area",
+        "inheritsLabel": true
+      },
+      {
+        "rect": {
+          "height": 112,
+          "y": 377,
+          "x": 50,
+          "width": 320
+        },
+        "type": "Cell",
+        "hittable": true,
+        "index": 4,
+        "depth": 7,
+        "parentIndex": 3,
+        "enabled": true,
+        "ref": "e5",
+        "kind": "cell",
+        "inheritsLabel": true
+      },
+      {
+        "rect": {
+          "height": 58,
+          "y": 426.6666666666667,
+          "x": 80,
+          "width": 260
+        },
+        "type": "StaticText",
+        "hittable": true,
+        "label": "\"Remote discussion\" is on another machine. Those references are marked unavailable.",
+        "index": 5,
+        "depth": 8,
+        "parentIndex": 4,
+        "enabled": true,
+        "ref": "e6",
+        "kind": "text"
+      },
+      {
+        "rect": {
+          "height": 80,
+          "y": 489,
+          "x": 50,
+          "width": 320
+        },
+        "type": "ScrollView",
+        "hittable": true,
+        "label": "OK",
+        "hiddenContentBelow": true,
+        "index": 6,
+        "depth": 6,
+        "parentIndex": 2,
+        "enabled": true,
+        "ref": "e7",
+        "kind": "scroll-area"
+      },
+      {
+        "rect": {
+          "height": 80,
+          "y": 489,
+          "x": 50,
+          "width": 320
+        },
+        "type": "Cell",
+        "hittable": true,
+        "label": "OK",
+        "index": 7,
+        "depth": 7,
+        "parentIndex": 6,
+        "enabled": true,
+        "ref": "e8",
+        "kind": "cell"
+      },
+      {
+        "rect": {
+          "height": 48,
+          "y": 505,
+          "x": 66,
+          "width": 288
+        },
+        "type": "Button",
+        "hittable": true,
+        "label": "OK",
+        "index": 8,
+        "depth": 9,
+        "parentIndex": 7,
+        "enabled": true,
+        "ref": "e9",
+        "kind": "button"
+      }
+    ],
+    "foreign-chip": [
+      {
+        "rect": {
+          "x": 0,
+          "height": 912,
+          "y": 0,
+          "width": 420
+        },
+        "type": "Application",
+        "hittable": false,
+        "label": "T3 Code Exact iOS",
+        "index": 0,
+        "depth": 0,
+        "enabled": true,
+        "ref": "e1",
+        "kind": "application"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 912,
+          "y": 0,
+          "width": 420
+        },
+        "type": "Window",
+        "hittable": true,
+        "label": "Emoji",
+        "index": 1,
+        "depth": 1,
+        "parentIndex": 0,
+        "enabled": true,
+        "ref": "e2",
+        "kind": "window"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 347,
+          "y": 565,
+          "width": 420
+        },
+        "type": "Other",
+        "hittable": true,
+        "label": "Emoji",
+        "index": 2,
+        "depth": 3,
+        "parentIndex": 1,
+        "enabled": true,
+        "ref": "e3",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 44,
+          "y": 565,
+          "width": 420
+        },
+        "identifier": "SystemInputAssistantView",
+        "type": "Other",
+        "hittable": true,
+        "keyboardOwned": true,
+        "index": 3,
+        "depth": 4,
+        "parentIndex": 2,
+        "enabled": true,
+        "ref": "e4",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 44,
+          "y": 565,
+          "width": 420
+        },
+        "type": "Other",
+        "hittable": true,
+        "label": "Typing Predictions",
+        "keyboardOwned": true,
+        "index": 4,
+        "depth": 5,
+        "parentIndex": 3,
+        "enabled": true,
+        "ref": "e5",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 44,
+          "y": 565,
+          "width": 420
+        },
+        "type": "ScrollView",
+        "hittable": true,
+        "keyboardOwned": true,
+        "index": 5,
+        "depth": 7,
+        "parentIndex": 4,
+        "enabled": true,
+        "ref": "e6",
+        "kind": "scroll-area"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "height": 44,
+          "y": 565,
+          "width": 140
+        },
+        "type": "Button",
+        "hittable": true,
+        "keyboardOwned": true,
+        "index": 6,
+        "depth": 7,
+        "parentIndex": 4,
+        "enabled": true,
+        "ref": "e7",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "x": 140,
+          "height": 44,
+          "y": 565,
+          "width": 140
+        },
+        "type": "Button",
+        "hittable": true,
+        "keyboardOwned": true,
+        "index": 7,
+        "depth": 7,
+        "parentIndex": 4,
+        "enabled": true,
+        "ref": "e8",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "width": 140,
+          "height": 44,
+          "x": 280,
+          "y": 565
+        },
+        "type": "Button",
+        "hittable": true,
+        "keyboardOwned": true,
+        "index": 8,
+        "depth": 7,
+        "parentIndex": 4,
+        "enabled": true,
+        "ref": "e9",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "width": 420,
+          "height": 245,
+          "x": 0,
+          "y": 609
+        },
+        "type": "Other",
+        "hittable": true,
+        "label": "Padding-Left",
+        "index": 9,
+        "depth": 4,
+        "parentIndex": 2,
+        "enabled": true,
+        "ref": "e10",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "width": 420,
+          "height": 245,
+          "x": 0,
+          "y": 609
+        },
+        "type": "Keyboard",
+        "hittable": true,
+        "label": "Padding-Left",
+        "keyboardOwned": true,
+        "index": 10,
+        "depth": 5,
+        "parentIndex": 9,
+        "enabled": true,
+        "ref": "e11",
+        "kind": "keyboard"
+      },
+      {
+        "rect": {
+          "width": 0,
+          "height": 0,
+          "x": 0,
+          "y": 609
+        },
+        "type": "Key",
+        "hittable": false,
+        "label": "Padding-Left",
+        "keyboardOwned": true,
+        "index": 11,
+        "depth": 7,
+        "parentIndex": 10,
+        "enabled": true,
+        "ref": "e12",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "width": 0,
+          "height": 0,
+          "x": 0,
+          "y": 609
+        },
+        "type": "Key",
+        "hittable": false,
+        "label": "Padding-Right",
+        "keyboardOwned": true,
+        "index": 12,
+        "depth": 7,
+        "parentIndex": 10,
+        "enabled": true,
+        "ref": "e13",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "width": 41,
+          "height": 56,
+          "x": 4.666666666666657,
+          "y": 616
+        },
+        "type": "Key",
+        "hittable": true,
+        "label": "q",
+        "keyboardOwned": true,
+        "index": 13,
+        "depth": 7,
+        "parentIndex": 10,
+        "enabled": true,
+        "ref": "e14",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 45.66666666666666,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 14,
+        "label": "w",
+        "hittable": true,
+        "ref": "e15",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333333,
+          "height": 56,
+          "x": 86.99999999999999,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 15,
+        "label": "e",
+        "hittable": true,
+        "ref": "e16",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 128.33333333333331,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 16,
+        "label": "r",
+        "hittable": true,
+        "ref": "e17",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 169.66666666666666,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 17,
+        "label": "t",
+        "hittable": true,
+        "ref": "e18",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 211,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 18,
+        "label": "y",
+        "hittable": true,
+        "ref": "e19",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.333333333333314,
+          "height": 56,
+          "x": 252.33333333333337,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 19,
+        "label": "u",
+        "hittable": true,
+        "ref": "e20",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.333333333333314,
+          "height": 56,
+          "x": 293.66666666666663,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 20,
+        "label": "i",
+        "hittable": true,
+        "ref": "e21",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.333333333333314,
+          "height": 56,
+          "x": 335,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 21,
+        "label": "o",
+        "hittable": true,
+        "ref": "e22",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.333333333333314,
+          "height": 56,
+          "x": 376.33333333333326,
+          "y": 616
+        },
+        "keyboardOwned": true,
+        "index": 22,
+        "label": "p",
+        "hittable": true,
+        "ref": "e23",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 24.99999999999999,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 23,
+        "label": "a",
+        "hittable": true,
+        "ref": "e24",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 66.33333333333331,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 24,
+        "label": "s",
+        "hittable": true,
+        "ref": "e25",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 107.66666666666666,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 25,
+        "label": "d",
+        "hittable": true,
+        "ref": "e26",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 149,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 26,
+        "label": "f",
+        "hittable": true,
+        "ref": "e27",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 190.33333333333334,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 27,
+        "label": "g",
+        "hittable": true,
+        "ref": "e28",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "width": 41.33333333333334,
+          "height": 56,
+          "x": 231.66666666666666,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 28,
+        "label": "h",
+        "hittable": true,
+        "ref": "e29",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "x": 273,
+          "height": 56,
+          "width": 41.333333333333314,
+          "y": 672
+        },
+        "keyboardOwned": true,
+        "index": 29,
+        "label": "j",
+        "hittable": true,
+        "ref": "e30",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "x": 314.33333333333326,
+          "height": 56,
+          "y": 672,
+          "width": 41.333333333333314
+        },
+        "keyboardOwned": true,
+        "index": 30,
+        "label": "k",
+        "hittable": true,
+        "ref": "e31",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "x": 355.66666666666663,
+          "y": 672,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "keyboardOwned": true,
+        "index": 31,
+        "label": "l",
+        "hittable": true,
+        "ref": "e32",
+        "kind": "key"
+      },
+      {
+        "identifier": "shift",
+        "depth": 7,
+        "parentIndex": 10,
+        "type": "Button",
+        "enabled": true,
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 728,
+          "width": 53.666666666666664,
+          "height": 56
+        },
+        "keyboardOwned": true,
+        "index": 32,
+        "label": "shift",
+        "hittable": true,
+        "ref": "e33",
+        "kind": "button"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "x": 66.33333333333331,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "keyboardOwned": true,
+        "index": 33,
+        "label": "z",
+        "hittable": true,
+        "ref": "e34",
+        "kind": "key"
+      },
+      {
+        "parentIndex": 10,
+        "depth": 7,
+        "type": "Key",
+        "enabled": true,
+        "rect": {
+          "x": 107.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "keyboardOwned": true,
+        "index": 34,
+        "label": "x",
+        "hittable": true,
+        "ref": "e35",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 149,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "label": "c",
+        "hittable": true,
+        "enabled": true,
+        "type": "Key",
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 35,
+        "ref": "e36",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 190.33333333333334,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "label": "v",
+        "hittable": true,
+        "enabled": true,
+        "type": "Key",
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 36,
+        "ref": "e37",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 231.66666666666666,
+          "y": 728,
+          "width": 41.33333333333334,
+          "height": 56
+        },
+        "label": "b",
+        "hittable": true,
+        "enabled": true,
+        "type": "Key",
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 37,
+        "ref": "e38",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 273,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "label": "n",
+        "hittable": true,
+        "enabled": true,
+        "type": "Key",
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 38,
+        "ref": "e39",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 728,
+          "width": 41.333333333333314,
+          "height": 56
+        },
+        "label": "m",
+        "hittable": true,
+        "enabled": true,
+        "type": "Key",
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 39,
+        "ref": "e40",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 363.66666666666663,
+          "y": 728,
+          "width": 54,
+          "height": 56
+        },
+        "label": "delete",
+        "type": "Key",
+        "enabled": true,
+        "hittable": true,
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 40,
+        "identifier": "delete",
+        "ref": "e41",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 4.666666666666657,
+          "y": 784,
+          "width": 103,
+          "height": 56
+        },
+        "label": "numbers",
+        "type": "Key",
+        "enabled": true,
+        "hittable": true,
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 41,
+        "identifier": "more",
+        "ref": "e42",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 107.66666666666664,
+          "y": 784,
+          "width": 206.66666666666669,
+          "height": 56
+        },
+        "label": "space",
+        "type": "Key",
+        "enabled": true,
+        "hittable": true,
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 42,
+        "identifier": "space",
+        "ref": "e43",
+        "kind": "key"
+      },
+      {
+        "rect": {
+          "x": 314.33333333333326,
+          "y": 784,
+          "width": 103.33333333333331,
+          "height": 56
+        },
+        "label": "return",
+        "type": "Button",
+        "enabled": true,
+        "hittable": true,
+        "depth": 7,
+        "parentIndex": 10,
+        "keyboardOwned": true,
+        "index": 43,
+        "identifier": "Return",
+        "ref": "e44",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "x": 2.4525937651487624,
+          "y": 843.6989567998571,
+          "width": 80.1346396795296,
+          "height": 68.30104320014289
+        },
+        "label": "Emoji",
+        "hittable": true,
+        "enabled": true,
+        "type": "Button",
+        "depth": 5,
+        "parentIndex": 2,
+        "index": 44,
+        "ref": "e45",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "x": 337.41276655532164,
+          "y": 843.3656234665239,
+          "width": 80.13463967952958,
+          "height": 68.63437653347614
+        },
+        "label": "Dictate",
+        "type": "Button",
+        "enabled": true,
+        "hittable": true,
+        "depth": 5,
+        "parentIndex": 2,
+        "index": 45,
+        "identifier": "dictation",
+        "ref": "e46",
+        "kind": "button"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 565,
+          "width": 420,
+          "height": 347
+        },
+        "type": "Other",
+        "hittable": true,
+        "enabled": true,
+        "depth": 1,
+        "parentIndex": 0,
+        "index": 46,
+        "identifier": "inputView",
+        "ref": "e47",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "type": "ScrollView",
+        "hittable": true,
+        "enabled": true,
+        "depth": 1,
+        "parentIndex": 0,
+        "index": 47,
+        "ref": "e48",
+        "kind": "scroll-area"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "type": "Other",
+        "hittable": true,
+        "enabled": true,
+        "depth": 1,
+        "parentIndex": 0,
+        "index": 48,
+        "identifier": "root",
+        "ref": "e49",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "type": "Other",
+        "hittable": true,
+        "enabled": true,
+        "depth": 2,
+        "parentIndex": 48,
+        "index": 49,
+        "identifier": "exact-navigation-D30B36E5-0C97-424B-816A-C11D0DD6D278",
+        "ref": "e50",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 912
+        },
+        "label": "Toolbar",
+        "hittable": true,
+        "enabled": true,
+        "type": "Other",
+        "depth": 3,
+        "parentIndex": 49,
+        "index": 50,
+        "ref": "e51",
+        "kind": "other"
+      },
+      {
+        "rect": {
+          "x": 0,
+          "y": 68,
+          "width": 420,
+          "height": 54
+        },
+        "label": "Back",
+        "type": "NavigationBar",
+        "enabled": true,
+        "hittable": true,
+        "depth": 6,
+        "parentIndex": 50,
+        "index": 51,
+        "identifier": "Composer parity",
+        "ref": "e52",
+        "kind": "navigation-bar"
+      },
+      {
+        "rect": {
+          "x": 20,
+          "y": 68,
+          "width": 44,
+          "height": 44
+        },
+        "label": "Back",
+        "type": "Button",
+        "enabled": true,
+        "hittable": true,
+        "depth": 7,
+        "parentIndex": 51,
+        "index": 52,
+        "identifier": "BackButton",
+        "ref": "e53",
+        "kind": "button"
+      },
+      {
+        "label": "Composer parity",
+        "hittable": true,
+        "depth": 7,
+        "index": 53,
+        "rect": {
+          "x": 76.00000000000001,
+          "y": 72,
+          "width": 149.33333333333337,
+          "height": 21.66666666666667
+        },
+        "parentIndex": 51,
+        "type": "StaticText",
+        "enabled": true,
+        "ref": "e54",
+        "kind": "text"
+      },
+      {
+        "identifier": "thread-git",
+        "label": "Git controls",
+        "hittable": true,
+        "depth": 7,
+        "index": 54,
+        "rect": {
+          "x": 297.3333333333333,
+          "y": 72,
+          "width": 38.666666666666686,
+          "height": 36
+        },
+        "parentIndex": 51,
+        "type": "Button",
+        "enabled": true,
+        "ref": "e55",
+        "kind": "button"
+      },
+      {
+        "identifier": "thread-files",
+        "label": "Open files",
+        "hittable": true,
+        "depth": 7,
+        "index": 55,
+        "rect": {
+          "x": 352,
+          "y": 72,
+          "width": 44,
+          "height": 36
+        },
+        "parentIndex": 51,
+        "type": "Button",
+        "enabled": true,
+        "ref": "e56",
+        "kind": "button"
+      },
+      {
+        "label": "Active project \u00b7 Fixture Mac",
+        "hittable": true,
+        "depth": 7,
+        "index": 56,
+        "rect": {
+          "x": 75.99999999999999,
+          "y": 93.66666666666667,
+          "width": 154.66666666666663,
+          "height": 14.333333333333329
+        },
+        "parentIndex": 51,
+        "type": "StaticText",
+        "enabled": true,
+        "ref": "e57",
+        "kind": "text"
+      },
+      {
+        "label": "2 queued",
+        "hittable": true,
+        "depth": 7,
+        "index": 57,
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 420,
+          "height": 565
+        },
+        "parentIndex": 50,
+        "type": "Other",
+        "enabled": true,
+        "ref": "e58",
+        "kind": "other"
+      },
+      {
+        "label": "Vertical scroll bar, 1 page",
+        "hittable": true,
+        "depth": 10,
+        "index": 58,
+        "rect": {
+          "x": 0,
+          "y": 122,
+          "width": 420,
+          "height": 309
+        },
+        "parentIndex": 57,
+        "type": "ScrollView",
+        "enabled": true,
+        "hiddenContentBelow": true,
+        "ref": "e59",
+        "kind": "scroll-area"
+      },
+      {
+        "label": "7:00\u202fAM",
+        "hittable": true,
+        "depth": 11,
+        "index": 59,
+        "rect": {
+          "x": 16,
+          "y": 146,
+          "width": 388,
+          "height": 89.66666666666669
+        },
+        "parentIndex": 58,
+        "type": "Cell",
+        "enabled": true,
+        "ref": "e60",
+        "kind": "cell"
+      },
+      {
+        "label": "Queued message 1",
+        "hittable": true,
+        "depth": 12,
+        "index": 60,
+        "rect": {
+          "x": 16,
+          "y": 146,
+          "width": 388,
+          "height": 89.66666666666669
+        },
+        "parentIndex": 59,
+        "type": "Cell",
+        "enabled": true,
+        "ref": "e61",
+        "kind": "cell"
+      },
+      {
+        "label": "Copy message",
+        "hittable": true,
+        "depth": 14,
+        "index": 61,
+        "rect": {
+          "width": 28,
+          "y": 190,
+          "height": 28,
+          "x": 374.3333333333333
+        },
+        "parentIndex": 60,
+        "type": "Button",
+        "enabled": true,
+        "ref": "e62",
+        "kind": "button"
+      },
+      {
+        "label": "7:00\u202fAM",
+        "hittable": true,
+        "depth": 11,
+        "index": 62,
+        "rect": {
+          "width": 388,
+          "y": 235.66666666666669,
+          "height": 89.33333333333331,
+          "x": 16
+        },
+        "parentIndex": 58,
+        "type": "Cell",
+        "enabled": true,
+        "ref": "e63",
+        "kind": "cell"
+      },
+      {
+        "label": "Queued message 2",
+        "hittable": true,
+        "depth": 12,
+        "index": 63,
+        "rect": {
+          "width": 388,
+          "y": 235.66666666666669,
+          "height": 89.33333333333331,
+          "x": 16
+        },
+        "parentIndex": 62,
+        "type": "Cell",
+        "enabled": true,
+        "ref": "e64",
+        "kind": "cell"
+      },
+      {
+        "parentIndex": 63,
+        "enabled": true,
+        "label": "Copy message",
+        "index": 64,
+        "hittable": true,
+        "rect": {
+          "width": 28,
+          "y": 279.6666666666667,
+          "height": 28,
+          "x": 374.3333333333333
+        },
+        "depth": 14,
+        "type": "Button",
+        "ref": "e65",
+        "kind": "button"
+      },
+      {
+        "parentIndex": 57,
+        "label": "2 queued",
+        "enabled": true,
+        "index": 65,
+        "identifier": "composer-queue-toggle",
+        "hittable": true,
+        "rect": {
+          "width": 70.66666666666667,
+          "y": 431,
+          "height": 32,
+          "x": 16
+        },
+        "depth": 10,
+        "type": "Button",
+        "ref": "e66",
+        "kind": "button"
+      },
+      {
+        "parentIndex": 57,
+        "enabled": true,
+        "label": "Resume",
+        "index": 66,
+        "hittable": true,
+        "rect": {
+          "width": 44,
+          "y": 431,
+          "height": 32,
+          "x": 360
+        },
+        "depth": 10,
+        "type": "Button",
+        "ref": "e67",
+        "kind": "button"
+      },
+      {
+        "parentIndex": 57,
+        "enabled": true,
+        "index": 67,
+        "identifier": "composer-dock",
+        "hittable": true,
+        "rect": {
+          "width": 420,
+          "y": 469,
+          "height": 104,
+          "x": 0
+        },
+        "depth": 9,
+        "type": "Other",
+        "ref": "e68",
+        "kind": "other"
+      },
+      {
+        "parentIndex": 67,
+        "label": "Message",
+        "enabled": true,
+        "index": 68,
+        "identifier": "composer-surface",
+        "hittable": true,
+        "rect": {
+          "width": 396,
+          "y": 475,
+          "height": 92,
+          "x": 12
+        },
+        "depth": 10,
+        "type": "Other",
+        "ref": "e69",
+        "kind": "other"
+      },
+      {
+        "parentIndex": 68,
+        "enabled": true,
+        "label": "Message",
+        "index": 69,
+        "value": "\ufffc",
+        "focused": true,
+        "rect": {
+          "width": 368,
+          "y": 477,
+          "height": 36,
+          "x": 26
+        },
+        "hittable": true,
+        "depth": 15,
+        "type": "TextView",
+        "password": false,
+        "editable": true,
+        "ref": "e70",
+        "kind": "text-view"
+      },
+      {
+        "parentIndex": 69,
+        "enabled": true,
+        "index": 70,
+        "identifier": "_UITextSelectionRangeAdjustmentContainerView",
+        "hittable": true,
+        "rect": {
+          "width": 368,
+          "y": 477,
+          "height": 58,
+          "x": 26
+        },
+        "depth": 16,
+        "type": "Other",
+        "ref": "e71",
+        "kind": "other"
+      },
+      {
+        "parentIndex": 70,
+        "enabled": true,
+        "index": 71,
+        "identifier": "com.apple.text.grabber.leading",
+        "hittable": true,
+        "rect": {
+          "width": 16.5,
+          "y": 482,
+          "height": 24,
+          "x": 26
+        },
+        "depth": 17,
+        "type": "Other",
+        "ref": "e72",
+        "kind": "other"
+      },
+      {
+        "parentIndex": 70,
+        "enabled": true,
+        "index": 72,
+        "identifier": "com.apple.text.grabber.trailing",
+        "hittable": true,
+        "rect": {
+          "width": 16.5,
+          "y": 506,
+          "height": 23.66666666666663,
+          "x": 133.66666666666669
+        },
+        "depth": 17,
+        "type": "Other",
+        "ref": "e73",
+        "kind": "other"
+      },
+      {
+        "label": "Remote discussion \u00b7 unavailable",
+        "depth": 15,
+        "hittable": true,
+        "enabled": true,
+        "index": 73,
+        "type": "Button",
+        "rect": {
+          "width": 269,
+          "y": 482,
+          "height": 25,
+          "x": 26
+        },
+        "parentIndex": 68,
+        "ref": "e74",
+        "kind": "button"
+      },
+      {
+        "label": "Add attachment",
+        "depth": 13,
+        "identifier": "add-attachment",
+        "hittable": true,
+        "enabled": true,
+        "index": 74,
+        "type": "Button",
+        "rect": {
+          "width": 44,
+          "y": 521,
+          "height": 44,
+          "x": 12
+        },
+        "parentIndex": 68,
+        "ref": "e75",
+        "kind": "button"
+      },
+      {
+        "label": "Model and reasoning settings, Fixture model, Medium",
+        "depth": 13,
+        "hittable": true,
+        "enabled": true,
+        "index": 75,
+        "type": "Other",
+        "rect": {
+          "height": 44,
+          "x": 56,
+          "y": 521,
+          "width": 352
+        },
+        "parentIndex": 68,
+        "ref": "e76",
+        "kind": "other"
+      },
+      {
+        "depth": 14,
+        "identifier": "model-settings",
+        "hittable": true,
+        "enabled": true,
+        "index": 76,
+        "type": "Button",
+        "rect": {
+          "x": 159,
+          "y": 521,
+          "width": 205,
+          "height": 44
+        },
+        "parentIndex": 75,
+        "ref": "e77",
+        "kind": "button",
+        "inheritsLabel": true
+      },
+      {
+        "label": "Send",
+        "depth": 14,
+        "identifier": "send",
+        "hittable": true,
+        "enabled": true,
+        "type": "Button",
+        "index": 77,
+        "rect": {
+          "y": 521,
+          "x": 364,
+          "height": 44,
+          "width": 44
+        },
+        "parentIndex": 75,
+        "ref": "e78",
+        "kind": "button"
+      },
+      {
+        "label": "Toolbar",
+        "depth": 6,
+        "identifier": "Toolbar",
+        "hittable": true,
+        "enabled": true,
+        "type": "Toolbar",
+        "index": 78,
+        "rect": {
+          "y": 0,
+          "x": 0,
+          "height": 912,
+          "width": 420
+        },
+        "parentIndex": 50,
+        "ref": "e79",
+        "kind": "toolbar"
+      }
+    ]
+  }
+}

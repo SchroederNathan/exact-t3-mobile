@@ -1,0 +1,436 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/app.test.ts:
+(pass) native environments aggregate colliding IDs and keep commands and connection lifetimes scoped [39.06ms]
+(pass) cleaning a preview file also removes its empty presentation directory [0.06ms]
+
+tests/composer-context.test.ts:
+(pass) prunes context records whose native chips were deleted [0.06ms]
+(pass) returns an empty wire context when no context chip remains
+(pass) selects flat contract command rows and opens model settings or clears [0.23ms]
+(pass) uses skill display metadata for native cube chips while keeping it local [0.52ms]
+(pass) does not turn unfinished trigger words into native chips [0.11ms]
+(pass) merges only supported context records from a native paste [0.22ms]
+(pass) marks malformed native events invalid without clearing the draft [0.01ms]
+(pass) preserves the native alternate submit intent [0.01ms]
+(pass) resolves tapped context chips to detail and a thread route [0.16ms]
+(pass) native attachment paste and failures retain their transfer payloads [0.02ms]
+(pass) inline attachment metadata identifies the owned file for preview and removal [0.05ms]
+(pass) context chip tokens show attachment size suffixes like Expo [0.03ms]
+(pass) unavailable thread chips keep their identity and available threads have no type suffix [0.08ms]
+
+tests/navigation.test.ts:
+(pass) folding transfers thread inspectors and inactive environment edits without losing visits [0.30ms]
+(pass) regrouping every inactive group keeps the selected independent tab and form routes [0.04ms]
+(pass) normalizing cold-start declared detail routes gives compact tabs their complete parent chain [0.04ms]
+(pass) normalizing previously split history retains the selected stack without stale Back history [0.10ms]
+(pass) an inactive group keeps its newest final visit and clears the obsolete alternate stack [0.05ms]
+(pass) malformed navigation cannot introduce duplicate visits or change an entry's owning tab [0.08ms]
+
+tests/attachment-gallery.test.ts:
+(pass) gallery capture preserves selected image and message order, excludes documents, and freezes local identity [0.20ms]
+(pass) one gallery transfer starts in its owned entry, preempts background work, and ignores stale cancellation [0.29ms]
+(pass) gallery metadata cancellation retires only its captured request and reuses the signed URL boundary [0.20ms]
+(pass) native gallery opens loading slots synchronously, reports selection, and holds its reply through explicit dismissal [0.27ms]
+
+tests/attachments.test.ts:
+(pass) picked images normalize format and names while supported animated bytes remain unchanged [0.13ms]
+(pass) attachment limits include file-shaped images and reject duplicated uploaded references [0.09ms]
+(pass) staging measures actual bytes and keeps a safe extension for native document previews [0.27ms]
+(pass) signed URLs remain on the captured environment and upload reaches ready only on a 204 response [0.07ms]
+
+tests/add-project.test.ts:
+(pass) source chooser lists new, local, Git URL, then ready providers before the rest by label [0.20ms]
+(pass) source chooser without scopes explains what the connection cannot do [0.03ms]
+(pass) source chooser shows environments when several exist and marks the chosen one [0.16ms]
+(pass) environment preselection follows upstream [0.09ms]
+(pass) repository input copy and submit plans [0.15ms]
+(pass) pasted clone URLs normalize as upstream does [0.28ms]
+(pass) clone folder names come from any clone URL [0.03ms]
+(pass) default clone path seeds from the base directory and ghq layout [0.23ms]
+(pass) path validation errors read exactly as upstream [0.11ms]
+(pass) new project folder names follow the slug rules [0.06ms]
+(pass) pasted paths replace the field and lose shell quoting [0.06ms]
+(pass) clone destination screen and submit [0.06ms]
+(pass) local folder screen plans create, reuse and refusal [0.08ms]
+(pass) new project preview, machines and publish targets [0.26ms]
+(pass) folder browser filters by the leaf and builds tap targets [0.20ms]
+(pass) clone destination browsing keeps the clone folder at the end [0.02ms]
+(pass) folder browser access, loading and missing folders [0.07ms]
+(pass) clone banner titles, stage summaries and the send block [0.12ms]
+(pass) app access applies to GitHub remotes and keeps the remote's casing [0.07ms]
+
+tests/composer-commands.test.ts:
+(pass) composer command catalog > only exposes provider commands at the beginning of a prompt [0.07ms]
+(pass) composer command catalog > filters conversation-only provider commands from a new draft [0.02ms]
+(pass) composer command catalog > filters skills by enabled and user-invocable state [0.04ms]
+(pass) composer command catalog > creates escaped markdown file links and path rows [0.06ms]
+(pass) composer command catalog > ranks model mentions and omits unavailable legacy models [0.04ms]
+
+tests/composer-settings.test.ts:
+(pass) composer settings > Save applies the pending model to the same thread and retains it when reopened [1.00ms]
+(pass) composer settings > Cancel drops a pending model but retains applied-model options and runtime changes [0.61ms]
+(pass) composer settings > Cancel discards pending-model options together with that model [0.33ms]
+(pass) composer settings > scoped environment and thread selections remain independent [0.49ms]
+(pass) composer settings > Save rejects a selection disabled after the sheet opened without applying it [0.19ms]
+(pass) composer settings > a superseded sheet cannot edit or save another scoped thread's selection [0.17ms]
+(pass) composer settings > live model acknowledgement clears only matching overrides and keeps explicit runtime choices [0.16ms]
+(pass) composer settings > acknowledged model-only overrides disappear and a pending sheet pick remains unapplied [0.24ms]
+
+tests/tool-activity.test.ts:
+(pass) activity status reflects the authoritative result: {"item":{"type":"command_execution","status":"completed","exitCode":0,"outputIndicatesFailure":true},"expected":"completed"} [0.03ms]
+(pass) activity status reflects the authoritative result: {"item":{"type":"command_execution","status":"failed","exitCode":0},"expected":"error"} [0.05ms]
+(pass) activity status reflects the authoritative result: {"item":{"type":"command_execution","status":"completed","exitCode":2},"expected":"error"}
+(pass) activity status reflects the authoritative result: {"item":{"type":"command_execution","status":"completed","outputIndicatesFailure":true},"expected":"error"}
+(pass) activity status reflects the authoritative result: {"item":{"type":"dynamic_tool","status":"completed","output":{"isError":true}},"expected":"error"}
+(pass) activity status reflects the authoritative result: {"item":{"type":"command_execution","status":"interrupted"},"expected":"interrupted"}
+(pass) tool input preserves explicit reset arguments: {"input":null,"expected":"null"} [0.02ms]
+(pass) tool input preserves explicit reset arguments: {"input":"","expected":"\"\""}
+(pass) tool input preserves explicit reset arguments: {"input":{"text":"","value":null},"expected":"{\n  \"text\": \"\",\n  \"value\": null\n}"}
+(pass) tool input preserves explicit reset arguments: {"input":{"content":"keep","other":"also keep"},"expected":"{\n  \"content\": \"keep\",\n  \"other\": \"also keep\"\n}"}
+(pass) T3 tool names use friendly action labels: {"toolName":"mcp__t3_code__t3_thread_read","expected":"Read a T3 thread"} [0.01ms]
+(pass) T3 tool names use friendly action labels: {"toolName":"t3-code-direct.t3_thread_list","expected":"List T3 threads"} [0.01ms]
+(pass) T3 tool names use friendly action labels: {"toolName":"mcp__t3_code_direct__t3_thread_wait","expected":"Wait for a T3 thread"}
+(pass) T3 tool names use friendly action labels: {"toolName":"t3_thread_send","expected":"Send to a T3 thread"} [0.01ms]
+(pass) T3 tool names use friendly action labels: {"toolName":"mcp__t3_code__t3_queue","input":{"action":"read"},"expected":"Read a queued message"}
+(pass) T3 tool names use friendly action labels: {"toolName":"mcp__other__t3_thread_read","expected":"mcp__other__t3_thread_read"}
+(pass) live commands use Expo's program label: {"input":"pwd","expected":"Running pwd"} [0.02ms]
+(pass) live commands use Expo's program label: {"input":"cd /tmp && env CI=1 bun test","expected":"Running bun"} [0.05ms]
+(pass) live commands use Expo's program label: {"input":"/bin/zsh -lc 'git status'","expected":"Running git"} [0.05ms]
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"/bin/zsh -lc 'git status'","expected":"git status"} [0.02ms]
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"bash -o pipefail -c 'rg foo | head -10'","expected":"rg foo | head -10"} [0.01ms]
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc \"printf \\n\"","expected":"printf \\n"} [0.03ms]
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc 'printf '\"'\"'hello'\"'\"''","expected":"printf 'hello'"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc 'printf %s \"$1\"' label value","expected":"zsh -lc 'printf %s \"$1\"' label value"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc 'pwd","expected":"zsh -lc 'pwd"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc 'pwd' && whoami","expected":"zsh -lc 'pwd' && whoami"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc 'pwd' > result","expected":"zsh -lc 'pwd' > result"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"zsh -lc ''","expected":"zsh -lc ''"}
+(pass) command display unwraps a complete shell script while detail preserves input: {"input":"printf '\u001b[31mred'","expected":"printf '␛[31mred'"} [0.03ms]
+(pass) reasoning preserves previews and exposes Markdown blocks for expanded detail [0.49ms]
+(pass) tool output unwraps resources and reports truncated bodies [0.19ms]
+(pass) command output retains split escapes, carriage returns and cursor edits [0.28ms]
+
+tests/media-preview.test.ts:
+(pass) media demand bounds signing, keeps cached URLs until expiry, and discards stale scopes [1.48ms]
+(pass) media errors remain visible until retry and direct images need no signing [0.42ms]
+(pass) media gallery freezes resources without signing or downloading and decodes only image data [0.26ms]
+
+tests/composer-import.test.ts:
+(pass) remote context imports owned bytes and rebinds both context and upload identities [1.10ms]
+(pass) local clipboard attachments are copied into a fresh owned file without a remote request [0.20ms]
+(pass) a failed transfer keeps sibling downloads and marks only the unavailable context [0.21ms]
+(pass) a source read failure leaves the plain reference and imports remaining context [0.11ms]
+(pass) connection changes between preparation and download cannot import stale asset URLs [0.15ms]
+(pass) cancellation after a completed download cleans its file and returns no draft replacement [0.12ms]
+(pass) invalid attachment metadata fails without changing the draft or leaking prepared files [0.05ms]
+(pass) raw picked files and images insert inline references at the captured UTF16 selection [0.07ms]
+(pass) a legacy thread link is converted to a context chip without an attachment transfer [0.07ms]
+(pass) thread-only context imports when the target cannot upload attachments [0.05ms]
+(pass) legacy thread URLs become one valid context chip without surplus punctuation [0.26ms]
+(pass) legacy thread IDs avoid copied context ID collisions [0.11ms]
+(pass) raw foreign thread links stay plain while structured foreign references become unavailable [0.19ms]
+(pass) peer scope accepts unreachable linked threads and excludes expired links [0.23ms]
+(pass) disabled peer capability or setting performs no peer lookup [0.09ms]
+(pass) a rejected peer lookup still pastes local context and leaves foreign context unavailable [0.13ms]
+(pass) cancellation waits for every download before cleaning imported files [6.49ms]
+
+tests/project-fixture.test.ts:
+(pass) the fixture answers discovery, browsing and lookup through the typed calls [0.57ms]
+(pass) created projects reach the shell stream [0.29ms]
+(pass) clone progress streams to subscribers and follows cancel [0.19ms]
+
+tests/new-task.test.ts:
+(pass) draft keys never collide with scoped thread ids and the contract copy matches [0.09ms]
+(pass) a fresh draft shows the project hero, the current checkout and its branch [0.17ms]
+(pass) worktree mode starts from the default branch, from the remote by default [0.04ms]
+(pass) send is blocked while starting, for a clone, or without a base branch [0.04ms]
+(pass) scratch drafts ask what to work on and hide the workspace controls [0.01ms]
+(pass) phases: no project, a missing project, no model, loading branches [0.02ms]
+(pass) a folder that is not a repository forces the current checkout [0.01ms]
+(pass) a local pick made before refs loaded follows the current checkout [0.02ms]
+(pass) retargeting keeps the creation time and drops the workspace for another project [0.02ms]
+(pass) launch plans: root, existing worktree and a t3 worktree branch [0.10ms]
+(pass) titles follow the Expo client's seed and row rules [0.05ms]
+(pass) branch badges and environment status words [0.09ms]
+(pass) project scopes sort by thread activity, then update time, and drop scratch [0.19ms]
+(pass) project picker empty states name the next step [0.05ms]
+(pass) the same project on another machine matches by repository, folder, then title [0.07ms]
+(pass) the default model prefers the project, then the sticky pick, then the default [0.13ms]
+(pass) Home lists drafts with content before launches waiting to send [0.06ms]
+(pass) workspace paths truncate in the middle as the Expo client's subtitle does [0.21ms]
+
+tests/markdown.test.ts:
+(pass) native markdown blocks > keeps list continuations and nesting in their structural blocks [1.96ms]
+(pass) native markdown blocks > keeps fenced list-looking text literal and preserves quote and heading structure [0.50ms]
+(pass) native markdown blocks > keeps screenshot sources and surrounding prose in order [1.32ms]
+
+tests/git-parity.test.ts:
+(pass) thread Git domain state > normalizes a repository status without losing server fields [0.07ms]
+(pass) thread Git domain state > normalizes a non-repository response to safe empty status
+(pass) thread Git domain state > chooses context-sensitive quick actions and honors disabled states [0.09ms]
+(pass) thread Git domain state > reduces streamed operation progress to deterministic final state [0.03ms]
+(pass) thread Git domain state > projects pull request list entries into stable mobile summaries [0.02ms]
+
+tests/connection.test.ts:
+(pass) long thread history > refreshes idle threads when completion markers are %s [0.74ms]
+(pass) long thread history > refreshes idle threads when completion markers are %s [0.19ms]
+(pass) long thread history > uses bounded snapshots and resumes the matching projection after replay and reconnect [0.55ms]
+(pass) long thread history > treats visible timeline as authoritative including inherited content and empty history [1.01ms]
+(pass) long thread history > prepends older pages without replacing live rows or the resume cursor [0.32ms]
+(pass) long thread history > discards pages overtaken by replacement snapshots and keeps failures thread-local [0.28ms]
+(pass) long thread history > does not resurrect rolled-back rows or unloaded old updates [0.34ms]
+(pass) tool activity feed > resolves expanded reasoning Markdown only for the current activity revision [0.97ms]
+(pass) tool activity feed > keeps mixed and tool-only timelines ordered without fetching collapsed output [0.43ms]
+(pass) tool activity feed > loads inherited omitted input once, unwraps MCP output and retries failures locally [0.55ms]
+(pass) tool activity feed > hydrates projected tool image markers through signed asset URLs [0.94ms]
+(pass) tool activity feed > refreshes open live inline output and fetches only when it becomes omitted [0.46ms]
+(pass) tool activity feed > rejects live detail after completion, rollback, replacement and reconnect [0.59ms]
+(pass) tool activity feed > streams bounded command output only while expanded and interrupts stale subscriptions [1.74ms]
+(pass) tool activity feed > expands embedded legacy output, search results and file diffs without extra requests [0.30ms]
+(pass) direct T3 connection > visits send the raw watermark and clear Done only after the shell echo [0.55ms]
+(pass) direct T3 connection > visit failures retain unread status and allow an explicit retry of the same watermark [0.30ms]
+(pass) direct T3 connection > visit metadata keeps raw completion and read times independent of display time [0.36ms]
+(pass) direct T3 connection > normalizes pairing links without retaining a credential in the origin [0.14ms]
+(pass) direct T3 connection > exchanges the pairing credential with the OAuth form encoding [6.96ms]
+(pass) direct T3 connection > maps shell snapshots, updates, transcript events, and acknowledges stream chunks [4.65ms]
+(pass) direct T3 connection > a send waits for server acceptance and rejects failures or disconnects without fabricating messages [0.80ms]
+(pass) direct thread settings > persists favorites with the server settings patch and reflects authoritative settings [0.29ms]
+(pass) direct thread settings > validates favorite identity independently of availability and keeps server-rejected favorites unchanged [0.70ms]
+(pass) direct thread settings > uses shell start markers until the selected thread supplies provider handoff capabilities [0.46ms]
+(pass) direct thread settings > updates provider-switch permission from stream events and clears it when subscription state is lost [0.66ms]
+(pass) direct thread settings > dispatches the selected model and typed options without an unchanged runtime command [0.23ms]
+(pass) direct thread settings > refuses missing threads and stale model settings before dispatch [0.11ms]
+(pass) direct thread settings > stops before message dispatch when the runtime command is rejected [0.10ms]
+(pass) direct thread settings > waits for runtime acceptance then dispatches with a separate command id [0.10ms]
+(pass) direct thread settings > rechecks settings changed while waiting for runtime acceptance [0.10ms]
+(pass) loads only the requested checkpoint diff without requiring turn-control permission [0.10ms]
+(pass) terminal metadata and attach streams drive output, write, and clear [0.75ms]
+(pass) project scripts reuse the default terminal when no shell is running [0.14ms]
+
+tests/thread-status.test.ts:
+(pass) completed threads have no status and working timers match Expo without shimmer [0.17ms]
+(pass) lifecycle labels follow snooze expiration, seen wakes, and explicit settlement [0.19ms]
+(pass) Stop takes precedence over a pending approval and a connection error takes precedence over Stop [0.04ms]
+(pass) sync and compacting statuses supersede the working timer without claiming completion [0.04ms]
+(pass) connection statuses preserve the environment and retry reason [0.03ms]
+(pass) work timing honors authoritative null, active ownership, and older server fallback [0.05ms]
+(pass) compaction follows the active run and explicit compact command completion [0.05ms]
+
+tests/composer-connection.test.ts:
+(pass) composer message dispatch includes validated context and fresh-context flag [0.13ms]
+(pass) composer path search uses the server projects.searchEntries wire payload [0.07ms]
+
+tests/connection-controls.test.ts:
+(pass) composer feedback declines the captured request with trimmed text and never dispatches a message [0.27ms]
+(pass) approval feedback rejects empty text and attachments before responding [0.08ms]
+(pass) redirect declines captured live approvals sequentially before steering the active run [0.12ms]
+(pass) approval redirect retains the draft after failure [0.08ms]
+(pass) approval redirect retains the draft after new approval [0.07ms]
+(pass) approval redirect retains the draft after navigation [0.05ms]
+(pass) approval redirect retains the draft after draft edit [0.02ms]
+(pass) unknown feedback replay keeps its original response identity after resolution and reconnect [0.10ms]
+(pass) an active question bypasses approval redirect and a stale captured draft sends no responses [0.07ms]
+(pass) unknown redirect replay reuses approval command receipts and the original message identity [0.12ms]
+(pass) reconnect rejects an old HTTP grant even though the session owner survives [0.04ms]
+(pass) lifecycle actions use the displayed state and reject stale or unauthorized changes [0.33ms]
+(pass) stop owns the displayed run and stays stopping after acceptance until an event [0.19ms]
+(pass) force stop requires access, capability, and the displayed unresponsive run [0.21ms]
+(pass) force stop preserves the killed result and shared thread IDs [0.06ms]
+(pass) force stop preserves the released result and shared thread IDs [0.03ms]
+(pass) force stop preserves the releasing result and shared thread IDs [0.01ms]
+(pass) force stop preserves the shared result and shared thread IDs [0.01ms]
+(pass) force stop failures release pending state and revoke denied access without crossing reconnects [0.15ms]
+(pass) responses target the runtime request, suppress duplicate taps, and reject resolved requests [0.09ms]
+(pass) question answers preserve exact values and resolved delivery failures remain in the feed [0.31ms]
+(pass) message-mode requests can be dismissed even when answering is no longer resumable [0.10ms]
+(pass) permission rejection invalidates access and retains the authoritative pending request [0.09ms]
+(pass) forks an inherited assistant response using its source identity and current control grant [0.55ms]
+(pass) uses cached source capability evidence for inherited fork availability and execution [0.25ms]
+
+tests/project-rpc.test.ts:
+(pass) discovery sends an empty payload and unwraps Option fields [0.09ms]
+(pass) discovery refuses a reply without providers [0.04ms]
+(pass) browse sends the partial path and parses entries [0.04ms]
+(pass) a browse refusal keeps the missing-path flag when the session carries it [0.05ms]
+(pass) repository lookup sends provider and repository [0.03ms]
+(pass) project create, unarchive and delete send projects.mutate commands [0.08ms]
+(pass) an archived project reply reads as archived [0.01ms]
+(pass) createNew sends the name and keeps a commit error [0.03ms]
+(pass) publish sends a private repository request [0.11ms]
+(pass) app access sends provider, host and repository [0.05ms]
+(pass) clone start sends only the fields upstream sends [0.03ms]
+(pass) clone cancel and retry send the project id [0.03ms]
+(pass) ensureScratch sends an empty payload [0.04ms]
+(pass) a clone list event parses each snapshot [0.06ms]
+
+tests/add-project-session.test.ts:
+(pass) the clone list is unknown until the stream's first event, then follows each event [0.17ms]
+(pass) a draft opened by a clone waits for the list; a failed stream unblocks it [0.07ms]
+(pass) a browse refusal keeps the server's failure fields [0.06ms]
+
+tests/turn-review.test.ts:
+(pass) projects unified hunks with independent old and new line numbers [0.34ms]
+(pass) retains rename and binary metadata and decodes quoted Git paths [0.25ms]
+(pass) recognizes plain patch headers without confusing header-looking hunk content [0.04ms]
+(pass) preserves unsupported patch text instead of presenting it as an empty diff [0.02ms]
+
+tests/thread-settings.test.ts:
+(pass) thread settings > projects server favorites by provider instance and sorts them before the preferred model order [0.32ms]
+(pass) thread settings > projects catalog groups and defaults without sending implicit options [0.05ms]
+(pass) thread settings > decodes legacy selections, preserves explicit false, and migrates Ultracode effort [0.08ms]
+(pass) thread settings > stages typed option values independently per thread and rejects invalid choices [0.25ms]
+(pass) thread settings > respects project overrides, hidden ordering, provider locks and current fallbacks [0.19ms]
+(pass) thread settings > retains supported runtime choices and refuses managed or stale staged settings [0.26ms]
+
+tests/composer-queue.test.ts:
+(pass) queue projection orders only user queued runs and preserves message context and files [0.17ms]
+(pass) active queue steering follows the active provider thread's session capability [0.09ms]
+(pass) queue edits require synchronized data and current permission before dispatch [0.33ms]
+(pass) server queue edit preserves attachment references and structured context on the wire [0.10ms]
+(pass) Send now starts an idle queue and promotes a queued message to active steering [0.11ms]
+(pass) queue resume and remove dispatch server commands and retain server rejection [0.15ms]
+
+tests/question-attachments.test.ts:
+(pass) question attachment drafts are isolated by environment, thread, request and question [0.20ms]
+(pass) resolution collects only the current thread after its pending requests are loaded [0.04ms]
+
+tests/new-task-git.test.ts:
+(pass) worktree mode and the current branch never touch git [0.13ms]
+(pass) local mode reads the exact local branch, then switches to it [0.07ms]
+(pass) a branch checked out in another worktree is reused only at the repository root [0.05ms]
+(pass) a remote ref checks out its local name through every page [0.04ms]
+(pass) branch rows select the pick, else the current branch, with badges [0.05ms]
+(pass) the pager asks for each page once and follows the cursor [0.28ms]
+
+tests/code-highlight.test.ts:
+(pass) UTF-16 token ranges preserve source exactly and reject invalid native ranges [0.05ms]
+(pass) each source owns native requests while settled results stay bounded and reusable [0.22ms]
+
+tests/markdown-links.test.ts:
+(pass) thread links preserve written escapes, decode hosted segments once, and resolve within their scope [0.08ms]
+(pass) file destinations preserve host paths, Unicode, and positions without interpreting external links [0.17ms]
+
+tests/thread-history.test.ts:
+(pass) groups only within the same source, run, attempt and visible activity segment [0.19ms]
+(pass) inherited grouped children retain their source keys for lazy output requests [0.04ms]
+(pass) completed tool summaries match Expo: [ "command_execution", "command_execution" ] [0.09ms]
+(pass) completed tool summaries match Expo: [ "file_change", "file_change" ] [0.03ms]
+(pass) completed tool summaries match Expo: [ "file_search", "file_search" ] [0.02ms]
+(pass) completed tool summaries match Expo: [ "web_search", "web_search" ] [0.01ms]
+(pass) completed tool summaries match Expo: [ "command_execution", "file_change" ] [0.02ms]
+(pass) completed tool summaries match Expo: [ "dynamic_tool", "dynamic_tool" ] [0.03ms]
+(pass) completed tool summaries match Expo: [ "file_change" ]
+(pass) completed tool summaries match Expo: [ "command_execution" ]
+(pass) completed tool summaries match Expo: [ "reasoning" ]
+(pass) completed tool summaries match Expo: [ "reasoning", "reasoning" ] [0.01ms]
+(pass) completed tool summaries match Expo: [ "reasoning", "command_execution", "reasoning" ] [0.03ms]
+(pass) folds completed commentary and tools while retaining the final answer and user steering [0.49ms]
+(pass) keeps active, failed, interrupted and streaming response work unfolded: {"run":{"id":"run","status":"running","startedAt":"2026-11-10T12:00:00Z","completedAt":null},"end":{}} [0.17ms]
+(pass) keeps active, failed, interrupted and streaming response work unfolded: {"run":{"id":"run","status":"failed","startedAt":"2026-11-10T12:00:00Z","completedAt":"2026-11-10T12:00:20Z"},"end":{}} [0.15ms]
+(pass) keeps active, failed, interrupted and streaming response work unfolded: {"run":{"id":"run","status":"completed","startedAt":"2026-11-10T12:00:00Z","completedAt":"2026-11-10T12:00:20Z"},"end":{"type":"error","status":"failed","parentItemId":null}} [1.79ms]
+(pass) keeps active, failed, interrupted and streaming response work unfolded: {"run":{"id":"run","status":"completed","startedAt":"2026-11-10T12:00:00Z","completedAt":"2026-11-10T12:00:20Z"},"end":{"type":"run_interrupt_result"}} [0.12ms]
+(pass) keeps active, failed, interrupted and streaming response work unfolded: {"run":{"id":"run","status":"completed","startedAt":"2026-11-10T12:00:00Z","completedAt":"2026-11-10T12:00:20Z"},"end":{"streaming":true}} [0.11ms]
+(pass) a run completion invalidates the cached feed and folds prior work [0.15ms]
+(pass) live group uses the latest active command and successful retries clear old failures [0.11ms]
+(pass) empty assistant placeholders preserve contiguous work while failed runs reveal individual calls [0.18ms]
+(pass) runless history folds each response but never hides unfinished calls [0.21ms]
+(pass) assistant metadata follows terminal source messages and their final update time [0.46ms]
+(pass) attaches ready checkpoints once and updates them after delayed checkpoint and message events [0.38ms]
+(pass) does not invent checkpoint changes for unavailable, empty, or inherited work (missing, thread) [0.08ms]
+(pass) does not invent checkpoint changes for unavailable, empty, or inherited work (ready, thread) [0.05ms]
+(pass) does not invent checkpoint changes for unavailable, empty, or inherited work (ready, ancestor) [0.05ms]
+(pass) fork eligibility follows unknown capability evidence [0.07ms]
+(pass) fork eligibility follows native capability evidence [0.05ms]
+(pass) fork eligibility follows weak native identity capability evidence [0.05ms]
+(pass) fork eligibility follows no turn fork capability evidence [0.04ms]
+(pass) fork eligibility follows no thread fork capability evidence [0.04ms]
+(pass) fork eligibility follows portable capability evidence [0.05ms]
+(pass) fork eligibility follows known incapable capability evidence [0.04ms]
+(pass) fork targets use the visible source row and ignore unrelated provider records [0.05ms]
+(pass) provider updates refresh fork visibility and detaching restores the portable fallback [0.14ms]
+(pass) does not fork ineligible visible rows (assistant_message {
+  status: "running",
+}) [0.06ms]
+(pass) does not fork ineligible visible rows (assistant_message {
+  status: "pending",
+}) [0.05ms]
+(pass) does not fork ineligible visible rows (assistant_message {
+  streaming: true,
+}) [0.04ms]
+(pass) does not fork ineligible visible rows (assistant_message {
+  runId: null,
+}) [0.08ms]
+(pass) does not fork ineligible visible rows (assistant_message {
+  runId: "",
+}) [0.05ms]
+(pass) does not fork ineligible visible rows (user_message {}) [0.05ms]
+(pass) does not fork ineligible visible rows (command_execution {}) [0.02ms]
+
+tests/connection-attachments.test.ts:
+(pass) preview demand bounds pending work, cancels departed rows, and preserves completed cache entries [1.31ms]
+(pass) preview errors preserve missing tags, explicit retries remint, and settled cache stays bounded [0.62ms]
+(pass) an unknown attachment send retains its identity through changed capabilities and denied retries [0.50ms]
+
+tests/thread-controls.test.ts:
+(pass) question answers > preserves provider values, filters unknown choices, and deduplicates in selection order [0.07ms]
+(pass) question answers > custom answers override choices, obey custom policy, and preserve initial-answer clearing [0.05ms]
+(pass) question answers > treats prototype-shaped IDs as data and scopes drafts by request [0.07ms]
+(pass) approval redirect scope rejects draft edits and leaving then returning to the same route [0.04ms]
+(pass) permission requires authentication and explicit permissions supersede scopes [0.01ms]
+(pass) pending controls use runtime request ownership and preserve supplied empty options [0.06ms]
+(pass) Stop targets the newest interruptible run while it is preparing [0.03ms]
+(pass) Stop targets the newest interruptible run while it is starting
+(pass) Stop targets the newest interruptible run while it is running
+(pass) Stop targets the newest interruptible run while it is waiting
+(pass) history retains controls outside the visible window and ignores stale resolution [0.13ms]
+(pass) inherited request items cannot answer local requests and provider delivery errors render [0.13ms]
+
+tests/markdown-images.test.ts:
+(pass) image sources distinguish direct URLs from decoded host paths and unresolved destinations [0.16ms]
+(pass) automatic host image loading keeps network paths within the project share [0.10ms]
+(pass) viewed images retain thread context without requiring a known workspace and preserve image formats [0.07ms]
+
+tests/drafts.test.ts:
+(pass) queued saves restore separate scoped thread drafts from persisted bytes [0.31ms]
+(pass) a delayed clear cannot overwrite another thread or a newer draft, including after reload [0.14ms]
+(pass) equal revisions are idempotent only when their text agrees [0.06ms]
+(pass) unreadable or invalid stored drafts are never replaced by a save [0.15ms]
+(pass) an atomic-write failure retains the prior revision and the next queued save can recover [0.06ms]
+(pass) attachment drafts migrate old text and preserve pending delivery identities across restoration [0.34ms]
+(pass) structured inline context and fresh-session intent survive saves, reload, and interrupted send recovery [0.14ms]
+
+tests/visit-metadata.test.ts:
+(pass) visit metadata uses raw shell time and preserves unsupported versus unvisited servers [0.02ms]
+(pass) an unseen completion is urgent until the server's visit watermark catches up
+(pass) a later wake advances the visit watermark immediately and a retired wake falls back to shell time
+
+tests/table-layout.test.ts:
+(pass) table measurements are source-owned, matched by rendered content, and cached only after settlement [0.24ms]
+(pass) a reference definition changes measurement identity while IDs and link destinations do not [0.23ms]
+(pass) image table geometry is cached without retaining image sources, links, or occurrence IDs [0.47ms]
+
+tests/model-drafts.test.ts:
+(pass) a relaunch restores scoped selections and explicit boolean options from saved bytes [0.32ms]
+(pass) each save replaces the complete snapshot without reading or merging prior selections [0.08ms]
+(pass) model and runtime overrides roundtrip independently after acknowledgement [0.04ms]
+(pass) corrupt, duplicate, or mismatched stored selections fail instead of becoming empty state [0.15ms]
+(pass) only a missing file becomes empty state and other read failures propagate [0.21ms]
+(pass) invalid outgoing snapshots cannot replace persisted selections [0.08ms]
+(pass) an atomic-write failure preserves the previous bytes and a later snapshot can recover [0.07ms]
+(pass) a new thread draft keeps its model pick under its draft key [0.04ms]
+
+tests/tools/attachment-fixture.test.ts:
+(pass) raw attachment upload validates bytes, MIME, signed credentials, and idempotency [4.59ms]
+(pass) mint enforces advertised upload limits and read-only access without blocking previews [2.20ms]
+(pass) held uploads expose body barriers, cancellation, deletion races, and explicit retry [1.82ms]
+(pass) signed previews retain environment isolation, expiry, typed missing errors, and cancelled demand [5.36ms]
+(pass) attachment-only dispatch promotes stored IDs and deduplicates a lost receipt [1.89ms]
+(pass) dispatch rejects unuploaded references, changed metadata, duplicate IDs, and empty messages [1.54ms]
+(pass) history fixtures expose bounded metadata pages, inherited images, legacy messages, and ID promotion [1.92ms]
+(pass) control barriers cancel without timers and capability changes notify the shared environment [1.40ms]
+
+ 346 pass
+ 0 fail
+ 2389 expect() calls
+Ran 346 tests across 37 files. [616.00ms]

@@ -1,3 +1,4 @@
+use ProviderIcon from "./provider-icon.contract"
 use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAttempt, matchingToolPanels, toolCopyText from "./tool-row.contract"
 use MediaBatch, MediaImage from "./media-image.contract"
 use TurnReview, TurnReviewContent from "./turn-review.contract"
@@ -9,6 +10,7 @@ use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion,
 use ThreadScrollPosition from "./thread-scroll.contract"
 use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
 use ToolGroup from "./tool-group.contract"
+use ComposerSession, ComposerCommandSurface, ComposerQueue from "./composer-parity.contract"
 
 font "DM Sans"
   400 = "assets/fonts/DMSans_400Regular.ttf"
@@ -29,6 +31,8 @@ routes nav
       linkedFile "/threads/:id/file/:file/:line/:column"
       turnReview "/threads/:id/review/:turn"
       terminal "/threads/:id/terminal/:terminalId"
+      composerQueue "/threads/:id/queue"
+      composerContext "/threads/:id/context"
       threadSettings "/threads/:id/settings"
         settingChoice "/threads/:id/settings/:kind/:option"
       chooseProject "/threads/:id/project"
@@ -470,6 +474,8 @@ component T3Code
   members "./question-attachments.contract"
   members "./new-task-state.contract"
   members "./add-project-state.contract"
+  members "./composer-parity.contract"
+  members "./composer-import.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
@@ -507,7 +513,7 @@ component T3Code
   state observedBlocks: BlockRef[] = []
   state wrappedCodes: BlockRef[] = []
   mutation markdownLink as shape MarkdownLink then afterMarkdownLink
-  resource linkedFile = loadLinkedFile(threadRoute.name == "linkedFile" ? activeThreadId : "", threadRoute.name == "linkedFile" ? threadRoute.params.file : "", threadRoute.name == "linkedFile" ? threadRoute.params.line : "0", threadRoute.name == "linkedFile" ? threadRoute.params.column : "0") as shape FilePreview else empty()
+  resource linkedFile = loadLinkedFile(threadRoute.name == "linkedFile" ? threadRoute.params.id : "", threadRoute.name == "linkedFile" ? threadRoute.params.file : "", threadRoute.name == "linkedFile" ? threadRoute.params.line : "0", threadRoute.name == "linkedFile" ? threadRoute.params.column : "0", newTask.environmentId, newTask.cwd) as shape FilePreview else empty()
   derive markdownLinkError = failed(markdownLink) ? "This link could not be opened." : match markdownLink { case some(link) => link.originRoute == `${threadRoute.id}` ? link.error : "", case none => "" }
   resource savedDrafts = loadDrafts() as shape ThreadDraft[] else empty()
   mutation savedDraft as shape DraftReceipt queue then afterDraftSave
@@ -626,12 +632,12 @@ component T3Code
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
-  derive composer = threadDraft(savedDrafts, draftEdits, activeComposerId).text
+  derive composer = activeDraft.text
   derive composerExpanded = composer != "" and (composer.includes("\n") or composerWide)
   derive activeModelRevision = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.modelRevision, case none => "" }
   derive composerError = match sent { case some(reply) => reply.id == activeThreadId and not pending(sent) ? reply.error : "", case none => "" }
   derive composerBlockedReason = activeDraftKey != "" ? (newTask.key == activeDraftKey ? newTask.sendBlockedReason : "") : activeComposerId != "" and activeThreadId == "" ? "Starting the thread…" : ""
-  derive canSend = draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and pendingMessage == none and not pending(sent) and not pending(preparedSend) and composerBlockedReason == "" and (activeDraftKey == "" or (newTask.key == activeDraftKey and newTask.phase == "ready"))
+  derive canSend = not composerImportBusy and not pending(composerAttachmentsInserted) and not pending(stagedAttachments) and draftsReady and modelDraftsReady and (composer.trim() != "" or composerAttachments.length > 0) and attachmentSendReady and not composerVoiceBusy and pendingMessage == none and not pending(sent) and not pending(preparedSend) and composerBlockedReason == "" and (activeDraftKey == "" or (newTask.key == activeDraftKey and newTask.phase == "ready"))
   derive gitWritable = not gitReadOnly and gitStatus.canWrite
   derive gitBusy = pending(gitActionResult) or pending(pulled) or pending(gitRefChanged) or pending(gitBranchCreated) or pending(gitWorktreeCreated) or gitOperation.status == "running"
   derive gitError = match gitActionResult { case some(reply) => reply.error, case none => match pulled { case some(reply) => reply.error, case none => match gitRefChanged { case some(reply) => reply.error, case none => match gitBranchCreated { case some(reply) => reply.error, case none => match gitWorktreeCreated { case some(reply) => reply.error, case none => gitOperation.error } } } } }
@@ -772,16 +778,17 @@ component T3Code
   action followMarkdownLink(threadId: string, href: string)
     cancelForkNavigation()
     clearForceStopDialogs()
-    send markdownLink = resolveMarkdownLink(threadId, href, `${threadRoute.id}`)
+    send markdownLink = resolveMarkdownLink(threadId, href, `${threadRoute.id}`, threadId == activeDraftKey ? newTask.environmentId : "", threadId == activeDraftKey ? newTask.cwd : "")
 
   action afterMarkdownLink
     match markdownLink
       case some(link)
-        if link.originThreadId == activeThreadId and link.originRoute == `${threadRoute.id}` and link.error == ""
+        if link.originThreadId == activeComposerId and link.originRoute == `${threadRoute.id}` and link.error == ""
+          let destinationNav = threadRoute.name == "composerContext" ? back(split ? threadNav : nav) : (split ? threadNav : nav)
           if link.kind == "thread"
-            nav = push(split ? threadNav : nav, path("thread", link.threadId))
+            nav = push(destinationNav, path("thread", link.threadId))
           else if link.kind == "file"
-            nav = push(split ? threadNav : nav, path("linkedFile", link.threadId, link.path, `${link.line}`, `${link.column}`))
+            nav = push(destinationNav, path("linkedFile", link.threadId, link.path, `${link.line}`, `${link.column}`))
       case none
         nav = nav
 
@@ -1097,8 +1104,17 @@ component T3Code
 
   action editComposer(value: string)
     if draftsReady and activeComposerId != "" and (activeThreadId != "" or activeDraftKey != "")
-      let previous = threadDraft(savedDrafts, draftEdits, activeComposerId)
-      persistDraft(ThreadDraft(previous, text=value, revision=previous.revision + 1))
+      let previous = activeDraft
+      let removedComposerAttachmentsAttachments = previous.attachments.filter(item => composerDocument.attachments.filter(ref => ref.attachmentId == item.localId or ref.attachmentId == item.id).length > 0 and composerDocument.attachments.filter(ref => (ref.attachmentId == item.localId or ref.attachmentId == item.id) and value.includes(ref.source)).length == 0)
+      let revision = previous.revision + 1
+      persistDraft(ThreadDraft(previous, text=value, attachments=previous.attachments.filter(item => removedComposerAttachmentsAttachments.filter(entry => entry.localId == item.localId).length == 0), revision=revision))
+      transferSlots = transferSlots.filter(slot => slot.draftId != previous.id or removedComposerAttachmentsAttachments.filter(item => item.localId == slot.localId).length == 0)
+      if previous.pendingSend == none
+        attachmentCleanup = attachmentCleanup.concat(removedComposerAttachmentsAttachments.map(item => CleanupAttachment(threadId=attachmentThreadId, draftId=previous.id, accessKey=attachmentAccess.accessKey, attachmentId=item.id, path=item.path, revision=revision)))
+
+  action inputComposer(value: string, event: InputEvent)
+    editComposer(value)
+    observeComposerSelection(event)
 
   action copyMessage(body: string)
     copyText(body)
@@ -1113,6 +1129,7 @@ component T3Code
     composerFocus = false
 
   action focusComposer
+    storeComposerSession(ComposerSession(composerSession, focusSerial=composerSession.focusSerial + 1))
     focus("composer")
 
   task composerFit when activeComposerId != "" key=`${threadRoute.id}:${composer}:${composerAttachments.length}:${composerFocus}:${split}:${sidebarHidden}`
@@ -1126,7 +1143,7 @@ component T3Code
       let shown = composerFocus ? 0 : min(composerAttachments.length, limit)
       let thumbnails = shown == 0 ? 0 : 4 + shown * 30 + (shown - 1) * 4 + (composerAttachments.length > limit ? 34 : 0)
       composerThumbnailLimit = limit
-      composerWide = line.width > surface.width - 146 - thumbnails
+      composerWide = line.width > surface.width - 218 - thumbnails
 
   action inspect(kind: string)
     cancelForkNavigation()
@@ -1247,12 +1264,15 @@ component T3Code
   action inspectParent
     inspectorPath = parentDirectory(inspectorPath)
 
-  action sendMessage
-    if activeDraftKey != ""
+  action sendMessage(alternate: bool)
+    if composerSession.editingQueueId != ""
+      saveQueuedComposer()
+    else if activeDraftKey != ""
       launchTask()
     else if canSend and activeThreadId != ""
       attachmentError = ""
-      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask)
+      let followUp = threadControls.stop.runId == "" ? "auto" : serverQueue.canSendNow ? (alternate ? "queue" : "steer") : "queue"
+      send preparedSend = prepareSend(activeDraft, composerSendScope, newTask, followUp)
 
   action afterSend
     match sent
@@ -1262,16 +1282,16 @@ component T3Code
           case some(message)
             if message.commandId == reply.commandId and message.launch != none
               let state = reply.ok ? "accepted" : reply.state == "unknown" ? "unknown" : "rejected"
-              persistDraft(ThreadDraft(draft, revision=draft.revision + 1, text=(reply.ok ? "" : draft.text), attachments=(reply.ok ? [] : draft.attachments), pendingSend=some(PendingSend(message, state=state, error=reply.error))))
+              persistDraft(ThreadDraft(draft, revision=draft.revision + 1, text=(reply.ok ? "" : draft.text), context=(reply.ok ? "" : draft.context), freshContext=(reply.ok ? false : draft.freshContext), attachments=(reply.ok ? [] : draft.attachments), pendingSend=some(PendingSend(message, state=state, error=reply.error))))
               if reply.ok
-                attachmentCleanup = attachmentCleanup.concat(message.paths.map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=draft.revision + 1)))
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => allDrafts.filter(other => other.id.startsWith("composer-queue:") and other.attachments.filter(item => item.path == path).length > 0).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=draft.revision + 1)))
             else if message.commandId == reply.commandId
               let same = draft.revision == message.revision
               let revision = draft.revision + 1
-              let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
+              let updated = ThreadDraft(draft, revision=revision, text=(reply.ok and same ? "" : draft.text), context=(reply.ok and same ? "" : draft.context), freshContext=(reply.ok and same ? false : draft.freshContext), attachments=(reply.ok and same ? [] : draft.attachments), pendingSend=(reply.state == "unknown" ? some(PendingSend(message, state="unknown", revision=(same ? revision : message.revision))) : none))
               persistDraft(updated)
               if reply.state != "unknown"
-                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
+                attachmentCleanup = attachmentCleanup.concat(message.paths.filter(path => updated.attachments.filter(item => item.path == path).length == 0 and allDrafts.filter(other => other.id.startsWith("composer-queue:") and other.attachments.filter(item => item.path == path).length > 0).length == 0).map(path => CleanupAttachment(threadId=draft.id, draftId=draft.id, accessKey="", attachmentId="", path=path, revision=updated.revision)))
           case none
             draftEdits = draftEdits
       case none
@@ -1538,7 +1558,7 @@ component T3Code
                       workspace-thread-scroll target-test-id="thread-messages" observation-key=`${e.params.id}:${e.id}:${threadScrollRevision}` message=threadScrollObserved position="absolute" left=0 top=0 height=0 width=0
                       if e.params.id == activeComposerId
                         workspace-composer-metrics message=composerMetrics position="absolute" left=0 top=0 height=0 width=0 pointer-events="none"
-                        text composer id="composer-mirror" aria-hidden=true position="absolute" left=0 top=0 opacity=0 pointer-events="none" white-space="pre" font-family="DM Sans" font-size=16 line-height="23px"
+                        text composerDocument.displayText id="composer-mirror" aria-hidden=true position="absolute" left=0 top=0 opacity=0 pointer-events="none" white-space="pre" font-family="DM Sans" font-size=16 line-height="23px"
                       if e.params.id == activeComposerId and routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "preparing"
                         workspace-working-island status-label=(launchStrategy(allDrafts, e.params.id) == "worktree" ? "Setting up worktree…" : "Starting…") status-kind="preparing" status-symbol="" indicator="spinner" status-action="none" action-label="" action-pending="false" action-disabled="true" action-accessibility-label="" reconnect="false" show-arrow="false" message=workingIslandAction position="absolute" left=18 right=(split ? "calc(env(safe-area-inset-right) + 18px)" : 18) bottom=2 min-height=38.5 z-index=3 testId="preparing-status"
                       if e.params.id == activeThreadId and selectedThread(catalog, e.params.id).length > 0 and (threadAway or workingStatus.length > 0)
@@ -1591,7 +1611,31 @@ component T3Code
                         button press=retryPendingSend disabled=pending(sent) buttonStyle="bordered" min-height=44 testId="retry-message-delivery"
                           text (pending(sent) ? "Sending…" : "Retry message delivery")
                   if not hasQuestion
-                    column id="composer-dock-stack" flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                    column id="composer-dock-stack" position="relative" flex-shrink=0 min-width=0 testId="composer-dock-stack"
+                      if serverQueue.items.length > 0
+                        row padding="0 16px 6px" align-items="center" gap=8
+                          button press=toggleComposerQueue appearance="none" display="flex" align-items="center" gap=6 min-height=32 testId="composer-queue-toggle"
+                            image "symbol:sf/text.line.first.and.arrowtriangle.forward" width=12 height=12 color="muted"
+                            text `${serverQueue.items.length} queued` font-size=12 color="muted"
+                          view flex=1
+                          if serverQueue.held
+                            button press=changeQueuedComposer("resume", "") disabled=(not serverQueue.allowed or pending(composerQueueChanged)) appearance="none" color="AccentColor" min-height=32
+                              text "Resume" font-size=12
+                      if composerSession.editingQueueId != ""
+                        row align-items="center" gap=8 padding="0 16px 8px" testId="composer-queue-editing"
+                          image "symbol:sf/pencil" width=12 height=12 color="muted"
+                          text "Editing queued message" flex=1 min-width=0 font-size=12 color="muted" line-clamp=1
+                          button press=cancelQueuedComposer disabled=pending(composerQueueChanged) appearance="none" color="AccentColor" min-height=32 aria-label="Cancel editing queued message" testId="composer-queue-cancel"
+                            text "Cancel" font-size=14
+                      if composerQueueError != ""
+                        text composerQueueError font-size=14 line-height="19px" color="danger" padding="0 16px 8px" testId="composer-queue-error"
+                      if composerMenuVisible
+                        ComposerCommandSurface(trigger=composerToken, items=commandCatalog.items, loading=pending(commandCatalog), error=commandCatalog.error, choose=chooseComposerCommand, dismiss=closeComposerCommands)
+                      if voice.owner == activeComposerId and voice.error != ""
+                        row align-items="center" gap=8 padding="12px 16px" testId="composer-voice-status"
+                          text voice.error flex=1 font-size=14 line-height="19px" color="danger" role="alert"
+                          button press=dismissComposerVoice appearance="none" width=28 height=28 aria-label="Dismiss voice input error" testId="composer-voice-dismiss"
+                            image "symbol:close" width=12 height=12 color="muted"
                       if e.params.id == newTask.key and newTask.phase == "ready" and newTask.clonePhase != ""
                         column padding="0 15.5px 7px" min-width=0
                           AddProjectCloneBanner(banner=CloneBannerModel(phase=newTask.clonePhase, title=newTask.cloneTitle, detail=newTask.cloneDetail), cancel=actOnClone("cancel"), retry=actOnClone("retry"), remove=actOnClone("remove"))
@@ -1604,38 +1648,106 @@ component T3Code
                         column id="composer-surface" focusin=composerFocused focusout=composerBlurred flex=1 min-width=0 border-radius=27 box-shadow="0 6px 28px var(--composer-shadow)" testId="composer-surface"
                           // The glass draws a rim outside its bounds; upstream clips it with a rounded `overflow: hidden` host.
                           column flex=1 min-width=0 box-sizing="border-box" padding="2px 0" border-radius=27 backgroundMaterial="glass" overflow="hidden"
+                            if composerSession.existingAttachments.length > 0
+                              scroll overflow-x="auto" overflow-y="hidden" padding="6px 14px" testId="composer-queued-attachments"
+                                row gap=8
+                                  for item in composerSession.existingAttachments key=item.id
+                                    row align-items="center" gap=8 max-width=180 padding="4px 8px 4px 4px" border-radius=12 background-color="card" border="1px solid var(--edge)"
+                                      row width=24 height=24 border-radius=6 background-color="bubble" align-items="center" justify-content="center"
+                                        image (item.type == "image" ? "symbol:sf/photo" : "symbol:sf/doc") width=12 height=12 color="muted"
+                                      text item.name flex-shrink=1 min-width=0 font-size=12 line-height="17px" line-clamp=1
+                                      button press=removeQueuedAttachment(item.id) disabled=pending(composerQueueChanged) appearance="none" width=22 height=24 aria-label=`Remove ${item.name}`
+                                        image "symbol:sf/xmark.circle.fill" width=14 height=14 color="muted"
                             if composerFocus and composerAttachments.length > 0
-                              ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeAttachment, retry=retryAttachment, preview=previewDraftAttachment)
-                            row flex-wrap="wrap" align-items="flex-end" min-width=0
-                              button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
-                                image "symbol:sf/plus" width=20 height=20
-                              textarea id="composer" disabled=not draftsReady value=composer input=editComposer rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=(composerExpanded or composerAttachments.length > 0 ? "0px" : "40%") margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
-                                ::placeholder
-                                  color="muted"
-                              if not composerFocus and composerAttachments.length > 0
-                                row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
-                                  for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
-                                    ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
-                                  if composerAttachments.length > composerThumbnailLimit
-                                    button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
-                                      text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
-                              row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
-                                button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
-                                  row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
-                                    ProviderIcon(provider=composerModel.provider, size=16)
-                                  if composerExpanded
-                                    text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
-                                    if composerModel.summary != ""
-                                      text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
-                                  image "symbol:sf/chevron.down" font-size=10 flex-shrink=0
-                                if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0
-                                  button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
-                                    row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
-                                      image "symbol:sf/stop.fill" font-size=12
+                              ComposerAttachments(items=composerAttachments, uploads=uploadProgresses, remove=removeComposerAttachment, retry=retryAttachment, preview=previewDraftAttachment)
+                            if composerVoiceBusy
+                              row align-items="center" height=44 min-width=0 testId="composer-recording"
+                                button press=cancelDictation appearance="none" width=44 height=44 aria-label="Cancel dictation" testId="composer-voice-cancel"
+                                  image "symbol:close" width=20 height=20
+                                if voice.phase == "recording"
+                                  row align-items="center" justify-content="space-between" flex=1 min-width=0 height=32 gap=3 overflow="hidden" aria-hidden=true
+                                    for level, index in voice.levels key=index
+                                      view width=2 flex-shrink=0 height=(2 + level * 30) border-radius=1 background-color="foreground" opacity=(0.22 + level * 0.78)
+                                  text composerVoiceLabel font-size=12 font-family="-apple-system" font-variant-numeric="tabular-nums" color="muted" padding="0 8px"
                                 else
-                                  button press=sendMessage disabled=not canSend appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(composerBlockedReason != "" ? composerBlockedReason : activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
-                                    row width=30 height=30 border-radius=15 background-color=(canSend ? "AccentColor" : "send-disabled") color=(canSend ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
-                                      image (threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") font-size=16 font-weight=600
+                                  text composerVoiceLabel flex=1 text-align="center" font-size=14 color="muted"
+                                button press=confirmDictation disabled=(voice.phase != "recording") appearance="none" width=44 height=44 aria-label="Finish dictation" testId="composer-voice-confirm"
+                                  row width=30 height=30 border-radius=15 background-color=(voice.phase == "recording" ? "AccentColor" : "send-disabled") color="white" align-items="center" justify-content="center"
+                                    image (voice.phase == "recording" ? "symbol:checkmark" : "symbol:sf/ellipsis") width=16 height=16
+                            else
+                              row flex-wrap="wrap" align-items="flex-end" min-width=0
+                                button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
+                                  image "symbol:sf/plus" width=20 height=20
+                                if device.kind != "web"
+                                  workspace-composer-editor id="composer" document-key=composerEditingDraftId document-revision=`${composerSession.nativeRevision}` text=composer tokens=composerDocument.tokens context-json=activeDraft.context context-environment=composerEnvironmentId placeholder-text=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) editable=(draftsReady ? "true" : "false") selection-start=`${composerSession.cursor}` selection-end=`${composerSession.selectionEnd}` selection-revision=`${composerSession.selectionSerial}` focus-request=`${composerSession.focusSerial}` message=nativeComposerEvent order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") min-height=36 max-height=104 aria-label="Message" testId="composer"
+                                else
+                                  textarea id="composer" disabled=not draftsReady value=composer input=inputComposer selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                                    ::placeholder
+                                      color="muted"
+                                if not composerFocus and composerAttachments.length > 0
+                                  row order=3 height=44 flex-shrink=0 align-items="center" gap=4 padding-left=4 testId="composer-thumbnails"
+                                    for item in composerAttachments.slice(0, composerThumbnailLimit) key=item.localId
+                                      ComposerThumbnail(item=item, uploads=uploadProgresses, preview=previewDraftAttachment)
+                                    if composerAttachments.length > composerThumbnailLimit
+                                      button press=focusComposer appearance="none" display="flex" align-items="center" justify-content="center" width=30 height=30 border-radius=8 background-color="bubble" aria-label="Show all attachments" testId="more-attachments"
+                                        text `+${composerAttachments.length - composerThumbnailLimit}` font-size=12 line-height="16px" font-weight=700 color="muted"
+                                row order=4 flex-grow=(composerExpanded ? 1 : 0) flex-shrink=1 min-width=0 align-items="center" justify-content="flex-end"
+                                  button press=openModelSettings disabled=not modelDraftsReady appearance="none" display="flex" align-items="center" gap=8 flex-shrink=1 min-width=0 height=44 padding="0 8px" border-radius=14 color="foreground" opacity=(modelDraftsReady ? 1 : 0.45) aria-label=(composerModel.label == "" ? "Model and reasoning settings" : `Model and reasoning settings, ${composerModel.label}${composerModel.summary == "" ? "" : `, ${composerModel.summary}`}`) testId="model-settings"
+                                    row width=16 height=16 flex-shrink=0 align-items="center" justify-content="center"
+                                      ProviderIcon(provider=composerModel.provider, size=16)
+                                    if composerExpanded
+                                      text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
+                                      if composerModel.summary != ""
+                                        text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
+                                    image "symbol:sf/chevron.down" width=10 height=10 flex-shrink=0
+                                  if voice.available
+                                    button press=requestComposerVoice appearance="none" width=44 height=44 aria-label=(voice.phase == "error" and voice.error.includes("Microphone access is off") ? "Open microphone settings" : "Start dictation") testId="composer-voice"
+                                      image "symbol:sf/mic" width=20 height=20
+                                  if threadControls.stop.runId != "" and composer.trim() == "" and composerAttachments.length == 0 and composerSession.editingQueueId == ""
+                                    button press=stopTurn(e.params.id, threadControls.accessKey, threadControls.stop.runId) disabled=(not controlsAllowed or stopBusy or threadControls.stop.state == "unresponsive") appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(stopBusy ? "Stopping turn" : "Stop turn") testId="stop" width=44 height=44
+                                      row width=30 height=30 border-radius=15 background-color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "control-danger-fill" : "send-disabled") color=(controlsAllowed and not stopBusy and threadControls.stop.state != "unresponsive" ? "danger" : "send-disabled-ink") align-items="center" justify-content="center"
+                                        image "symbol:sf/stop.fill" font-size=12
+                                  else
+                                    button press=sendMessage(false) disabled=(composerSession.editingQueueId != "" ? not canSaveQueuedComposer : not canSend) appearance="none" display="flex" align-items="center" justify-content="center" flex-shrink=0 retainFocus=true aria-label=(composerBlockedReason != "" ? composerBlockedReason : composerSession.editingQueueId != "" ? "Save queued message" : activeApproval != none and not hasQuestion ? "Send" : threadControls.stop.runId != "" and serverQueue.canSendNow ? "Steer now" : threadControls.stop.runId != "" ? "Queue message" : "Send") testId="send" width=44 height=44
+                                      row width=30 height=30 border-radius=15 background-color=((canSend or canSaveQueuedComposer) ? "AccentColor" : "send-disabled") color=((canSend or canSaveQueuedComposer) ? "white" : "send-disabled-ink") align-items="center" justify-content="center"
+                                        image (composerSession.editingQueueId != "" ? "symbol:checkmark" : threadControls.stop.runId != "" and serverQueue.canSendNow and (activeApproval == none or hasQuestion) ? "symbol:sf/arrow.turn.left.up" : threadControls.stop.runId != "" and (activeApproval == none or hasQuestion) ? "symbol:sf/list.number" : "symbol:sf/arrow.up") width=16 height=16 font-weight=600
+
+              if e.name == "composerQueue"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="medium" navigationGrabber="visible" navigationScroll="composer-queue-list" background-color="screen" position="absolute" inset=0
+                  header
+                    text "Queued" role="heading" aria-level=2
+                    button press=closeComposerPanel aria-label="Close queue" testId="composer-queue-close"
+                      image "symbol:close"
+                  scroll id="composer-queue-list" flex=1 min-height=0 padding="12px 0"
+                    ComposerQueue(items=serverQueue.items, held=serverQueue.held, canSend=serverQueue.canSendNow, busy=(pending(composerQueueChanged) or not serverQueue.allowed), edit=editQueuedComposer, change=changeQueuedComposer)
+                    if composerQueueError != ""
+                      text composerQueueError padding=16 font-size=14 color="danger"
+              if e.name == "composerContext"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="medium" navigationGrabber="visible" background-color="screen" position="absolute" inset=0
+                  header
+                    text composerContextDetail.label role="heading" aria-level=2
+                    button press=closeComposerPanel aria-label="Close context"
+                      image "symbol:close"
+                  scroll padding="12px 20px 20px" flex=1 min-height=0
+                    column gap=16
+                      if composerContextDetail.detail != ""
+                        column gap=4
+                          if composerContextDetail.fieldLabel != ""
+                            text composerContextDetail.fieldLabel font-size=12 line-height="17px" color="muted"
+                          text composerContextDetail.detail font-size=(composerContextDetail.kind == "file" ? 14 : 16) line-height="23px" font-family=(composerContextDetail.kind == "file" ? "Menlo" : "DM Sans") user-select="text"
+                      if composerContextDetail.secondaryDetail != ""
+                        column gap=4
+                          text composerContextDetail.secondaryLabel font-size=12 line-height="17px" color="muted"
+                          text composerContextDetail.secondaryDetail font-size=16 line-height="23px" user-select="text"
+                      if composerContextDetail.href != "" or composerContextDetail.threadId != ""
+                        if composerContextDetail.href.startsWith("https://") or composerContextDetail.href.startsWith("http://")
+                          link href=composerContextDetail.href display="flex" align-items="center" justify-content="center" min-height=44 border-radius=12 background-color="bubble" color="foreground" padding="12px 16px" text-decoration="none" testId="composer-context-open"
+                            text composerContextDetail.openLabel font-size=16
+                        else
+                          button press=openSelectedContext appearance="none" min-height=44 border-radius=12 background-color="bubble" padding="12px 16px" testId="composer-context-open"
+                            text composerContextDetail.openLabel font-size=16
+                      button press=removeSelectedContext appearance="none" min-height=44 border-radius=12 background-color="bubble" padding="12px 16px" testId="composer-context-remove"
+                        text "Remove from draft" font-size=16
               if e.name == "terminal"
                 column navigationKey=`${e.id}` navigationScroll="terminal-output" data-workspace-header="editor" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2182,6 +2294,10 @@ component T3Code
         text taskAlertBody testId="task-alert-body"
         button commandfor="task-alert" command="close" testId="task-alert-ok"
           text "OK"
+      dialog id="composer-import-alert" role="alertdialog" aria-label=composerImportAlertTitle
+        text composerImportAlertBody testId="composer-import-alert-body"
+        button commandfor="composer-import-alert" command="close" testId="composer-import-alert-ok"
+          text "OK"
       dialog id="remove-environment" role="alertdialog" aria-label=`Remove ${environmentLabel(catalog, removedEnvironment)}?`
         text "This environment will be removed from this device. Your projects and threads will stay on the server."
         button commandfor="remove-environment" command="close" testId="environment-remove-cancel"
@@ -2413,20 +2529,3 @@ component EnvironmentRow
       input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
       button press=manageEnvironment(environment.id) aria-label=label appearance="none" width=44 height=44 color="muted"
         image (detail ? (expanded ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") : "symbol:forward-chevron") width=12 height=12
-
-component ProviderIcon
-  props
-    provider: string
-    size: number
-  derive monochrome = provider == "codex" or provider == "cursor" or provider == "grok" or provider == "fx" or provider == "pi" or provider == "openrouter" or provider == "acpRegistry" or provider == ""
-  derive source = provider == "claudeAgent" ? "assets/provider-claude.svg" : provider == "antigravity" ? "assets/provider-antigravity.png" : provider == "acpRegistry" ? "assets/provider-acp-registry.svg" : ["codex", "cursor", "grok", "fx", "kiro", "muse", "pi", "openrouter"].includes(provider) ? `assets/provider-${provider}.svg` : "assets/provider-codex.svg"
-  derive ink = provider == "cursor" ? "provider-cursor-ink" : provider == "grok" or provider == "fx" or provider == "pi" ? "provider-neutral-ink" : provider == "openrouter" ? "provider-openrouter-ink" : "provider-ink"
-  view
-    if provider == "opencode"
-      svg width=size height=size viewBox="0 0 32 40" fill="none"
-        path d="M24 32H8V16H24V32Z" fill="provider-opencode-inner"
-        path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="provider-opencode-outer"
-    else if monochrome or source == "assets/provider-codex.svg"
-      image source width=size height=size -exact-tint-color=ink
-    else
-      image source width=size height=size

@@ -17,6 +17,9 @@ export interface PendingSend {
   messageId: string;
   revision: number;
   text: string;
+  context: string;
+  freshContext: boolean;
+  dispatchMode?: string;
   attachments: StoredAttachment[];
   paths: string[];
   selection: string;
@@ -28,6 +31,8 @@ export interface PendingSend {
 export interface Draft {
   id: string;
   text: string;
+  context: string;
+  freshContext: boolean;
   revision: number;
   attachments: DraftAttachment[];
   pendingSend: PendingSend | null;
@@ -43,7 +48,7 @@ const revision = (value: unknown) =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 export function emptyDraft(id: string): Draft {
-  return { id, text: "", revision: 0, attachments: [], pendingSend: null, task: null };
+  return { id, text: "", context: "", freshContext: false, revision: 0, attachments: [], pendingSend: null, task: null };
 }
 
 export function parseSendSelection(input: string): ThreadSettingsSelection | null {
@@ -163,6 +168,9 @@ function parsePendingSend(value: unknown): PendingSend | null {
     messageId: item.messageId,
     revision: item.revision as number,
     text: item.text,
+    context: typeof item.context === "string" ? item.context : "",
+    freshContext: item.freshContext === true,
+    ...(typeof item.dispatchMode === "string" ? { dispatchMode: item.dispatchMode } : {}),
     attachments,
     paths: item.paths as string[],
     selection: item.selection,
@@ -193,6 +201,8 @@ function parseDraft(value: unknown): Draft {
   return {
     id: item.id,
     text: item.text,
+    context: typeof item.context === "string" ? item.context : "",
+    freshContext: item.freshContext === true,
     revision: item.revision as number,
     attachments,
     pendingSend: parsePendingSend(item.pendingSend),
