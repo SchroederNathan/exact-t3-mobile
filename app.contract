@@ -238,6 +238,8 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  canRegenerateTitle: bool
+  regeneratingTitle: bool
   pinRank: number
   wakeAt: number
   searchTerms: string[]
@@ -681,6 +683,47 @@ component T3Code
   state pinTargetId = ""
   state pinTargetKey = ""
   state pinTargetDesired = false
+  state renameId = ""
+  state renameKey = ""
+  state renameOriginal = ""
+  state renameDraft = ""
+  state titleActionError = ""
+  mutation titleUpdated as shape Reply then afterTitleUpdate
+  action afterTitleUpdate
+    match titleUpdated
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = titleActionError
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        titleActionError = ""
+  action beginRename(title: string)
+    hidePopover("thread-row-menu")
+    hidePopover("thread-more-menu")
+    renameId = pinTargetId
+    renameKey = pinTargetKey
+    renameOriginal = title
+    renameDraft = title
+    showModal("rename-thread")
+  action editRename(value: string)
+    renameDraft = value
+  action confirmRename
+    if renameDraft.trim() == ""
+      taskAlertTitle = "Could not rename thread"
+      taskAlertBody = "Thread title cannot be empty."
+      showModal("task-alert")
+    else if renameDraft.trim() != renameOriginal and not pending(titleUpdated)
+      haptic("selection")
+      titleActionError = "Could not rename thread"
+      send titleUpdated = updateRowTitle(renameId, renameKey, renameOriginal, renameDraft, false)
+  action regenerateTitle
+    hidePopover("thread-row-menu")
+    hidePopover("thread-more-menu")
+    if not pending(titleUpdated)
+      haptic("selection")
+      titleActionError = "Could not regenerate title"
+      send titleUpdated = updateRowTitle(pinTargetId, pinTargetKey, "", "", true)
   state rowMenuOpened = 0
   state customThread = ""
   state customKey = ""
@@ -2679,6 +2722,34 @@ component T3Code
             button role="menuitem" popovertarget="row-snooze-menu" disabled=pending(rowSnoozed) testId="thread-menu-snooze"
               image "symbol:sf/clock"
               text "Snooze"
+        if device.kind == "web"
+          for thread in selectedThread(catalog, pinTargetId) key=thread.id
+            button role="menuitem" press=beginRename(thread.title) disabled=pending(titleUpdated) testId="thread-menu-rename"
+              image "symbol:sf/square.and.pencil"
+              text "Rename"
+            if thread.canRegenerateTitle
+              button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="thread-menu-regenerate"
+                image "symbol:refresh"
+                text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+        else
+          button role="menuitem" popovertarget="thread-more-menu" testId="thread-menu-more"
+            image "symbol:sf/ellipsis.circle"
+            text "More"
+      column id="thread-more-menu" popover="auto" role="menu" aria-label="More thread actions"
+        for thread in selectedThread(catalog, pinTargetId) key=thread.id
+          button role="menuitem" press=beginRename(thread.title) disabled=pending(titleUpdated) testId="more-rename"
+            image "symbol:sf/square.and.pencil"
+            text "Rename"
+          if thread.canRegenerateTitle
+            button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="more-regenerate"
+              image "symbol:refresh"
+              text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+      dialog id="rename-thread" role="alertdialog" aria-label="Rename thread"
+        input value=renameDraft input=editRename aria-label="Thread title" testId="rename-title"
+        button commandfor="rename-thread" command="close" testId="rename-cancel"
+          text "Cancel"
+        button press=confirmRename commandfor="rename-thread" command="close" testId="rename-confirm"
+          text "Rename"
       column id="row-snooze-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Snooze thread"
         for choice in rowSnooze.choices key=choice.id
           button role="menuitem" press=submitRowSnooze(choice.id) disabled=pending(rowSnoozed) testId=`snooze-${choice.id}`
@@ -2927,7 +2998,7 @@ component ThreadList
                     image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
                   else
                     text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
-                  text thread.title font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
+                  text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
                   if thread.pinRank >= 0
                     column width=11 height=23 flex-shrink=0 justify-content="center" testId=`pin-${thread.id}` aria-label="Pinned"
                       if nativeMenus
@@ -2975,7 +3046,7 @@ component ThreadList
                 else
                   text thread.projectInitials width=20 height=20 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center" opacity=0.4
                 column flex=1 min-width=0
-                  text thread.title font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
+                  text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
                 text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
 

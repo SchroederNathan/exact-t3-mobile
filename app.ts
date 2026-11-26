@@ -1224,6 +1224,13 @@ const sources: Sources = {
       return { ok: false, error: error instanceof Error ? error.message : "Could not restore snooze." };
     }
   },
+  updateRowTitle: async ([id, key, original, value, regenerate], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      await awaitReply(session.updateRowTitle(threadId, key, original, value, regenerate, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update thread title." }; }
+  },
   loadRowSnooze: ([id, key, opened]) => {
     try {
       const identity = threadIdentity(id);

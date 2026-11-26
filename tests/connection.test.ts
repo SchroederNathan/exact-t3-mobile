@@ -117,6 +117,32 @@ test("snooze undo names the original connection and wakes only its still-current
   }
 });
 
+test("title edits trim without clobbering external edits or regenerating twice", async () => {
+  const { session, commands, accept, updateThread } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const edit = (value: string, original = "Original") => session.updateRowTitle("thread", key, original, value, false, auth);
+  const regenerate = () => session.updateRowTitle("thread", key, "", "", true, auth);
+  updateThread({ title: "Original" });
+  await edit("  Original ");
+  await expect(edit(" \t  ")).rejects.toThrow("empty");
+  await expect(edit("Replacement", "Earlier")).rejects.toThrow("changed");
+  await expect(session.updateRowTitle("thread", key, "Original", "New", false, {})).rejects.toThrow("permission");
+  await expect(regenerate()).rejects.toThrow("does not support");
+  expect(commands()).toHaveLength(0);
+  const result = edit("   My new title  ");
+  await expect(edit("Other")).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({type:"thread.metadata.update", commandId:expect.any(String), threadId:"thread", title:"My new title"});
+  accept(commands()[0]!); await result;
+  expect(session.threads()[0]?.title).toBe("Original");
+  session.receive(JSON.stringify({ _tag:"Chunk", requestId:"2", values:[{type:"snapshot",config:{environment:{capabilities:{threadTitleRegeneration:true}}}}] }));
+  const regen = regenerate();
+  expect(commands()[1]?.payload).toEqual({type:"thread.metadata.update", commandId:expect.any(String), threadId:"thread", regenerateTitle:true});
+  accept(commands()[1]!); await regen;
+  updateThread({titleRegeneration:{requestId:"in-progress"}});
+  await expect(regenerate()).rejects.toThrow("already regenerating");
+  expect(commands()).toHaveLength(2);
+});
+
 test("Undo restores the original pin position before the unexpired snooze, once", async () => {
   for (const expired of [false, true]) {
     const {session, updateThread, commands, accept} = settingsSession();
@@ -1703,6 +1729,8 @@ describe("direct T3 connection", () => {
         environmentId: "env",
         title: "Fix startup",
         project: "T3 Code",
+        canRegenerateTitle: false,
+        regeneratingTitle: false,
         projectId: "env:p",
         projectIcon: "",
         projectInitials: "T3",

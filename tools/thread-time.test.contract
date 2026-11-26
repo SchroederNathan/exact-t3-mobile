@@ -1,6 +1,35 @@
 epoch "2026-11-10T12:59:00Z"
 time-zone "UTC"
 
+test "rename uses the current row title and only the server updates its label"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/clock/start"
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-rename"
+  expect state renameDraft == "Alpha thread"
+  type "rename-title" "  Corrected title  "
+  tap "rename-confirm"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-rename"
+  expect state renameDraft == "Corrected title"
+  type "rename-title" "Alpha thread"
+  tap "rename-confirm"
+  clock data
+  clock settle
+  expect state activeThreadId == ""
+  request POST "http://127.0.0.1:0/clock/check"
+
 test "custom snooze keeps invalid input open, then accepts a duration without opening a conversation"
   clock data
   tap "empty-add-environment"

@@ -941,6 +941,7 @@ export class DirectSession {
   >();
   private forceStops = new Map<string, { accessKey: string }>();
   private pinWrites = new Set<string>();
+  private titleWrites = new Set<string>();
   private snoozeUndo?: { receipt: string; id: string; key: string; wake: number; observedAt?: string };
   private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
   private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
@@ -2980,6 +2981,28 @@ export class DirectSession {
     return [...this.shells.values()].flatMap(row => row.pinnedAt != null && typeof row.pinOrderKey === "string" ? [row.pinOrderKey] : []);
   }
 
+  async updateRowTitle(id: string, key: string, original: string, value: string, regenerate: boolean, auth: unknown) {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before updating the title.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to update thread titles.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    const title = value.trim();
+    if (regenerate) {
+      if (object(object(this.config.environment).capabilities).threadTitleRegeneration !== true) throw new Error("This server does not support title regeneration.");
+      if (row.titleRegeneration != null) throw new Error("The title is already regenerating.");
+    } else {
+      if (!title) throw new Error("Thread title cannot be empty.");
+      if (title === original || title === string(row.title)) return;
+      if (original !== string(row.title)) throw new Error("The thread title changed. Reopen Rename to edit the new title.");
+    }
+    const operation = JSON.stringify([key, id]);
+    if (this.titleWrites.has(operation)) throw new Error("A title change is already pending.");
+    this.titleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { type: "thread.metadata.update", commandId: crypto.randomUUID(), threadId: id, ...(regenerate ? { regenerateTitle: true } : { title }) });
+    } finally { this.titleWrites.delete(operation); }
+  }
+
   snoozeMenu(id: string, key: string, now: number) {
     const row = this.shells.get(id);
     const enabled = Boolean(row && listedThread(row) && key && key === this.controlAccessKey() && this.shellLive && this.configReady && object(object(this.config.environment).capabilities).threadSnooze === true);
@@ -3708,6 +3731,8 @@ export class DirectSession {
           createdAtMillis: timestamp(thread.createdAt),
           activityAt,
           title: string(thread.title),
+          canRegenerateTitle: object(object(this.config.environment).capabilities).threadTitleRegeneration === true,
+          regeneratingTitle: thread.titleRegeneration != null,
           status: status(thread),
           visit: visitMetadata(thread),
           updatedAt: relativeTime(activityAt, now),
