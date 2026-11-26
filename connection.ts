@@ -943,6 +943,7 @@ export class DirectSession {
   private forceStops = new Map<string, { accessKey: string }>();
   private pinWrites = new Set<string>();
   private titleWrites = new Set<string>();
+  private autoSettleWrites = new Set<string>();
   private snoozeUndo?: { receipt: string; id: string; key: string; wake: number; observedAt?: string };
   private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
   private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
@@ -3004,6 +3005,21 @@ export class DirectSession {
     } finally { this.titleWrites.delete(operation); }
   }
 
+  async setRowAutoSettle(id: string, key: string, enabled: boolean, auth: unknown) {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before changing auto-settle.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change auto-settle.");
+    if (object(object(this.config.environment).capabilities).threadAutoSettleOptOut !== true) throw new Error("This server does not support per-thread auto-settle.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    const operation = JSON.stringify([key, id]);
+    if (this.autoSettleWrites.has(operation)) throw new Error("An auto-settle change is already pending.");
+    if (enabled === (row.autoSettleDisabledAt == null)) return;
+    this.autoSettleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { type: "thread.auto-settle.set", threadId: id, commandId: crypto.randomUUID(), enabled });
+    } finally { this.autoSettleWrites.delete(operation); }
+  }
+
   snoozeMenu(id: string, key: string, now: number) {
     const row = this.shells.get(id);
     const enabled = Boolean(row && listedThread(row) && key && key === this.controlAccessKey() && this.shellLive && this.configReady && object(object(this.config.environment).capabilities).threadSnooze === true);
@@ -3734,6 +3750,8 @@ export class DirectSession {
           activityAt,
           title: string(thread.title),
           canRegenerateTitle: object(object(this.config.environment).capabilities).threadTitleRegeneration === true,
+          canSetAutoSettle: this.configReady && object(object(this.config.environment).capabilities).threadAutoSettleOptOut === true,
+          followsAutoSettle: thread.autoSettleDisabledAt == null,
           regeneratingTitle: thread.titleRegeneration != null,
           status: status(thread),
           visit: visitMetadata(thread),

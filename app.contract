@@ -251,6 +251,8 @@ shape Thread
   id: string
   serverThreadId: string
   canRegenerateTitle: bool
+  canSetAutoSettle: bool
+  followsAutoSettle: bool
   regeneratingTitle: bool
   pinRank: number
   wakeAt: number
@@ -741,6 +743,23 @@ component T3Code
       titleActionError = "Could not regenerate title"
       send titleUpdated = updateRowTitle(pinTargetId, pinTargetKey, "", "", true)
   state rowMenuOpened = 0
+  mutation autoSettleUpdated as shape Reply then afterAutoSettle
+  action afterAutoSettle
+    match autoSettleUpdated
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not update auto-settle"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        taskAlertBody = ""
+  action selectAutoSettle(enabled: bool)
+    hidePopover("auto-settle-menu")
+    hidePopover("thread-more-menu")
+    hidePopover("thread-row-menu")
+    if not pending(autoSettleUpdated)
+      haptic("selection")
+      send autoSettleUpdated = setRowAutoSettle(pinTargetId, pinTargetKey, enabled)
   state customThread = ""
   state customKey = ""
   state customOpened = 0
@@ -2780,6 +2799,10 @@ component T3Code
               button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="thread-menu-regenerate"
                 image "symbol:refresh"
                 text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+            if thread.canSetAutoSettle
+              button role="menuitem" popovertarget="auto-settle-menu" disabled=pending(autoSettleUpdated) testId="thread-menu-auto-settle"
+                image "symbol:sf/timer"
+                text "Auto-settle behavior"
         else
           button role="menuitem" popovertarget="thread-more-menu" testId="thread-menu-more"
             image "symbol:sf/ellipsis.circle"
@@ -2793,6 +2816,15 @@ component T3Code
             button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="more-regenerate"
               image "symbol:refresh"
               text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+          if thread.canSetAutoSettle
+            button role="menuitem" popovertarget="auto-settle-menu" disabled=pending(autoSettleUpdated) testId="more-auto-settle"
+              image "symbol:sf/timer"
+              text "Auto-settle behavior"
+      column id="auto-settle-menu" popover="auto" role="menu" aria-label="Auto-settle behavior"
+        for thread in selectedThread(catalog, pinTargetId).filter(row => row.canSetAutoSettle) key=thread.id
+          for choice in ["Follow settings", "Never"] key=choice
+            button role="menuitemradio" aria-checked=(thread.followsAutoSettle == (choice == "Follow settings")) press=selectAutoSettle(choice == "Follow settings") disabled=pending(autoSettleUpdated) testId=(choice == "Never" ? "auto-settle-never" : "auto-settle-follow")
+              text choice
       dialog id="rename-thread" role="alertdialog" aria-label="Rename thread"
         input value=renameDraft input=editRename aria-label="Thread title" testId="rename-title"
         button commandfor="rename-thread" command="close" testId="rename-cancel"

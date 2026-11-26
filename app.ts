@@ -1232,6 +1232,13 @@ const sources: Sources = {
       return { ok: true, error: "" };
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update thread title." }; }
   },
+  setRowAutoSettle: async ([id, key, enabled], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      await awaitReply(session.setRowAutoSettle(threadId, key, enabled, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The auto-settle setting could not be changed." }; }
+  },
   loadRowSnooze: ([id, key, opened]) => {
     try {
       const identity = threadIdentity(id);

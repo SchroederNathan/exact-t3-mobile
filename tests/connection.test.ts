@@ -117,6 +117,31 @@ test("snooze undo names the original connection and wakes only its still-current
   }
 });
 
+test("auto-settle follows live capability and shell, and cannot write through stale menus", async () => {
+  const { session, commands, accept, updateThread } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const set = (enabled: boolean) => session.setRowAutoSettle("thread", key, enabled, auth);
+  await expect(set(false)).rejects.toThrow("does not support");
+  session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadAutoSettleOptOut: true } } } }] }));
+  await expect(session.setRowAutoSettle("thread", "old", false, auth)).rejects.toThrow("Reconnect");
+  await expect(session.setRowAutoSettle("thread", key, false, {})).rejects.toThrow("permission");
+  await expect(session.setRowAutoSettle("missing", key, false, auth)).rejects.toThrow("available");
+  await set(true);
+  expect(commands()).toHaveLength(0);
+  const disable = set(false);
+  await expect(set(false)).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({ type: "thread.auto-settle.set", threadId: "thread", commandId: expect.any(String), enabled: false });
+  accept(commands()[0]!); await disable;
+  expect(session.threads()[0]?.followsAutoSettle).toBe(true);
+  updateThread({ autoSettleDisabledAt: "2026-11-10T12:00:00Z" });
+  expect(session.threads()[0]).toMatchObject({ canSetAutoSettle: true, followsAutoSettle: false });
+  await set(false);
+  const enable = set(true);
+  expect(commands()[1]?.payload.enabled).toBe(true);
+  accept(commands()[1]!); await enable;
+  expect(commands()).toHaveLength(2);
+});
+
 test("title edits trim without clobbering external edits or regenerating twice", async () => {
   const { session, commands, accept, updateThread } = settingsSession();
   const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
@@ -1731,6 +1756,8 @@ describe("direct T3 connection", () => {
         title: "Fix startup",
         project: "T3 Code",
         canRegenerateTitle: false,
+        canSetAutoSettle: false,
+        followsAutoSettle: true,
         regeneratingTitle: false,
         projectId: "env:p",
         projectIcon: "",
