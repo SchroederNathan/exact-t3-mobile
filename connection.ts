@@ -11,6 +11,7 @@ import {
   projectThreadStatus,
   threadIsCompacting,
   threadLifecycleStatus,
+  listWakeTime,
   threadWorkStartedAt,
 } from "./thread-status";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
@@ -3520,6 +3521,7 @@ export class DirectSession {
   }
 
   threads(now = 0): Thread[] {
+    const supportsSnooze = object(object(this.config.environment).capabilities).threadSnooze === true;
     return [...this.shells.entries()]
       .filter(([id, thread]) => !thread.deletedAt && (id === this.selected || listedThread(thread)))
       .map(([id, thread]) => {
@@ -3572,6 +3574,7 @@ export class DirectSession {
           lastErrorTime: error.time,
           settled,
           working: working(thread),
+          wakeAt: supportsSnooze ? listWakeTime(thread) : 0,
           activityAt,
           title: string(thread.title),
           status: status(thread),

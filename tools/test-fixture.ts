@@ -217,6 +217,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     settings: { favorites: modelFavorites },
     environment: {
       platform: { machine: secondary ? "laptop" : "mac-mini" },
+      ...(threadTimeMode ? { capabilities: { threadSnooze: true } } : {}),
       ...(activities || attachments || controls
         ? { capabilities: { ...activities?.config, ...attachments?.config, ...controls?.config } }
         : {}),
@@ -269,12 +270,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}),
     ...(composer ? { workspaceRoot: composer.cwd } : {}),
   }));
-  const threads = (secondary ? ["gamma"] : ["alpha", "beta"])
+  const threads = (secondary ? ["gamma"] : threadTimeMode ? ["alpha", "beta", "later", "soon"] : ["alpha", "beta"])
     .map((id) => ({
       id,
       projectId: secondary ? "remote" : "active",
       title:
-        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : "Beta thread",
+        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : id === "later" ? "Later nap" : id === "soon" ? "Soon nap" : "Beta thread",
       status: "idle",
       runtimeMode: "full-access",
       updatedAt: timestamp,
@@ -287,6 +288,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         ],
       } : {}),
       ...(threadTimeMode && id === "beta" ? { settledOverride: "settled", settledAt: "2026-11-09T13:00:00Z" } : {}),
+      ...(id === "later" || id === "soon" ? { snoozedAt: timestamp, snoozedUntil: id === "soon" ? "2026-11-10T12:59:15Z" : "2026-11-10T16:30:00Z" } : {}),
       modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
     }))
     .concat(activities?.threads ?? []);

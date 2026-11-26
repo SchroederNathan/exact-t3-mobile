@@ -25,3 +25,33 @@ test "compact thread ages update in place and catch up on return"
   type "root" "/"
   clock settle
   expect text "age-fixture:alpha" == "2h"
+
+test "snoozed threads can be searched while collapsed and wake without replacing a subscription"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  expect text "snoozed-title" == "Snoozed (2)"
+  expect tree missing "thread-fixture:soon"
+  type "search" "Soon nap"
+  expect tree missing "snoozed-threads"
+  expect text "wake-fixture:soon" == "1m"
+  type "search" ""
+  expect tree missing "thread-fixture:soon"
+  tap "snoozed-threads"
+  expect text "wake-fixture:later" == "4h"
+  request POST "http://127.0.0.1:0/clock/start"
+  clock +16000
+  expect tree missing "wake-fixture:soon"
+  expect tree has "thread-fixture:soon"
+  tap "snoozed-threads"
+  expect text "snoozed-title" == "Snoozed (1)"
+  expect tree missing "thread-fixture:later"
+  request POST "http://127.0.0.1:0/clock/check"
+  tap "thread-fixture:soon"
+  clock settle
+  expect state activeThreadId == "fixture:soon"

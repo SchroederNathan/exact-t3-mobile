@@ -1603,6 +1603,7 @@ describe("direct T3 connection", () => {
         lastError: "",
         lastErrorTime: expect.any(String),
         searchReferences: [],
+        wakeAt: 0,
         searchTerms: [],
         rows: [],
         toolViewKey: expect.any(String),

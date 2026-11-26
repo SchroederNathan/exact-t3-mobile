@@ -230,6 +230,7 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  wakeAt: number
   searchTerms: string[]
   searchReferences: string[]
   listed: bool
@@ -470,6 +471,7 @@ shape Inspection
   items: InspectionItem[]
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
+fn wakeLabel(remaining: number): string = remaining < 3600000 ? `${max(1, ceil(remaining / 60000))}m` : remaining < 86400000 ? `${ceil(remaining / 3600000)}h` : `${ceil(remaining / 86400000)}d`
 fn compactAge(at: number, now: number): string = at == 0 or now - at < 60000 ? "<1m" : now - at < 3600000 ? `${floor((now - at) / 60000)}m` : now - at < 86400000 ? `${floor((now - at) / 3600000)}h` : `${floor((now - at) / 86400000)}d`
 fn threadLive(catalog: Catalog, id: string): bool = threadFeed(selectedThread(catalog, id)).filter(row => row.message != none).length > 0
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
@@ -539,8 +541,9 @@ component T3Code
   state environmentName = ""
   state environmentUrl = ""
   state removedEnvironment = ""
-  state showSettled = false
-  state showWorking = false
+  state showSettled = false persist
+  state showSnoozed = false persist
+  state showWorking = false persist
   state inspectorPath = ""
   state composerBottomAdjustment = 0
   state composerFocus = false
@@ -691,11 +694,14 @@ component T3Code
   resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
-  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId))).length > 0
+  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
   task startThreadListClock when agesVisible key=agesVisible
     change(sampleThreadListClock)
   task tickThreadListClock when agesVisible
     every(60000, sampleThreadListClock)
+  derive nearWake = visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero + threadListClock and thread.wakeAt <= time.epochAtZero + threadListClock + 60000).length > 0
+  task tickImminentWake when agesVisible and nearWake
+    every(1000, sampleThreadListClock)
   action sampleThreadListClock
     threadListClock = performanceNow()
   task debounceThreadSearch when searchText != messageQuery key=searchText
@@ -1197,8 +1203,11 @@ component T3Code
     else if value == "compose"
       compose()
 
-  action toggleSettled
-    showSettled = not showSettled
+  action toggleShelf(key: string)
+    if key == "snoozed"
+      showSnoozed = not showSnoozed
+    else if key == "settled"
+      showSettled = not showSettled
 
   action toggleWorking
     showWorking = not showWorking
@@ -1448,7 +1457,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSnoozed=showSnoozed, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleShelf=toggleShelf, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2598,20 +2607,23 @@ component ThreadList
     nativeMenus: bool
     query: string
     showSettled: bool
+    showSnoozed: bool
     showWorking: bool
     sidebar: bool
     selectedId: string
-    toggleSettled: action
+    toggleShelf: action
     toggleWorking: action
     openThread: action
     filterEnvironment: action
     filterProject: action
     resetFilters: action
   derive searching = query.trim() != ""
-  derive activeThreads = visibleThreads.filter(thread => not thread.settled and (searching or not thread.working))
-  derive workingThreads = visibleThreads.filter(thread => not searching and not thread.settled and thread.working)
+  derive awakeThreads = visibleThreads.filter(thread => thread.wakeAt <= now)
+  derive snoozedThreads = sortBy(visibleThreads.filter(thread => thread.wakeAt > now), thread => thread.wakeAt)
+  derive activeThreads = awakeThreads.filter(thread => not thread.settled and (searching or not thread.working))
+  derive workingThreads = awakeThreads.filter(thread => not searching and not thread.settled and thread.working)
   derive displayedWorking = workingThreads.filter(thread => showWorking or selectedId == thread.id)
-  derive settledThreads = visibleThreads.filter(thread => thread.settled)
+  derive settledThreads = awakeThreads.filter(thread => thread.settled)
   derive availableProjects = catalog.projects.filter(project => selectedEnvironment == "" or project.environmentId == selectedEnvironment)
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
@@ -2686,15 +2698,19 @@ component ThreadList
                     ProviderIcon(provider=thread.provider, size=14)
             if index < threads.length - 1
               view height=1 background-color="edge" opacity=0.7 margin-left=17.5 display=(sidebar ? "none" : "flex")
-      if settledThreads.length > 0
+      for shelf in ["snoozed", "settled"].filter(key => key == "snoozed" ? snoozedThreads.length > 0 : settledThreads.length > 0) key=shelf
         section
           if not searching
-            button press=toggleSettled appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Settled threads" testId="settled-threads"
+            button press=toggleShelf(shelf) appearance="none" padding=(sidebar ? "14px 10.5px 5.25px" : "14px 17.5px 5.25px") width="100%" box-sizing="border-box" aria-expanded=(shelf == "snoozed" ? showSnoozed : showSettled) aria-label=(shelf == "snoozed" ? `${snoozedThreads.length} snoozed ${snoozedThreads.length == 1 ? "thread" : "threads"}` : "Settled threads") testId=`${shelf}-threads`
               row align-items="center" gap=8.75 width="100%"
-                text (showSettled ? "Settled" : `Settled (${settledThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
-                view flex=1 height=1 background-color="edge"
-                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
-          for thread in settledThreads.filter(thread => searching or showSettled or selectedId == thread.id) key=thread.id
+                text (shelf == "snoozed" ? (showSnoozed ? "Snoozed" : `Snoozed (${snoozedThreads.length})`) : (showSettled ? "Settled" : `Settled (${settledThreads.length})`)) testId=`${shelf}-title` font-size="0.8125rem" line-height="1.0625rem" font-weight=500 color="muted"
+                view flex=1 height=1 background-color=(shelf == "snoozed" ? "AccentColor" : "edge") opacity=(shelf == "snoozed" ? 0.2 : 1)
+                if nativeMenus
+                  image ((shelf == "snoozed" ? showSnoozed : showSettled) ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=10 height=10 font-size=10 color="muted"
+                else
+                  svg viewBox="0 0 10 10" width=10 height=10 fill="none" stroke="muted" stroke-width=1.4 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
+                    path d=((shelf == "snoozed" ? showSnoozed : showSettled) ? "M1.5 6.5 5 3l3.5 3.5" : "M1.5 3.5 5 7l3.5-3.5")
+          for thread in (shelf == "snoozed" ? snoozedThreads : settledThreads).filter(thread => searching or (shelf == "snoozed" ? showSnoozed : showSettled) or selectedId == thread.id) key=thread.id
             button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               row flex=1 min-width=0 min-height=44 box-sizing="border-box" align-items="center" gap=7 padding=(sidebar ? "7px 10.5px" : "7px 17.5px")
                 if thread.projectIcon != ""
@@ -2704,7 +2720,7 @@ component ThreadList
                 column flex=1 min-width=0
                   text thread.title font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
-                text compactAge(thread.activityAt, now) testId=`age-${thread.id}` font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
 
 component SearchExcerpt
   props
