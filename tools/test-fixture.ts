@@ -225,6 +225,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       {
         instanceId: "fixture-provider",
         driver: "codex",
+        ...(usageMode ? { usageLimits: { checkedAt: timestamp, windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 24.5 }] } } : {}),
         installed: true,
         enabled: true,
         auth: { status: "authenticated" },

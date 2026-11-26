@@ -313,6 +313,7 @@ function nativeCatalog(
   }
   syncNativeConnections(native);
   return {
+    limitProviders: [...connections.values()].flatMap(({ session }) => session.subscriptionLimits()),
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
       if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
@@ -354,10 +355,11 @@ async function loadCatalog(
   const environment = environmentId
     ? environments.find((entry) => entry.id === environmentId && entry.enabled)
     : environments.find((entry) => entry.enabled);
-  if (!environment) return { environments, threads: [], projects: [] };
+  if (!environment) return { environments, threads: [], projects: [], limitProviders: [] };
   const token = tokens[environment.id];
   if (!token)
     return {
+      limitProviders: [],
       environments: environments.map((entry) =>
         entry.id === environment.id ? { ...entry, status: "Pairing required" } : entry,
       ),
@@ -368,6 +370,7 @@ async function loadCatalog(
   current = session;
   if (activeThread?.environmentId === environment.id) session.select(activeThread.threadId);
   const snapshot = (): Catalog & { modelDraftRevision: number } => ({
+    limitProviders: session.subscriptionLimits(),
     modelDraftRevision,
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,

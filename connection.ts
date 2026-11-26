@@ -3,7 +3,7 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
-import { usageTotals, type usageWindow } from "./usage";
+import { subscriptionLimits, usageTotals, type usageWindow } from "./usage";
 import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
@@ -1145,6 +1145,11 @@ export class DirectSession {
 
   gitOperationState(threadId: string): GitOperationState {
     return this.gitOperationStateByThread.get(threadId) ?? { status: "idle" };
+  }
+
+  subscriptionLimits() {
+    return this.configReady && this.environment.status === "Connected"
+      ? subscriptionLimits(this.environment.id, this.environment.label, this.config.providers) : [];
   }
 
   async readUsage(window: ReturnType<typeof usageWindow>, refresh: boolean) {

@@ -13,12 +13,18 @@ test "usage displays server totals and refreshes the selected window"
   tap "tab-usage"
   clock data
   clock settle
-  expect text "usage-tokens-fixture" == "Processed tokens: 15"
+  expect text "usage-limit-[\"fixture\",\"fixture-provider\"]-weekly" == "76% left"
+  tap "usage-view-Cost"
+  clock data
   expect text "usage-cost-fixture" == "$1.00"
+  tap "usage-view-Tokens"
+  clock settle
+  expect text "usage-tokens-fixture" == "15"
   tap "usage-period-1"
   clock data
   clock settle
-  expect text "usage-tokens-fixture" == "Processed tokens: 7"
+  expect text "usage-tokens-fixture" == "7"
+  tap "usage-view-Cost"
   tap "usage-refresh"
   clock data
   clock settle

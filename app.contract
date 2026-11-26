@@ -143,6 +143,18 @@ shape EnvironmentState
   loaded: bool
   items: Environment[]
 
+shape LimitWindow
+  id: string
+  label: string
+  remaining: number
+
+shape LimitProvider
+  id: string
+  environment: string
+  provider: string
+  notice: string
+  windows: LimitWindow[]
+
 shape UsageRow
   id: string
   label: string
@@ -424,6 +436,7 @@ shape TerminalAccess
   error: string
 
 shape Catalog
+  limitProviders: LimitProvider[]
   modelDraftRevision: number
   projects: Project[]
   environments: Environment[]
@@ -566,9 +579,10 @@ component T3Code
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
   state usageDays = 30
+  state usageView = "Limits"
   state usageRefresh = 0
   state usageWindowTime = 0
-  resource usageReport = loadUsage(current.name == "usage" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
+  resource usageReport = loadUsage(current.name == "usage" and usageView != "Limits" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
   state gitConfirmAction = ""
@@ -1043,6 +1057,12 @@ component T3Code
   action refreshUsage
     usageWindowTime = performanceNow()
     usageRefresh = usageRefresh + 1
+
+  action selectUsageView(value: string)
+    if usageView == "Limits"
+      usageWindowTime = performanceNow()
+      usageRefresh = 0
+    usageView = value
 
   action selectUsageDays(days: number)
     usageWindowTime = performanceNow()
@@ -2311,18 +2331,38 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Usage" role="heading" aria-level=2
-                    if catalog.environments.length > 0
+                    if catalog.environments.length > 0 and usageView != "Limits"
                       button press=refreshUsage buttonStyle="glass" aria-label="Refresh usage" testId="usage-refresh" disabled=pending(usageReport)
                         image "symbol:refresh"
                   scroll id="usage" flex=1 min-height=0 background-color="screen"
+                    column padding="16px 16px 0" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center"
+                      row role="radiogroup" aria-label="Usage view" width="100%" box-sizing="border-box"
+                        for metric in ["Cost", "Tokens", "Limits"] key=metric
+                          button role="radio" aria-checked=(usageView == metric) press=selectUsageView(metric) testId=`usage-view-${metric}` flex=1
+                            text metric
                     if catalog.environments.length == 0 or failed(environmentState) or failed(catalog)
                       column padding="64px 21px" align-items="center"
-                        text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) or pending(catalog) ? "Loading environments…" : "Connect an environment to see usage.") testId="usage-status" font="-exact-body" text-align="center" color="muted"
+                        text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) or pending(catalog) ? "Loading environments…" : usageView == "Limits" ? "Select an environment to see limits." : "Connect an environment to see usage.") testId="usage-status" font="-exact-body" text-align="center" color="muted"
+                    else if usageView == "Limits"
+                      column padding="24px 16px 128px" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center" gap=24
+                        if catalog.limitProviders.length == 0
+                          text (catalog.environments.filter(env => env.status == "Connected").length == 0 ? "Waiting for connection…" : "No provider on the selected environments reports subscription limits.") padding="48px 0" color="muted" text-align="center" testId="usage-no-limits"
+                        for provider in catalog.limitProviders key=provider.id
+                          column gap=8
+                            text provider.provider role="heading" aria-level=3 font="-exact-headline"
+                            text provider.environment color="muted" font="-exact-footnote"
+                            if provider.notice != ""
+                              text provider.notice color="muted"
+                            for window in provider.windows key=window.id
+                              row justify-content="space-between" gap=8
+                                text window.label
+                                text `${window.remaining}% left` font-weight=700 testId=`usage-limit-${provider.id}-${window.id}`
+                              progress value=window.remaining max=100 width="100%" aria-label=`${provider.provider} ${window.label} remaining`
                     else
-                      column padding="16px 21px 128px" gap=16
-                        row role="group" aria-label="Usage period" gap=4
+                      column padding="24px 16px 128px" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center" gap=16
+                        row role="radiogroup" aria-label="Usage period" width="100%" box-sizing="border-box"
                           for days in [1, 7, 30, 90] key=days
-                            button press=selectUsageDays(days) aria-pressed=(usageDays == days) aria-label=(days == 1 ? "Past 24 hours" : `Past ${days} days`) testId=`usage-period-${days}` flex=1 min-height=44
+                            button role="radio" press=selectUsageDays(days) aria-checked=(usageDays == days) aria-label=(days == 1 ? "Past 24 hours" : `Past ${days} days`) testId=`usage-period-${days}` flex=1
                               text (days == 1 ? "24h" : `${days}d`)
                         if pending(usageReport) or failed(usageReport)
                           text (failed(usageReport) ? "Usage could not be loaded." : "Scanning provider transcripts…") color="muted" text-align="center" testId="usage-loading"
@@ -2333,10 +2373,13 @@ component T3Code
                               if report.error != ""
                                 text report.error color="muted"
                               else
-                                text "Raw token cost" color="muted"
-                                text report.cost testId=`usage-cost-${report.id}` font="-exact-title1" font-weight=700
-                                text "If billed at full API rate" color="muted"
-                                text `Processed tokens: ${report.tokens}` testId=`usage-tokens-${report.id}`
+                                if usageView == "Cost"
+                                  text "Raw token cost" color="muted"
+                                  text report.cost testId=`usage-cost-${report.id}` font="-exact-title1" font-weight=700
+                                  text "If billed at full API rate" color="muted"
+                                else
+                                  text "Processed tokens" color="muted"
+                                  text report.tokens testId=`usage-tokens-${report.id}` font="-exact-title1" font-weight=700
                                 text report.sessions color="muted"
                                 if report.note != ""
                                   text report.note color="muted"

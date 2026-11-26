@@ -2,6 +2,8 @@ test "usage without an environment does not report measured activity"
   at "/usage"
   clock data
   clock settle
+  expect text "usage-status" == "Select an environment to see limits."
+  tap "usage-view-Cost"
   expect text "usage-status" == "Connect an environment to see usage."
 
 test "a web visitor can switch workspace tabs without editing the address" on web

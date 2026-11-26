@@ -1,5 +1,18 @@
 import { expect, test } from "bun:test";
-import { usageTotals, usageWindow } from "../usage";
+import { subscriptionLimits, usageTotals, usageWindow } from "../usage";
+
+test("subscription windows show remaining allowance, not used allowance", () => {
+  const provider = { instanceId: "local", enabled: true, driver: "codex", usageLimits: { windows: [
+    { id: "month", label: "Monthly", usedPercent: 100 }, { id: "week", label: "Weekly", usedPercent: 24.5 },
+    { id: "bad", label: "Invalid", usedPercent: null },
+  ] } };
+  const reports = subscriptionLimits("home", "Home", [provider, { ...provider, enabled: false }]);
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.windows.map(window => window.remaining)).toEqual([0, 76]);
+  const unavailable = { ...provider, usageLimits: { ...provider.usageLimits, unavailable: { reason: "unsupported" } } };
+  expect(subscriptionLimits("home", "Home", [unavailable])[0]).toMatchObject({ windows: [], notice: "This account has no subscription limits." });
+  expect(subscriptionLimits("home", "Home", [{ ...provider, usageLimits: undefined }])).toEqual([]);
+});
 
 const bucket = {
   totals: { uncachedInputTokens: 30, cachedInputTokens: 20, cacheCreationTokens: 5, outputTokens: 10, reasoningTokens: 7 },
