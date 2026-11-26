@@ -126,6 +126,15 @@ shape EnvironmentState
   loaded: bool
   items: Environment[]
 
+shape UsageRow
+  id: string
+  label: string
+  cost: string
+  tokens: string
+  sessions: string
+  note: string
+  error: string
+
 shape ToolSummary
   id: string
   category: string
@@ -537,6 +546,9 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
+  state usageDays = 30
+  state usageRefresh = 0
+  resource usageReport = loadUsage(current.name == "usage" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + performanceNow() as shape UsageRow[] else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
   state gitConfirmAction = ""
@@ -996,6 +1008,13 @@ component T3Code
 
   action openEnvironments
     nav = go(split ? select(settingsNav, "settingsDetail") : nav, "/environments")
+
+  action refreshUsage
+    usageRefresh = usageRefresh + 1
+
+  action selectUsageDays(days: number)
+    usageDays = days
+    usageRefresh = 0
 
   action manageEnvironment(id: string)
     expandedEnvironment = ""
@@ -2227,9 +2246,35 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Usage" role="heading" aria-level=2
+                    if catalog.environments.length > 0
+                      button press=refreshUsage buttonStyle="glass" aria-label="Refresh usage" testId="usage-refresh" disabled=pending(usageReport)
+                        image "symbol:refresh"
                   scroll id="usage" flex=1 min-height=0 background-color="screen"
-                    column padding="64px 21px" align-items="center"
-                      text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) ? "Loading environments…" : environmentState.items.length == 0 ? "Connect an environment to see usage." : "Usage totals are not available.") testId="usage-status" font-size=16 line-height="24px" text-align="center" color="muted"
+                    if catalog.environments.length == 0 or failed(environmentState) or failed(catalog)
+                      column padding="64px 21px" align-items="center"
+                        text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) or pending(catalog) ? "Loading environments…" : "Connect an environment to see usage.") testId="usage-status" font="-exact-body" text-align="center" color="muted"
+                    else
+                      column padding="16px 21px 128px" gap=16
+                        row role="group" aria-label="Usage period" gap=4
+                          for days in [1, 7, 30, 90] key=days
+                            button press=selectUsageDays(days) aria-pressed=(usageDays == days) aria-label=(days == 1 ? "Past 24 hours" : `Past ${days} days`) testId=`usage-period-${days}` flex=1 min-height=44
+                              text (days == 1 ? "24h" : `${days}d`)
+                        if pending(usageReport) or failed(usageReport)
+                          text (failed(usageReport) ? "Usage could not be loaded." : "Scanning provider transcripts…") color="muted" text-align="center" testId="usage-loading"
+                        else
+                          for report in usageReport key=report.id
+                            column gap=7 testId=`usage-environment-${report.id}`
+                              text report.label role="heading" aria-level=3 font="-exact-headline"
+                              if report.error != ""
+                                text report.error color="muted"
+                              else
+                                text "Raw token cost" color="muted"
+                                text report.cost testId=`usage-cost-${report.id}` font="-exact-title1" font-weight=700
+                                text "If billed at full API rate" color="muted"
+                                text `Processed tokens: ${report.tokens}` testId=`usage-tokens-${report.id}`
+                                text report.sessions color="muted"
+                                if report.note != ""
+                                  text report.note color="muted"
               if e.name == "settings"
                 column navigationKey=`${e.id}` navigationScroll="settings" data-workspace-header=(split ? "brand" : "page") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header

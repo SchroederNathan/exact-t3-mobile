@@ -1,5 +1,6 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
+import { usageWindow } from "./usage";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
@@ -1301,6 +1302,40 @@ const sources: Sources = {
       if (composerSettings.reconcile(id, live, live != null)) modelDraftRevision++;
     }
     return { ...catalog, modelDraftRevision };
+  },
+
+  loadUsage: async ([environments, days, refresh, now], store, _storage, native) => {
+    if (!environments.length) return [];
+    const window = usageWindow(days === 1 || days === 7 || days === 90 ? days : 30,
+      new Date(now), Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    const tokens = credentials(store);
+    return Promise.all(environments.map(async ({ id, label, enabled, status }) => {
+      const row = { id, label, cost: "", tokens: "", sessions: "", note: "", error: "" };
+      if (!enabled || status !== "Connected" || !tokens[id])
+        return { ...row, error: enabled ? "Waiting for connection…" : "Environment disabled." };
+      try {
+        const session = sessionFor(id);
+        const generation = session.controlAccessKey();
+        const auth = await readJson(`${session.environment.url}/api/auth/session`, {
+          headers: { Authorization: `Bearer ${tokens[id]}` },
+        });
+        if (!sessionScope(auth, "diagnostics:read"))
+          return { ...row, error: "This connection does not have permission to read usage." };
+        if (!generation || generation !== session.controlAccessKey() || session !== sessionFor(id))
+          return { ...row, error: "The environment connection changed. Refresh usage." };
+        const result = await awaitReply(session.readUsage(window, refresh > 0), native);
+        if (generation !== session.controlAccessKey() || session !== sessionFor(id))
+          return { ...row, error: "The environment connection changed. Refresh usage." };
+        return {
+          ...row, cost: result.priced ? `$${result.cost.toFixed(2)}` : "Unpriced",
+          tokens: result.tokens.toLocaleString(), sessions: `Across ${result.sessions.toLocaleString()} ${result.sessions === 1 ? "session" : "sessions"}`,
+          note: [result.partial ? "Some sources could not report complete usage." : "",
+            result.unpriced > 0 ? "Some records have no known price." : ""].filter(Boolean).join(" "),
+        };
+      } catch (error) {
+        return { ...row, error: error instanceof Error ? error.message : "This environment could not report usage." };
+      }
+    }));
   },
 
   loadGitStatus: async ([id, _revision, draftEnvironmentId, draftCwd], _store, _storage, native) => {

@@ -1,0 +1,25 @@
+epoch "2026-11-10T12:05:00Z"
+time-zone "UTC"
+
+test "usage displays server totals and refreshes the selected window"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "tab-usage"
+  clock data
+  clock settle
+  expect text "usage-tokens-fixture" == "Processed tokens: 15"
+  expect text "usage-cost-fixture" == "$1.00"
+  tap "usage-period-1"
+  clock data
+  clock settle
+  expect text "usage-tokens-fixture" == "Processed tokens: 7"
+  tap "usage-refresh"
+  clock data
+  clock settle
+  expect text "usage-cost-fixture" == "$1.50"
