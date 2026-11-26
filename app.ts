@@ -1,6 +1,7 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
+import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
@@ -543,7 +544,8 @@ const sources: Sources = {
       const session = sessionFor(environmentId);
       const key = session.controlAccessKey();
       const hits = await awaitReply(session.searchThreadMessages(query, scope?.threadId ?? ""), native);
-      return session === sessionFor(environmentId) && key === session.controlAccessKey() ? { ...reply, hits } : reply;
+      return session === sessionFor(environmentId) && key === session.controlAccessKey()
+        ? { ...reply, hits: hits.map(hit => ({ ...hit, runs: excerptRuns(hit.snippet, query) })) } : reply;
     } catch {
       return { ...reply, unavailable: true };
     }

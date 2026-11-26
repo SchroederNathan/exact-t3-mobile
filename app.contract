@@ -123,10 +123,16 @@ shape Environment
   enabled: bool
   machineSymbol: string
 
+shape ExcerptRun
+  start: number
+  text: string
+  highlighted: bool
+
 shape SearchHit
   id: string
   snippet: string
   source: string
+  runs: ExcerptRun[]
 
 shape SearchReply
   query: string
@@ -2614,7 +2620,10 @@ component SearchExcerpt
   view
     match first(hits.filter(hit => hit.id == id))
       case some(hit)
-        text `${hit.source == "user" ? "You" : "Agent"}: ${hit.snippet}` testId=`thread-excerpt-${id}` font="-exact-footnote" flex=1 min-width=0 line-clamp=1 color="muted"
+        text testId=`thread-excerpt-${id}` font="-exact-footnote" flex=1 min-width=0 line-clamp=1 color="muted"
+          text (hit.source == "user" ? "You: " : "Agent: ") font-weight=500 color=(hit.source == "user" ? "muted" : "status-done")
+          for run in hit.runs key=run.start
+            text run.text font-weight=(run.highlighted ? 700 : 400) color=(run.highlighted ? "foreground" : "muted")
       case none
         view display="none"
 
