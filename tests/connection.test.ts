@@ -19,6 +19,19 @@ type SettingsRequest = {
   payload: Record<string, unknown>;
 };
 
+test("usage refresh sends the selected window to its environment", async () => {
+  const { session, requests } = settingsSession();
+  const window = { resolution: "day" as const, sinceDay: "2026-10-01", untilDay: "2026-10-30", timeZone: "America/Toronto" };
+  const result = session.readUsage(window, true);
+  const request = requests.at(-1)!;
+  expect(request.tag).toBe("server.getUsageSummary");
+  expect(request.payload).toEqual({ ...window, awaitRefresh: true });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: {
+    _tag: "Success", value: { contractVersion: 6, buckets: [], sources: [] },
+  } }));
+  expect((await result).tokens).toBe(0);
+});
+
 function settingsSession(initializeShell = true) {
   const requests: SettingsRequest[] = [];
   const frames: { _tag: string; requestId?: string }[] = [];
