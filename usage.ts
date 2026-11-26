@@ -1,28 +1,5 @@
 export type UsageDays = 1 | 7 | 30 | 90;
 
-export function subscriptionLimits(environmentId: string, environment: string, providers: unknown) {
-  const rows: { id: string; environment: string; provider: string; notice: string; windows: { id: string; label: string; remaining: number }[] }[] = [];
-  const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
-  for (const entry of Array.isArray(providers) ? providers : []) {
-    const provider = fields(entry), limits = fields(provider.usageLimits);
-    const instance = text(provider.instanceId);
-    if (!instance || provider.enabled !== true || !Array.isArray(limits.windows)) continue;
-    const unavailable = fields(limits.unavailable);
-    const notice = unavailable.reason === "unsupported" ? text(unavailable.message) || "This account has no subscription limits."
-      : unavailable.reason === "probeFailed" ? text(unavailable.message) || "Could not read limits." : "";
-    const windows = limits.windows.flatMap(value => {
-      const window = fields(value), used = window.usedPercent;
-      if (!text(window.id) || !text(window.label) || typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 100) return [];
-      return [{ id: text(window.id), label: text(window.label), remaining: Math.round(100 - used) }];
-    });
-    const driver = text(provider.driver);
-    rows.push({ id: JSON.stringify([environmentId, instance]), environment,
-      provider: text(provider.displayName) || (driver === "codex" ? "Codex" : driver) || instance,
-      notice: notice || (windows.length ? "" : "No limits reported."), windows: notice ? [] : windows });
-  }
-  return rows;
-}
-
 function nonnegative(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
     throw new Error("This environment returned incomplete usage totals.");

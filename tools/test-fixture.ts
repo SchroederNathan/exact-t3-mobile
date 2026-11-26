@@ -226,6 +226,10 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       ? { threadResumeCompletionMarker: true }
       : {}),
     ...(controls || attachments ? { threadSnapshotPagination: true } : {}),
+    ...(usageMode ? { usageLimitSources: [{id:"fixture-hub",label:"Fixture hub",accounts:[
+      {id:"mirror.json",driver:"codex",email:"shared@example.test",usageLimits:{checkedAt:"2026-11-01T00:00:00Z",windows:[{id:"other-slot",kind:"weekly",label:"Weekly",usedPercent:100}]}},
+      {id:"QA.json",driver:"codex",usageLimits:{checkedAt:timestamp,windows:[{id:"week",kind:"weekly",label:"Weekly",usedPercent:80},{id:"five-hour",kind:"session",label:"Session",usedPercent:35}]}},
+    ]}] } : {}),
     providers: [
       {
         instanceId: "fixture-provider",
@@ -233,7 +237,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
         ...(usageMode ? { usageLimits: { checkedAt: timestamp, windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 24.5 }] } } : {}),
         installed: true,
         enabled: true,
-        auth: { status: "authenticated" },
+        auth: { status: "authenticated", ...(usageMode ? { email:"shared@example.test" } : {}) },
         ...composer?.provider,
         models: ["fixture-model", "fixture-fast"].map((slug) => ({
           slug,

@@ -1,6 +1,7 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
+import { poolLimitReports } from "./limit-pools";
 import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
@@ -328,7 +329,7 @@ function nativeCatalog(
   }
   syncNativeConnections(native);
   return {
-    limitProviders: [...connections.values()].flatMap(({ session }) => session.subscriptionLimits()),
+    limitProviders: poolLimitReports([...connections.values()].flatMap(({ session }) => session.subscriptionLimits()), now),
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
       if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
@@ -385,7 +386,7 @@ async function loadCatalog(
   current = session;
   if (activeThread?.environmentId === environment.id) session.select(activeThread.threadId);
   const snapshot = (): Catalog & { modelDraftRevision: number } => ({
-    limitProviders: session.subscriptionLimits(),
+    limitProviders: poolLimitReports(session.subscriptionLimits(), now),
     modelDraftRevision,
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,

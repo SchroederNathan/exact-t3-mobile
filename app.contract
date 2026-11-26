@@ -6,7 +6,7 @@ use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendRe
 use NewTaskView, ProjectChoices, ProjectChoice, EnvironmentChoice, BranchChoices, BranchRow, HomeDraftRow, isDraftKey, launchOf, launching, launchText, launchTitle, launchStrategy, launchError, routeMode, DraftHero, DraftControls, PreparingThread, ProjectMark, InlineControl, EnvironmentControl, ProjectPicker, EnvironmentPicker, BranchPicker, HomeDraftRowContent from "./new-task.contract"
 use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
-use UsageChart, UsageChartData from "./usage-chart.contract"
+use UsageChart, UsageChartData, providerColor from "./usage-chart.contract"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
 use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
@@ -152,10 +152,21 @@ shape EnvironmentState
   loaded: bool
   items: Environment[]
 
+shape LimitColumn
+  id: string
+  name: string
+  origin: string
+  number: number
+  color: string
+  reported: bool
+  remaining: number
+  pace: number
+
 shape LimitWindow
   id: string
   label: string
   remaining: number
+  columns: LimitColumn[]
 
 shape LimitProvider
   id: string
@@ -625,6 +636,9 @@ component T3Code
   state usageRefresh = 0
   state usageWindowTime = 0
   state usageWide = false
+  state limitBarWidth = 0
+  action measureLimitBar(width: number, height: number)
+    limitBarWidth = width
   action measureUsage(width: number, height: number)
     usageWide = width >= 600
   resource usageReport = loadUsage(current.name == "usage" and usageView != "Limits" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
@@ -2623,16 +2637,41 @@ component T3Code
                         if catalog.limitProviders.length == 0
                           text (catalog.environments.filter(env => env.status == "Connected").length == 0 ? "Waiting for connection…" : "No provider on the selected environments reports subscription limits.") padding="48px 0" color="muted" text-align="center" testId="usage-no-limits"
                         for provider in catalog.limitProviders key=provider.id
-                          column gap=8
-                            text provider.provider role="heading" aria-level=3 font="-exact-headline"
-                            text provider.environment color="muted" font="-exact-footnote"
+                          column gap=12
+                            row align-items="center" gap=8 padding="0 4px"
+                              if provider.notice == ""
+                                ProviderIcon(provider=provider.id, size=18)
+                              text provider.provider role="heading" aria-level=3 font-size=16 font-weight=500
                             if provider.notice != ""
+                              text provider.environment color="muted" font="-exact-footnote"
                               text provider.notice color="muted"
                             for window in provider.windows key=window.id
-                              row justify-content="space-between" gap=8
-                                text window.label
-                                text `${window.remaining}% left` font-weight=700 testId=`usage-limit-${provider.id}-${window.id}`
-                              progress value=window.remaining max=100 width="100%" aria-label=`${provider.provider} ${window.label} remaining`
+                              view display="flex" flex-direction=(usageWide ? "row" : "column") align-items=(usageWide ? "center" : "stretch") gap=(usageWide ? 24 : 12) padding=16 border-radius=24 background-color="card" testId=`limit-card-${provider.id}-${window.id}`
+                                column width=(usageWide ? 176 : "100%") gap=4
+                                  text window.label font-size=14 font-weight=500
+                                  row align-items="baseline" gap=6
+                                    text `${window.remaining}%` font-size=30 font-weight=700 font-variant-numeric="tabular-nums" testId=`usage-limit-${provider.id}-${window.id}`
+                                    text "left" font-size=14 color="muted"
+                                column flex=(usageWide ? "1 1 0px" : "0 0 auto") min-width=0 gap=(usageWide ? 4 : 12)
+                                  row gap=4 resize=measureLimitBar
+                                    for member in window.columns key=member.id
+                                      column flex=1 min-width=0 height=(usageWide ? 36 : 28) position="relative" justify-content="center" align-items="center" border-radius=6 overflow="hidden" background-color=(member.reported ? "input-fill" : "transparent") testId=`limit-segment-${provider.id}-${window.id}-${member.number}`
+                                        if member.reported
+                                          view position="absolute" inset="0 auto 0 0" width=`${member.remaining}%` background-color=(member.color != "" ? member.color : providerColor(provider.id == "claudeAgent" ? "claude" : provider.id)) opacity=0.35
+                                          if usageWide and limitBarWidth >= 96 * window.columns.length
+                                            row align-items="center" gap=6 padding="0 8px" align-self="stretch" min-width=0
+                                              text member.name font-size=12 font-weight=500 line-clamp=1 min-width=0
+                                              text `${member.remaining}%` font-size=14 font-weight=700 font-variant-numeric="tabular-nums"
+                                          else
+                                            text `${member.number}` font-size=12 font-weight=500 aria-label=`Segment ${member.number}, ${member.name}, ${member.remaining}% left`
+                                  if not usageWide or limitBarWidth < 96 * window.columns.length
+                                    column testId=`limit-legend-${provider.id}-${window.id}`
+                                      for member in window.columns key=member.id
+                                        if member.reported
+                                          row align-items="center" gap=8 min-height=44
+                                            text `${member.number}` font-size=12 font-weight=500 width=20 text-align="center" background-color="input-fill" border-radius=5
+                                            text member.name font-size=14 font-weight=500 flex=1 min-width=0 line-clamp=1
+                                            text `${member.remaining}%` font-size=14 font-weight=500 font-variant-numeric="tabular-nums"
                     else
                       column padding="24px 16px 128px" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center" gap=16
                         row role="radiogroup" aria-label="Usage period" width="100%" box-sizing="border-box"

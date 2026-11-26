@@ -13,7 +13,10 @@ test "usage displays server totals and refreshes the selected window"
   tap "tab-usage"
   clock data
   clock settle
-  expect text "usage-limit-[\"fixture\",\"fixture-provider\"]-weekly" == "76% left"
+  expect text "usage-limit-codex-weekly" == "48%"
+  expect text "usage-limit-codex-session" == "65%"
+  expect tree has "limit-segment-codex-session-2"
+  expect tree missing "limit-segment-codex-weekly-3"
   tap "usage-view-Cost"
   clock data
   expect text "usage-cost-fixture" == "$1.00"
