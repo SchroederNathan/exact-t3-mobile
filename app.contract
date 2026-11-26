@@ -2227,12 +2227,9 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Usage" role="heading" aria-level=2
-                  list id="usage" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    section
-                      row
-                        column gap=3
-                          text "This month" font="-exact-body"
-                          text "0 agent minutes" font="-exact-footnote" color="-exact-secondary-label"
+                  scroll id="usage" flex=1 min-height=0 background-color="screen"
+                    column padding="64px 21px" align-items="center"
+                      text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) ? "Loading environments…" : environmentState.items.length == 0 ? "Connect an environment to see usage." : "Usage totals are not available.") testId="usage-status" font-size=16 line-height="24px" text-align="center" color="muted"
               if e.name == "settings"
                 column navigationKey=`${e.id}` navigationScroll="settings" data-workspace-header=(split ? "brand" : "page") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header

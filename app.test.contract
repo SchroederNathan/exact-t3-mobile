@@ -1,3 +1,9 @@
+test "usage without an environment does not report measured activity"
+  at "/usage"
+  clock data
+  clock settle
+  expect text "usage-status" == "Connect an environment to see usage."
+
 test "fresh install has no fabricated environments or threads"
   clock data
   expect state catalog.environments == []
