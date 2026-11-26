@@ -1233,19 +1233,26 @@ const sources: Sources = {
   customSnoozeStart: ([opened]) => ({ field: localSnoozeField(opened + 3_600_000), amounts: Array.from({ length: 99 }, (_, index) => String(index + 1)) }),
   setCustomSnooze: async ([id, key, mode, field, amount, unit, now], store, _storage, native) => {
     const wake = customSnoozeDeadline(mode, field, amount, unit, now);
-    if (!wake) return { ok: false, error: mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration." };
+    if (!wake) return { ok: false, undo: "", error: mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration." };
     try {
       const { session, threadId, auth } = await authorizeRow(id, key, store);
-      await awaitReply(session.changeSnooze(threadId, key, "custom", now, now, auth, wake), native);
-      return { ok: true, error: "" };
-    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not snooze thread." }; }
+      const undo = await awaitReply(session.changeSnooze(threadId, key, "custom", now, now, auth, wake), native);
+      return { ok: true, undo, error: "" };
+    } catch (error) { return { ok: false, undo: "", error: error instanceof Error ? error.message : "Could not snooze thread." }; }
   },
   setRowSnooze: async ([id, key, choice, opened, now], store, _storage, native) => {
     try {
       const {session, threadId, auth} = await authorizeRow(id, key, store);
-      await awaitReply(session.changeSnooze(threadId, key, choice, opened, now, auth), native);
+      const undo = await awaitReply(session.changeSnooze(threadId, key, choice, opened, now, auth), native);
+      return { ok: true, undo, error: "" };
+    } catch (error) { return { ok: false, undo: "", error: error instanceof Error ? error.message : "Could not update snooze." }; }
+  },
+  undoRowSnooze: async ([id, key, receipt, now], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
+      await awaitReply(session.undoThreadSnooze(threadId, key, receipt, now, auth), native);
       return { ok: true, error: "" };
-    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update snooze." }; }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not undo snooze." }; }
   },
   setThreadPin: async ([id, key, pin, receipt], store, _storage, native) => {
     try {

@@ -28,11 +28,12 @@ test "custom snooze keeps invalid input open, then accepts a duration without op
   tap "snoozed-threads"
   expect text "wake-fixture:alpha" == "2h"
   expect state activeThreadId == ""
-  tap "thread-fixture:alpha" contextmenu
-  clock data
-  tap "thread-menu-wake"
+  expect text "thread-undo-label" == "Snoozed thread"
+  tap "undo-snooze"
   clock data
   clock settle
+  expect tree missing "undo-snooze"
+  expect tree has "age-fixture:alpha"
 
 test "configured snooze starts on selection and wake returns the conversation without navigating"
   clock data
@@ -51,6 +52,9 @@ test "configured snooze starts on selection and wake returns the conversation wi
   tap "snooze-after:90"
   clock data
   clock settle
+  expect tree has "undo-snooze"
+  clock +5100
+  expect tree missing "undo-snooze"
   expect tree missing "thread-fixture:alpha"
   tap "snoozed-threads"
   expect text "wake-fixture:alpha" == "2h"

@@ -460,7 +460,7 @@ shape Reply
   ok: bool
   error: string
 
-shape PinReply
+shape UndoableReply
   ok: bool
   error: string
   undo: string
@@ -692,7 +692,7 @@ component T3Code
   state customUnit = "hours"
   state customError = ""
   resource customStart = customSnoozeStart(customOpened) as shape CustomSnoozeStart else empty()
-  mutation customSubmitted as shape Reply then afterCustomSnooze
+  mutation customSubmitted as shape UndoableReply then afterCustomSnooze
   action beginCustomSnooze
     customThread = pinTargetId
     customKey = pinTargetKey
@@ -727,11 +727,12 @@ component T3Code
           hidePopover("custom-snooze")
           hidePopover("row-snooze-menu")
           hidePopover("thread-row-menu")
+          offerUndo("snooze", customThread, customKey, reply.undo)
           customKey = ""
       case none
         customError = ""
   resource rowSnooze = loadRowSnooze(pinTargetId, pinTargetKey, rowMenuOpened) as shape RowSnoozeMenu else empty()
-  mutation rowSnoozed as shape Reply then afterRowSnooze
+  mutation rowSnoozed as shape UndoableReply then afterRowSnooze
   action submitRowSnooze(choice: string)
     hidePopover("row-snooze-menu")
     hidePopover("thread-row-menu")
@@ -747,11 +748,14 @@ component T3Code
           taskAlertTitle = "Could not update snooze"
           taskAlertBody = reply.error
           showModal("task-alert")
+        else if reply.undo != ""
+          offerUndo("snooze", pinTargetId, pinTargetKey, reply.undo)
         pinTargetId = ""
         pinTargetKey = ""
       case none
         rowMenuOpened = 0
   state undoReceipt = ""
+  state undoKind = "unpin"
   state undoThreadId = ""
   state undoAccessKey = ""
   state undoingPin = false
@@ -766,18 +770,36 @@ component T3Code
           showModal("task-alert")
       case none
         undoingPin = false
-  mutation pinChanged as shape PinReply then afterPinChange
+  mutation pinChanged as shape UndoableReply then afterPinChange
+  mutation snoozeUndone as shape Reply then afterUndoSnooze
+  action afterUndoSnooze
+    match snoozeUndone
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not undo snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        undoReceipt = ""
+  action offerUndo(kind: string, id: string, key: string, receipt: string)
+    undoKind = kind
+    undoThreadId = id
+    undoAccessKey = key
+    undoReceipt = receipt
   action dismissPinUndo
     undoReceipt = ""
   task pinUndoExpiry when undoReceipt != "" key=undoReceipt
     after(5000, dismissPinUndo)
-  action restorePin
-    if undoReceipt != "" and not pending(pinChanged)
+  action restoreThreadAction
+    if undoReceipt != "" and not pending(pinChanged) and not pending(snoozeUndone)
       let receipt = undoReceipt
       haptic("selection")
-      undoingPin = true
       undoReceipt = ""
-      send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
+      if undoKind == "snooze"
+        send snoozeUndone = undoRowSnooze(undoThreadId, undoAccessKey, receipt, time.epochAtZero + performanceNow())
+      else
+        undoingPin = true
+        send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
   action aimPin(id: string, key: string, desired: bool)
     if not pending(pinChanged) and not pending(rowSnoozed)
       rowMenuOpened = time.epochAtZero + performanceNow()
@@ -802,9 +824,7 @@ component T3Code
         else if undoingPin and reply.undo != ""
           send snoozeRestored = finishPinUndo(undoThreadId, reply.undo, time.epochAtZero + performanceNow())
         else if reply.undo != ""
-          undoReceipt = reply.undo
-          undoThreadId = pinTargetId
-          undoAccessKey = pinTargetKey
+          offerUndo("unpin", pinTargetId, pinTargetKey, reply.undo)
         pinTargetId = ""
         pinTargetKey = ""
       case none
@@ -1624,12 +1644,12 @@ component T3Code
                       animation=(undoViewport.prefersReducedMotion ? "none" : "undoArrival 200ms cubic-bezier(0.33,1,0.68,1) both")
                       -exact-exit-animation=(undoViewport.prefersReducedMotion ? "none" : "undoDeparture 150ms ease-out both")
                       image "symbol:sf/checkmark.circle" width=20 height=20 color="icon"
-                      text "Unpinned thread" font-size="0.8125rem" font-weight=600 flex=1 min-width=0
+                      text (undoKind == "snooze" ? "Snoozed thread" : "Unpinned thread") font-size="0.8125rem" font-weight=600 flex=1 min-width=0 testId="thread-undo-label"
                       if device.kind == "web"
-                        button press=restorePin appearance="none" aria-label="Undo unpin" testId="undo-unpin" min-height=36 padding="0 14px" border-radius=18 background-color="input-fill" color="foreground" font-weight=600
+                        button press=restoreThreadAction appearance="none" aria-label=`Undo ${undoKind}` testId=`undo-${undoKind}` min-height=36 padding="0 14px" border-radius=18 background-color="input-fill" color="foreground" font-weight=600
                           text "Undo"
                       else
-                        button press=restorePin buttonStyle="bordered" aria-label="Undo unpin" testId="undo-unpin" min-height=36 padding="0 14px"
+                        button press=restoreThreadAction buttonStyle="bordered" aria-label=`Undo ${undoKind}` testId=`undo-${undoKind}` min-height=36 padding="0 14px"
                           text "Undo"
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"

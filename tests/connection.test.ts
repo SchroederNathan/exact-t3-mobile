@@ -89,6 +89,34 @@ test("snooze rechecks the grant, capability, row state and offered preset before
   expect(session.snoozeMenu("thread", key, now).sleeping).toBe(false);
 });
 
+test("snooze undo names the original connection and wakes only its still-current deadline once", async () => {
+  for (const mode of ["unchanged", "different deadline", "same deadline again"]) {
+    const { session, commands, accept, updateThread } = settingsSession();
+    const now = Date.UTC(2026, 10, 26), key = session.controlAccessKey();
+    const auth = { authenticated: true, scopes: ["orchestration:operate"] };
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadSnooze: true } } } }] }));
+    const pending = session.changeSnooze("thread", key, "after:60", now, now, auth);
+    accept(commands()[0]!); const receipt = await pending;
+    const snoozedUntil = new Date(now + 3600_000 + Number(mode === "different deadline")).toISOString();
+    updateThread({ snoozedUntil, snoozedAt: new Date(now).toISOString() });
+    for (const [target, access, token] of [["other", key, receipt], ["thread", "stale", receipt], ["thread", key, "wrong"]]) {
+      expect(() => session.undoThreadSnooze(target!, access!, token!, now, auth)).toThrow("no longer available");
+    }
+    const undo = () => session.undoThreadSnooze("thread", key, receipt, now, auth);
+    if (mode === "same deadline again") {
+      updateThread({ snoozedUntil, snoozedAt: new Date(now + 1000).toISOString() });
+      expect(undo).toThrow("no longer available");
+    } else if (mode === "different deadline") expect(undo).toThrow("has changed");
+    else {
+      const finished = undo();
+      expect(commands()[1]!.payload).toMatchObject({ type: "thread.unsnooze", threadId: "thread", reason: "user" });
+      accept(commands()[1]!); await finished;
+    }
+    expect(undo).toThrow("no longer available");
+    expect(commands()).toHaveLength(mode === "unchanged" ? 2 : 1);
+  }
+});
+
 test("Undo restores the original pin position before the unexpired snooze, once", async () => {
   for (const expired of [false, true]) {
     const {session, updateThread, commands, accept} = settingsSession();

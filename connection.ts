@@ -941,6 +941,7 @@ export class DirectSession {
   >();
   private forceStops = new Map<string, { accessKey: string }>();
   private pinWrites = new Set<string>();
+  private snoozeUndo?: { receipt: string; id: string; key: string; wake: number; observedAt?: string };
   private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
   private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
   private tools = new Map<string, ExpandedTool>();
@@ -1777,6 +1778,7 @@ export class DirectSession {
 
   open(socket: StreamSocket) {
     this.pinUndo = undefined;
+    this.snoozeUndo = undefined;
     this.snoozeRestore = undefined;
     this.controlEpoch++;
     this.controlGrant = false;
@@ -2992,13 +2994,39 @@ export class DirectSession {
     if (!menu.available || menu.sleeping !== (choiceId === "wake")) throw new Error("This thread action is no longer available.");
     const commandId = crypto.randomUUID();
     if (choiceId === "wake") {
+      if (this.snoozeUndo?.id === id) this.snoozeUndo = undefined;
       await this.query("orchestration.dispatchCommand", { type: "thread.unsnooze", commandId, threadId: id, reason: "user" });
+      return "";
     } else {
       const choices = snoozeChoices(object(this.config.settings).snoozePresets, opened);
       const wake = choiceId === "custom" ? customWake : snoozeDeadline(choices.find(choice => choice.id === choiceId), now);
       if (!(wake > now) || !Number.isFinite(new Date(wake).getTime())) throw new Error("Choose a future snooze time.");
       await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId, threadId: id, snoozedUntil: new Date(wake).toISOString() });
+      if (key !== this.controlAccessKey()) throw new Error("The connection changed. Check the thread before trying again.");
+      this.snoozeUndo = { receipt: commandId, id, key, wake };
+      this.reconcileSnoozeUndo();
+      return commandId;
     }
+  }
+
+  undoThreadSnooze(id: string, key: string, receipt: string, now: number, auth: unknown) {
+    const prior = this.snoozeUndo;
+    if (!prior || prior.receipt !== receipt || prior.key !== key || prior.id !== id)
+      throw new Error("This snooze undo is no longer available.");
+    this.snoozeUndo = undefined;
+    const row = this.shells.get(id);
+    if (!row || listWakeTime(row) !== prior.wake || prior.wake <= now)
+      throw new Error("The thread's snooze has changed.");
+    return this.changeSnooze(id, key, "wake", now, now, auth);
+  }
+
+  private reconcileSnoozeUndo() {
+    const prior = this.snoozeUndo;
+    if (!prior) return;
+    const row = this.shells.get(prior.id);
+    if (row && listWakeTime(row) === prior.wake && (prior.observedAt === undefined || prior.observedAt === string(row.snoozedAt))) {
+      prior.observedAt = string(row.snoozedAt);
+    } else if (prior.observedAt !== undefined || !row) this.snoozeUndo = undefined;
   }
 
   async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string, receipt = ""): Promise<string> {
@@ -3444,6 +3472,7 @@ export class DirectSession {
       this.switchingSnapshots.delete(string(item.threadId));
       this.pruneTools();
     }
+    this.reconcileSnoozeUndo();
   }
 
   private requestFavicon(project: ObjectValue) {
