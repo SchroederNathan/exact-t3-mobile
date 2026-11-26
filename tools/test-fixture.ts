@@ -18,6 +18,7 @@ const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
 const composerMode = process.argv.includes("--composer");
 const usageMode = process.argv.includes("--usage");
+const threadTimeMode = process.argv.includes("--thread-time");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
@@ -31,6 +32,7 @@ for (let index = 2; index < process.argv.length; index++) {
       "--controls",
       "--composer",
       "--usage",
+      "--thread-time",
       "--attachments",
       "--third-environment",
     ].includes(argument)
@@ -252,6 +254,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     ],
   });
   const held: { socket: Socket; requestId: string }[] = [];
+  let clockSubscription: string | undefined;
   const projects = (
     secondary
       ? [{ id: "remote", title: "Remote project" }]
@@ -274,6 +277,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       runtimeMode: "full-access",
       updatedAt: timestamp,
       latestUserMessageAt: timestamp,
+      ...(threadTimeMode && id === "beta" ? { settledOverride: "settled", settledAt: "2026-11-09T13:00:00Z" } : {}),
       modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
     }))
     .concat(activities?.threads ?? []);
@@ -295,6 +299,13 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (threadTimeMode && (path === "/clock/start" || path === "/clock/check")) {
+          const socket = readySocket(sockets);
+          if (!socket || sockets.size !== 1) return refused("Expected one connected clock fixture");
+          const identity = JSON.stringify([socket.data.serial, socket.data.shellRequest, socket.data.configRequest]);
+          if (path === "/clock/start") clockSubscription = identity;
+          return identity === clockSubscription ? json({ unchanged: true }) : refused("Clock replaced the connection or subscriptions");
+        }
         const assertion = assertions(path, request.signal);
         if (assertion) return assertion;
       }
@@ -584,7 +595,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

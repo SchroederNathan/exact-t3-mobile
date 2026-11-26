@@ -466,6 +466,7 @@ shape Inspection
   items: InspectionItem[]
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
+fn compactAge(at: number, now: number): string = at == 0 or now - at < 60000 ? "<1m" : now - at < 3600000 ? `${floor((now - at) / 60000)}m` : now - at < 86400000 ? `${floor((now - at) / 3600000)}h` : `${floor((now - at) / 86400000)}d`
 fn threadLive(catalog: Catalog, id: string): bool = threadFeed(selectedThread(catalog, id)).filter(row => row.message != none).length > 0
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
 fn threadFeed(threads: Thread[]): FeedRow[] = match first(threads) { case some(thread) => thread.rows, case none => [] }
@@ -604,6 +605,7 @@ component T3Code
   resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
   derive terminalHost = terminalHostPlatform(catalog, activeThreadId)
   state statusNow = 0
+  state threadListClock = 0
   derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
   resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
   task tickThreadStatus when workingStatus.filter(status => status.ticking).length > 0 key=`${activeThreadId}:${statusNow}`
@@ -681,6 +683,13 @@ component T3Code
   resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query, searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId))).length > 0
+  task startThreadListClock when agesVisible key=agesVisible
+    change(sampleThreadListClock)
+  task tickThreadListClock when agesVisible
+    every(60000, sampleThreadListClock)
+  action sampleThreadListClock
+    threadListClock = performanceNow()
   task debounceThreadSearch when searchText != messageQuery key=searchText
     after(120, startMessageSearch)
   derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
@@ -1431,7 +1440,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2549,6 +2558,7 @@ component T3Code
 
 component ThreadList
   props
+    now: number
     catalog: Catalog
     drafts: HomeDraftRow[]
     openDraft: action
@@ -2637,7 +2647,7 @@ component ThreadList
                       image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600
                       text thread.status font-size=13 line-height="17px" font-weight=700
                   else
-                    text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                    text compactAge(thread.activityAt, now) testId=`age-${thread.id}` font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
                 row align-items="center" gap=7 min-height=14 padding-left=28
                   if searchHits.filter(hit => hit.id == thread.id).length > 0
                     SearchExcerpt(hits=searchHits, id=thread.id)
@@ -2655,7 +2665,7 @@ component ThreadList
       if settledThreads.length > 0
         section
           if not searching
-            button press=toggleSettled appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Settled threads"
+            button press=toggleSettled appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Settled threads" testId="settled-threads"
               row align-items="center" gap=8.75 width="100%"
                 text (showSettled ? "Settled" : `Settled (${settledThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
                 view flex=1 height=1 background-color="edge"
@@ -2670,7 +2680,7 @@ component ThreadList
                 column flex=1 min-width=0
                   text thread.title font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
-                text thread.updatedAt font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                text compactAge(thread.activityAt, now) testId=`age-${thread.id}` font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
 
 component SearchExcerpt
   props

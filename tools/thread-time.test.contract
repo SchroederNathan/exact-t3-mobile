@@ -1,0 +1,27 @@
+epoch "2026-11-10T12:59:00Z"
+time-zone "UTC"
+
+test "compact thread ages update in place and catch up on return"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  expect text "age-fixture:alpha" == "59m"
+  expect tree missing "age-fixture:beta"
+  tap "settled-threads"
+  expect text "age-fixture:beta" == "23h"
+  request POST "http://127.0.0.1:0/clock/start"
+  clock +60000
+  expect text "age-fixture:alpha" == "1h"
+  expect text "age-fixture:beta" == "1d"
+  request POST "http://127.0.0.1:0/clock/check"
+  type "root" "/settings"
+  clock settle
+  clock +3600000
+  type "root" "/"
+  clock settle
+  expect text "age-fixture:alpha" == "2h"
