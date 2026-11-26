@@ -14,6 +14,8 @@ test "an empty search keeps the filters available and recovers when cleared"
   type "search" "No matching thread"
   clock settle
   expect tree missing "thread-fixture:alpha"
+  expect text "empty-title" == "No results"
+  expect text "empty-thread-detail" == "No threads matching \"No matching thread\"."
   expect tree has "all-environments"
   expect tree has "all-projects"
   type "search" ""

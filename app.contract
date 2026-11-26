@@ -2520,8 +2520,9 @@ component ThreadList
       section
         if visibleThreads.length == 0 and drafts.length == 0
           column align-items="center" padding="28px 21px" gap=7
-            text "No threads yet" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
-            text "Start a new thread to begin coding." font-size=16 line-height="24px" color="muted" text-align="center"
+            text (searching ? (sidebar ? "No matching threads" : "No results") : selectedProject != "" ? `No threads in ${selectedProjectLabel}` : selectedEnvironment != "" ? `No threads in ${environmentLabel(catalog, selectedEnvironment)}` : "No threads yet") font="-exact-title3" font-weight=700 text-align="center" testId="empty-title"
+            if not sidebar
+              text (searching ? `No threads matching "${query}".` : selectedProject != "" ? "Choose another project or create a new task." : selectedEnvironment != "" ? "Choose another environment or create a new task." : "Create a task to start a new coding session.") font="-exact-body" color="muted" text-align="center" testId="empty-thread-detail"
       for threads, groupIndex in [activeThreads, displayedWorking] key=groupIndex
         section
           if groupIndex == 1 and workingThreads.length > 0
