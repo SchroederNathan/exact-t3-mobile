@@ -21,6 +21,14 @@ font "DM Sans"
   500 italic = "assets/fonts/DMSans_500Medium_Italic.ttf"
   700 italic = "assets/fonts/DMSans_700Bold_Italic.ttf"
 
+keyframes undoArrival
+  from translate="0px 62px"
+keyframes undoDeparture
+  to opacity=0
+
+shape UndoViewport
+  prefersReducedMotion: bool
+
 routes nav
   tab threads "/"
   tab threadDetail "/detail"
@@ -452,6 +460,11 @@ shape Reply
   ok: bool
   error: string
 
+shape PinReply
+  ok: bool
+  error: string
+  undo: string
+
 shape TerminalLaunchReply
   ok: bool
   error: string
@@ -652,23 +665,59 @@ component T3Code
   state pinTargetId = ""
   state pinTargetKey = ""
   state pinTargetDesired = false
-  mutation pinChanged as shape Reply then afterPinChange
+  state undoReceipt = ""
+  state undoThreadId = ""
+  state undoAccessKey = ""
+  state undoingPin = false
+  resource undoViewport = exactViewport() as shape UndoViewport
+  mutation snoozeRestored as shape Reply then afterSnoozeRestored
+  action afterSnoozeRestored
+    match snoozeRestored
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not restore snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        undoingPin = false
+  mutation pinChanged as shape PinReply then afterPinChange
+  action dismissPinUndo
+    undoReceipt = ""
+  task pinUndoExpiry when undoReceipt != "" key=undoReceipt
+    after(5000, dismissPinUndo)
+  action restorePin
+    if undoReceipt != "" and not pending(pinChanged)
+      let receipt = undoReceipt
+      haptic("selection")
+      undoingPin = true
+      undoReceipt = ""
+      send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
   action aimPin(id: string, key: string, desired: bool)
     if not pending(pinChanged)
       pinTargetId = id
       pinTargetKey = key
       pinTargetDesired = desired
   action changePin
+    hidePopover("thread-row-menu")
     if not pending(pinChanged) and pinTargetId != "" and pinTargetKey != ""
       haptic("selection")
-      send pinChanged = setThreadPin(pinTargetId, pinTargetKey, pinTargetDesired)
+      undoingPin = false
+      if pinTargetId == undoThreadId or not pinTargetDesired
+        undoReceipt = ""
+      send pinChanged = setThreadPin(pinTargetId, pinTargetKey, pinTargetDesired, "")
   action afterPinChange
     match pinChanged
       case some(reply)
         if not reply.ok
-          taskAlertTitle = pinTargetDesired ? "Could not pin thread" : "Could not unpin thread"
+          taskAlertTitle = undoingPin ? "Could not undo unpin" : pinTargetDesired ? "Could not pin thread" : "Could not unpin thread"
           taskAlertBody = reply.error
           showModal("task-alert")
+        else if undoingPin and reply.undo != ""
+          send snoozeRestored = finishPinUndo(undoThreadId, reply.undo, time.epochAtZero + performanceNow())
+        else if reply.undo != ""
+          undoReceipt = reply.undo
+          undoThreadId = pinTargetId
+          undoAccessKey = pinTargetKey
         pinTargetId = ""
         pinTargetKey = ""
       case none
@@ -1483,6 +1532,18 @@ component T3Code
                           text "Add environment"
                   else
                     ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, aimPin=aimPin, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSnoozed=showSnoozed, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleShelf=toggleShelf, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                  if undoReceipt != "" and visibleTab == "threads"
+                    row role="status" aria-live="polite" swipeleft=dismissPinUndo swiperight=dismissPinUndo testId="unpin-notice" position="absolute" bottom=(device.kind == "web" or device.rail ? 8 : "calc(64px + env(safe-area-inset-bottom))") left=(split ? 20 : 29) right=(split ? 20 : 23) z-index=100 align-items="center" gap=10.5 padding="7px 7px 7px 24.5px" backgroundMaterial="glass" background-color="card" border-radius=28 box-shadow="0 0 8px var(--composer-shadow)"
+                      animation=(undoViewport.prefersReducedMotion ? "none" : "undoArrival 200ms cubic-bezier(0.33,1,0.68,1) both")
+                      -exact-exit-animation=(undoViewport.prefersReducedMotion ? "none" : "undoDeparture 150ms ease-out both")
+                      image "symbol:sf/checkmark.circle" width=20 height=20 color="icon"
+                      text "Unpinned thread" font-size="0.8125rem" font-weight=600 flex=1 min-width=0
+                      if device.kind == "web"
+                        button press=restorePin appearance="none" aria-label="Undo unpin" testId="undo-unpin" min-height=36 padding="0 14px" border-radius=18 background-color="input-fill" color="foreground" font-weight=600
+                          text "Undo"
+                      else
+                        button press=restorePin buttonStyle="bordered" aria-label="Undo unpin" testId="undo-unpin" min-height=36 padding="0 14px"
+                          text "Undo"
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header

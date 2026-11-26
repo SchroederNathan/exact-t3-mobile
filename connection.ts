@@ -939,6 +939,8 @@ export class DirectSession {
   >();
   private forceStops = new Map<string, { accessKey: string }>();
   private pinWrites = new Set<string>();
+  private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
+  private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
   private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
@@ -1772,6 +1774,8 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.pinUndo = undefined;
+    this.snoozeRestore = undefined;
     this.controlEpoch++;
     this.controlGrant = false;
     this.clearToolPanels();
@@ -2972,21 +2976,44 @@ export class DirectSession {
     return [...this.shells.values()].flatMap(row => row.pinnedAt != null && typeof row.pinOrderKey === "string" ? [row.pinOrderKey] : []);
   }
 
-  async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string): Promise<void> {
+  async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string, receipt = ""): Promise<string> {
     if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady)
       throw new Error("Reconnect before changing pinned threads.");
     if (!controlAccess(auth)) throw new Error("This connection does not have permission to change pinned threads.");
     const row = this.shells.get(id);
     if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
-    if ((row.pinnedAt != null) === pin) return;
+    const restore = receipt ? this.pinUndo : undefined;
+    if (receipt && (!pin || !restore || restore.receipt !== receipt || restore.id !== id || restore.key !== key))
+      throw new Error("This undo is no longer available.");
     const operation = JSON.stringify([key, id]);
     if (this.pinWrites.has(operation)) throw new Error("A pin change is already pending for this thread.");
+    if (!pin || receipt || this.pinUndo?.id === id) this.pinUndo = undefined;
+    if ((row.pinnedAt != null) === pin) return "";
+    const prior = pin ? undefined : { receipt: crypto.randomUUID(), id, key, orderKey: string(row.pinOrderKey), snoozedUntil: string(row.snoozedUntil) };
     this.pinWrites.add(operation);
     try {
-      await this.query("orchestration.dispatchCommand", { type: pin ? "thread.pin" : "thread.unpin", commandId: crypto.randomUUID(), threadId: id, ...(pin && orderKey ? { orderKey } : {}) });
+      const placement = restore?.orderKey || orderKey;
+      await this.query("orchestration.dispatchCommand", { type: pin ? "thread.pin" : "thread.unpin", commandId: crypto.randomUUID(), threadId: id, ...(pin && placement ? { orderKey: placement } : {}) });
+      if (key !== this.controlAccessKey()) throw new Error("The connection changed. Check the thread before trying again.");
+      if (prior) this.pinUndo = prior;
+      if (restore && restore.snoozedUntil) {
+        this.snoozeRestore = restore;
+        return restore.receipt;
+      }
+      return prior?.receipt ?? "";
     } finally {
       this.pinWrites.delete(operation);
     }
+  }
+
+  async finishPinUndo(id: string, receipt: string, now: number): Promise<void> {
+    const restore = this.snoozeRestore;
+    if (!restore || restore.receipt !== receipt || restore.id !== id || restore.key !== this.controlAccessKey()) throw new Error("This undo is no longer available.");
+    this.snoozeRestore = undefined;
+    if (timestamp(restore.snoozedUntil) <= now) return;
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row) || !this.shellLive) throw new Error("The thread changed before its snooze could be restored.");
+    await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId: crypto.randomUUID(), threadId: id, snoozedUntil: restore.snoozedUntil });
   }
 
   async readableComposerEnvironmentIds(): Promise<string[]> {

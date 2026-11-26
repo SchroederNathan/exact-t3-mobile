@@ -1204,7 +1204,16 @@ const sources: Sources = {
     loaded: true,
     items: await loadEnvironments(storage),
   }),
-  setThreadPin: async ([id, key, pin], store, _storage, native) => {
+  finishPinUndo: async ([id, receipt, now], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      await awaitReply(sessionFor(identity.environmentId).finishPinUndo(identity.threadId, receipt, now), native);
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not restore snooze." };
+    }
+  },
+  setThreadPin: async ([id, key, pin, receipt], store, _storage, native) => {
     try {
       const identity = threadIdentity(id);
       const session = sessionFor(identity.environmentId);
@@ -1213,10 +1222,10 @@ const sources: Sources = {
       const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
       if (session !== sessionFor(identity.environmentId)) throw new Error("The connection changed. Try again.");
       const orderKey = pin ? newPinKey(allSessions().flatMap(item => item.pinKeys())) : undefined;
-      await awaitReply(session.setThreadPinned(identity.threadId, key, pin, auth, orderKey), native);
-      return { ok: true, error: "" };
+      const undo = await awaitReply(session.setThreadPinned(identity.threadId, key, pin, auth, orderKey, receipt), native);
+      return { ok: true, error: "", undo };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : "Could not change the thread pin." };
+      return { ok: false, error: error instanceof Error ? error.message : "Could not change the thread pin.", undo: "" };
     }
   },
   loadControlAccess: async ([environmentId, key, _retry, forDraft], store) => {

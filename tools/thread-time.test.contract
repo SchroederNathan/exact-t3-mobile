@@ -81,4 +81,18 @@ test "pin and unpin a list row without opening it or replacing its subscription"
   clock settle
   expect tree missing "pin-fixture:alpha"
   expect state activeThreadId == ""
+  expect tree has "unpin-notice"
+  tap "undo-unpin"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:alpha"
+  expect tree missing "unpin-notice"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree has "unpin-notice"
+  clock +5100
+  expect tree missing "undo-unpin"
+  expect tree missing "pin-fixture:alpha"
   request POST "http://127.0.0.1:0/clock/check"

@@ -68,6 +68,31 @@ test("pin actions require a live row, current connection, and fresh operate scop
   accept(commands()[1]!); await unpin;
 });
 
+test("Undo restores the original pin position before the unexpired snooze, once", async () => {
+  for (const expired of [false, true]) {
+    const {session, updateThread, commands, accept} = settingsSession();
+    const auth = {authenticated:true, scopes:["orchestration:operate"]};
+    const key = session.controlAccessKey(), until = "2026-11-26T17:00:00Z";
+    updateThread({pinnedAt: "2026-11-24", pinOrderKey:"q", snoozedUntil:until});
+    const unpin = session.setThreadPinned("thread", key, false, auth);
+    updateThread({snoozedUntil:until}); accept(commands()[0]!);
+    const receipt = await unpin;
+    await expect(session.setThreadPinned("thread", key, true, auth, "g", "wrong")).rejects.toThrow("no longer available");
+    const restore = session.setThreadPinned("thread", key, true, auth, "g", receipt);
+    expect(commands()[1]!.payload).toMatchObject({type:"thread.pin", orderKey:"q"});
+    expect(commands()).toHaveLength(2);
+    accept(commands()[1]!); expect(await restore).toBe(receipt);
+    const finish = session.finishPinUndo("thread", receipt, Date.parse(until) - (expired ? 0 : 100));
+    if (!expired) {
+      expect(commands()[2]!.payload).toMatchObject({type:"thread.snooze", threadId:"thread", snoozedUntil:until});
+      accept(commands()[2]!);
+    }
+    await finish; expect(commands()).toHaveLength(expired ? 2 : 3);
+    await expect(session.finishPinUndo("thread", receipt, 0)).rejects.toThrow("no longer available");
+    await expect(session.setThreadPinned("thread", key, true, auth, "g", receipt)).rejects.toThrow("no longer available");
+  }
+});
+
 test("usage refresh sends the selected window to its environment", async () => {
   const { session, requests } = settingsSession();
   const window = { resolution: "day" as const, sinceDay: "2026-10-01", untilDay: "2026-10-30", timeZone: "America/Toronto" };
