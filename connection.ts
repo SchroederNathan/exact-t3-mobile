@@ -3703,6 +3703,7 @@ export class DirectSession {
         return {
           id: scopedThreadId(this.environment.id, id),
           listed: listedThread(thread),
+          serverThreadId: id,
           environmentId: this.environment.id,
           project: string(project.title) || "Project",
           projectId: scopedThreadId(this.environment.id, string(thread.projectId)),

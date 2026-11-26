@@ -249,6 +249,7 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  serverThreadId: string
   canRegenerateTitle: bool
   regeneratingTitle: bool
   pinRank: number
@@ -695,6 +696,7 @@ component T3Code
   mutation terminalScriptStarted as shape TerminalLaunchReply then afterTerminalScript
   mutation lifecycleChanged as shape Reply refreshes catalog
   state pinTargetId = ""
+  state copyTargetId = ""
   state pinTargetKey = ""
   state pinTargetDesired = false
   state renameId = ""
@@ -858,11 +860,15 @@ component T3Code
         undoingPin = true
         send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
   action aimPin(id: string, key: string, desired: bool)
+    copyTargetId = id
     if not pending(pinChanged) and not pending(rowSnoozed)
       rowMenuOpened = time.epochAtZero + performanceNow()
       pinTargetId = id
       pinTargetKey = key
       pinTargetDesired = desired
+  action copyRowId(value: string)
+    copyText(value)
+    haptic("impact-light")
   action changePin
     hidePopover("thread-row-menu")
     if not pending(pinChanged) and not pending(rowSnoozed) and pinTargetId != "" and pinTargetKey != ""
@@ -2749,6 +2755,10 @@ component T3Code
           image "symbol:delete"
           text (discardKind == "unsent" ? "Delete" : "Discard")
       column id="thread-row-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Thread actions"
+        for thread in selectedThread(catalog, copyTargetId) key=thread.id
+          button press=copyRowId(thread.serverThreadId) role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" testId="thread-menu-copy-id"
+            image "symbol:sf/doc.on.doc"
+            text "Copy thread ID"
         button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged) or pending(rowSnoozed)) testId="thread-menu-pin"
           image (pinTargetDesired ? "symbol:pin" : "symbol:sf/pin.slash")
           text (pinTargetDesired ? "Pin" : "Unpin")

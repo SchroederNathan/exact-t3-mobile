@@ -1725,6 +1725,7 @@ describe("direct T3 connection", () => {
           stop: { runId: "", state: "", error: "" },
         },
         id: scopedThreadId("env", "t"),
+        serverThreadId: "t",
         listed: true,
         environmentId: "env",
         title: "Fix startup",

@@ -13,6 +13,9 @@ test "rename uses the current row title and only the server updates its label"
   request POST "http://127.0.0.1:0/clock/start"
   tap "thread-fixture:alpha" contextmenu
   clock data
+  tap "thread-menu-copy-id"
+  expect state activeThreadId == ""
+  tap "thread-fixture:alpha" contextmenu
   tap "thread-menu-rename"
   expect state renameDraft == "Alpha thread"
   type "rename-title" "  Corrected title  "
