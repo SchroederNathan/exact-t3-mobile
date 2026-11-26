@@ -2558,7 +2558,14 @@ component T3Code
           image "symbol:sf/text.bubble"
           text "Thread"
         button role="tab" appearance="none" aria-controls="panel-pullRequests" aria-selected=(nav.tab == "pullRequests") press=selectTab("pullRequests") testId="tab-pullRequests" flex=1 display="flex" flex-direction="column" justify-content="center" align-items="center" padding="0 8px" gap=3 border="none" background-color="transparent" color=(nav.tab == "pullRequests" ? "AccentColor" : "muted") font-size=12 font-weight=500
-          image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(nav.tab == "pullRequests" ? "AccentColor" : "muted")
+          if device.kind == "web"
+            svg viewBox="0 0 24 24" width=20 height=20 fill="none" stroke=(nav.tab == "pullRequests" ? "AccentColor" : "muted") stroke-width=2 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
+              path d="M6 8v8 M18 16V9a3 3 0 0 0-3-3h-4 M14 3l-3 3 3 3"
+              circle cx=6 cy=6 r=2
+              circle cx=6 cy=18 r=2
+              circle cx=18 cy=18 r=2
+          else
+            image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(nav.tab == "pullRequests" ? "AccentColor" : "muted")
           text "PRs"
         button role="tab" aria-controls="panel-usage" aria-selected=(nav.tab == "usage") press=selectTab("usage") testId="tab-usage" flex=1
           image (device.kind == "web" ? "symbol:chart" : "symbol:sf/chart.bar.xaxis")
