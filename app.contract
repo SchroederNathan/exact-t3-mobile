@@ -48,6 +48,7 @@ routes nav
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
+    keyboardSettings "/settings/keyboard"
     environments "/environments"
       addEnvironment "/environments/new"
       environmentDetail "/environments/:id"
@@ -511,6 +512,7 @@ component T3Code
   state reviewRetry = 0
   state terminalClock = 0
   state terminalFontSize = 10.5 persist
+  state composerReturnBehavior = "send" persist
   state terminalModifier = ""
   state terminalKeyboardVisible = false
   resource turnReview = loadTurnReview(threadRoute.name == "turnReview" ? activeThreadId : "", threadRoute.name == "turnReview" ? threadRoute.params.turn : "0", reviewRetry) as shape TurnReview else empty()
@@ -1021,6 +1023,20 @@ component T3Code
     usageDays = days
     usageRefresh = 0
 
+  action openKeyboardSettings
+    nav = push(split ? settingsNav : nav, "/settings/keyboard")
+
+  action selectReturnBehavior(value: string)
+    composerReturnBehavior = value
+
+  action composerReturnKey(key: string, e: KeyboardEvent)
+    if key == "Enter" and e.code != "" and not e.isComposing and not e.altKey
+      let modified = e.metaKey or e.ctrlKey
+      if (composerReturnBehavior == "send" and not e.shiftKey) or (composerReturnBehavior == "newline" and modified)
+        preventDefault()
+        if not e.repeat
+          sendMessage(composerReturnBehavior == "send" ? modified : e.shiftKey)
+
   action manageEnvironment(id: string)
     expandedEnvironment = ""
     nav = push(split ? settingsNav : nav, path("environmentDetail", id))
@@ -1388,6 +1404,24 @@ component T3Code
                     text "Settings" role="heading" aria-level=2
                   button press=openEnvironments testId="detail-environments" aria-label="Environments"
                     text "Environments"
+              if e.name == "keyboardSettings"
+                column navigationKey=`${e.id}` navigationScroll=`keyboard-${e.id}` data-workspace-header=(split ? "editor" : "page") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Keyboard" role="heading" aria-level=2
+                  list id=`keyboard-${e.id}` appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                    section role="radiogroup" aria-label="Return key"
+                      header
+                        text "Return key"
+                      for choice in ["send", "newline"] key=choice
+                        button press=selectReturnBehavior(choice) role="radio" aria-checked=(composerReturnBehavior == choice) testId=`keyboard-${choice}`
+                          column flex=1 min-width=0 gap=3
+                            text (choice == "send" ? "Send message" : "Insert new line") font="-exact-body"
+                            text (choice == "send" ? "Return sends the message. Shift-Return inserts a new line." : "Return inserts a new line. Command-Return sends the message.") font="-exact-footnote" color="muted"
+                          view width=24 height=24 align-items="center" justify-content="center" aria-hidden="true"
+                            if composerReturnBehavior == choice
+                              image "symbol:checkmark" width=18 height=18 color="AccentColor"
+                      footer
+                        text "Applies to the composer when a hardware keyboard is connected."
               if e.name == "environments"
                 column navigationKey=`${e.id}` navigationScroll=`environments-${e.id}` data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1703,9 +1737,9 @@ component T3Code
                                 button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
                                   image "symbol:sf/plus" width=20 height=20
                                 if device.kind != "web"
-                                  workspace-composer-editor id="composer" document-key=composerEditingDraftId document-revision=`${composerSession.nativeRevision}` text=composer tokens=composerDocument.tokens context-json=activeDraft.context context-environment=composerEnvironmentId placeholder-text=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) editable=(draftsReady ? "true" : "false") selection-start=`${composerSession.cursor}` selection-end=`${composerSession.selectionEnd}` selection-revision=`${composerSession.selectionSerial}` focus-request=`${composerSession.focusSerial}` message=nativeComposerEvent order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") min-height=36 max-height=104 aria-label="Message" testId="composer"
+                                  workspace-composer-editor id="composer" enter-behavior=composerReturnBehavior document-key=composerEditingDraftId document-revision=`${composerSession.nativeRevision}` text=composer tokens=composerDocument.tokens context-json=activeDraft.context context-environment=composerEnvironmentId placeholder-text=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) editable=(draftsReady ? "true" : "false") selection-start=`${composerSession.cursor}` selection-end=`${composerSession.selectionEnd}` selection-revision=`${composerSession.selectionSerial}` focus-request=`${composerSession.focusSerial}` message=nativeComposerEvent order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") min-height=36 max-height=104 aria-label="Message" testId="composer"
                                 else
-                                  textarea id="composer" disabled=not draftsReady value=composer input=inputComposer selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                                  textarea id="composer" disabled=not draftsReady value=composer input=inputComposer key=composerReturnKey selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
                                     ::placeholder
                                       color="muted"
                                 if not composerFocus and composerAttachments.length > 0
@@ -2291,6 +2325,9 @@ component T3Code
                         text "Exact iOS" font="-exact-footnote" color="-exact-secondary-label"
                       button press=openEnvironments testId="environments-button" aria-label="Environments"
                         text "Environments"
+                        image "symbol:forward-chevron"
+                      button press=openKeyboardSettings testId="keyboard-button" aria-label="Keyboard"
+                        text "Keyboard"
                         image "symbol:forward-chevron"
       if device.kind == "web" or device.kind == ""
         column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
