@@ -2354,8 +2354,8 @@ component T3Code
           image "symbol:sf/ellipsis"
           text "More"
           text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details")
-      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail ? "flex" : "none")
-      row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail ? "flex" : "none")
+      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail and device.kind != "web" ? "flex" : "none")
+      row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail or (atRoot and device.kind == "web") ? "flex" : "none")
         button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
           image "symbol:sf/text.bubble"
           text "Chats"

@@ -4,6 +4,18 @@ test "usage without an environment does not report measured activity"
   clock settle
   expect text "usage-status" == "Connect an environment to see usage."
 
+test "a web visitor can switch workspace tabs without editing the address" on web
+  clock data
+  tap "tab-usage"
+  clock settle
+  expect state current.name == "usage"
+  tap "tab-settings"
+  clock settle
+  expect state current.name == "settings"
+  tap "tab-threads"
+  clock settle
+  expect state current.name == "threads"
+
 test "fresh install has no fabricated environments or threads"
   clock data
   expect state catalog.environments == []
