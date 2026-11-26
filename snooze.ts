@@ -6,6 +6,25 @@ const defaults = [60, 180].map(minutes => ({ kind: "after", minutes }) as Record
 
 export interface SnoozeChoice { id: string; label: string; detail: string; wake: number; minutes: number }
 
+export function localSnoozeField(epoch: number): string {
+  const date = new Date(epoch);
+  const digits = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${digits(date.getMonth() + 1)}-${digits(date.getDate())}T${digits(date.getHours())}:${digits(date.getMinutes())}`;
+}
+
+export function customSnoozeDeadline(mode: string, field: string, amount: string, unit: string, now: number): number {
+  let wake: number;
+  if (mode === "date") {
+    if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(field)) return 0;
+    wake = new Date(field).getTime();
+    if (localSnoozeField(wake) !== field) return 0;
+  } else if (mode === "duration") {
+    const multiplier = unit === "minutes" ? minute : unit === "hours" ? 60 * minute : unit === "days" ? 1440 * minute : 0;
+    wake = new Date(now + Number(amount) * multiplier).getTime();
+  } else return 0;
+  return wake > now ? wake : 0;
+}
+
 export function snoozeChoices(settings: unknown, now: number): SnoozeChoice[] {
   const start = new Date(now), results = new Map<number, SnoozeChoice>();
   const clock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });

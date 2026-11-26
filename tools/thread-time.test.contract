@@ -1,6 +1,39 @@
 epoch "2026-11-10T12:59:00Z"
 time-zone "UTC"
 
+test "custom snooze keeps invalid input open, then accepts a duration without opening a conversation"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-snooze"
+  tap "snooze-custom"
+  clock data
+  tap "custom-duration-mode"
+  type "custom-amount" "0"
+  tap "custom-submit"
+  clock data
+  expect text "custom-error" == "Enter a positive duration."
+  type "custom-amount" "1.5"
+  tap "custom-submit"
+  clock data
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  tap "snoozed-threads"
+  expect text "wake-fixture:alpha" == "2h"
+  expect state activeThreadId == ""
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-wake"
+  clock data
+  clock settle
+
 test "configured snooze starts on selection and wake returns the conversation without navigating"
   clock data
   tap "empty-add-environment"

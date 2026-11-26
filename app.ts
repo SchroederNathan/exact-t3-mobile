@@ -1,6 +1,7 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
+import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
@@ -1228,6 +1229,16 @@ const sources: Sources = {
       const identity = threadIdentity(id);
       return sessionFor(identity.environmentId).snoozeMenu(identity.threadId, key, opened);
     } catch { return { available: false, sleeping: false, choices: [] }; }
+  },
+  customSnoozeStart: ([opened]) => ({ field: localSnoozeField(opened + 3_600_000), amounts: Array.from({ length: 99 }, (_, index) => String(index + 1)) }),
+  setCustomSnooze: async ([id, key, mode, field, amount, unit, now], store, _storage, native) => {
+    const wake = customSnoozeDeadline(mode, field, amount, unit, now);
+    if (!wake) return { ok: false, error: mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration." };
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      await awaitReply(session.changeSnooze(threadId, key, "custom", now, now, auth, wake), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not snooze thread." }; }
   },
   setRowSnooze: async ([id, key, choice, opened, now], store, _storage, native) => {
     try {

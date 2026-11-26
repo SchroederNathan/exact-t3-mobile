@@ -477,6 +477,10 @@ shape RowSnoozeMenu
   sleeping: bool
   choices: SnoozeChoice[]
 
+shape CustomSnoozeStart
+  field: string
+  amounts: string[]
+
 shape TerminalLaunchReply
   ok: bool
   error: string
@@ -678,6 +682,54 @@ component T3Code
   state pinTargetKey = ""
   state pinTargetDesired = false
   state rowMenuOpened = 0
+  state customThread = ""
+  state customKey = ""
+  state customOpened = 0
+  state customMode = "date"
+  state customField = ""
+  state customEdited = false
+  state customAmount = "2"
+  state customUnit = "hours"
+  state customError = ""
+  resource customStart = customSnoozeStart(customOpened) as shape CustomSnoozeStart else empty()
+  mutation customSubmitted as shape Reply then afterCustomSnooze
+  action beginCustomSnooze
+    customThread = pinTargetId
+    customKey = pinTargetKey
+    customOpened = time.epochAtZero + performanceNow()
+    customMode = "date"
+    customEdited = false
+    customAmount = "2"
+    customUnit = "hours"
+    customError = ""
+  action editCustomMode(value: string)
+    customMode = value
+    customError = ""
+  action editCustomField(value: string)
+    customEdited = true
+    customField = value
+    customError = ""
+  action editCustomAmount(value: string)
+    customAmount = value
+    customError = ""
+  action editCustomUnit(value: string)
+    customUnit = value
+    customError = ""
+  action submitCustomSnooze
+    if customKey != "" and not pending(customSubmitted)
+      send customSubmitted = setCustomSnooze(customThread, customKey, customMode, customEdited ? customField : customStart.field, customAmount, customUnit, time.epochAtZero + performanceNow())
+  action afterCustomSnooze
+    match customSubmitted
+      case some(reply)
+        customError = reply.error
+        if reply.ok
+          haptic("selection")
+          hidePopover("custom-snooze")
+          hidePopover("row-snooze-menu")
+          hidePopover("thread-row-menu")
+          customKey = ""
+      case none
+        customError = ""
   resource rowSnooze = loadRowSnooze(pinTargetId, pinTargetKey, rowMenuOpened) as shape RowSnoozeMenu else empty()
   mutation rowSnoozed as shape Reply then afterRowSnooze
   action submitRowSnooze(choice: string)
@@ -2612,6 +2664,42 @@ component T3Code
           button role="menuitem" press=submitRowSnooze(choice.id) disabled=pending(rowSnoozed) testId=`snooze-${choice.id}`
             text choice.label
             text choice.detail
+        button role="menuitem" popovertarget="custom-snooze" press=beginCustomSnooze disabled=pending(customSubmitted) testId="snooze-custom"
+          text "Custom…"
+      column id="custom-snooze" popover="auto" role="dialog" aria-label="Custom snooze" position-area="none" inset=0 margin="auto" width="min(360px, calc(100vw - 32px))" height=(customError == "" ? 324 : 364) max-height="calc(100dvh - 96px)" overflow-y="auto" box-sizing="border-box" padding=16 gap=16
+        row align-items="center" gap=8
+          button popovertarget="custom-snooze" popovertargetaction="hide" aria-label="Cancel custom snooze" min-height=44 testId="custom-cancel"
+            text "Cancel"
+          text "Custom snooze" role="heading" flex=1 text-align="center" font-size=16 line-height="20px" font-weight=600
+          button press=submitCustomSnooze disabled=pending(customSubmitted) min-height=44 testId="custom-submit"
+            text "Snooze"
+        if device.kind == "web"
+          row role="radiogroup" aria-label="Snooze mode" padding=2 border-radius=8 background-color="input-fill"
+            for mode in ["date", "duration"] key=mode
+              button role="radio" aria-checked=(customMode == mode) press=editCustomMode(mode) testId=`custom-${mode}-mode` appearance="none" flex=1 min-height=30 border-radius=6 background-color=(customMode == mode ? "card" : "transparent") font-size=14 font-weight=500
+                text (mode == "date" ? "Date and time" : "Duration")
+        else
+          row role="radiogroup" aria-label="Snooze mode"
+            for mode in ["date", "duration"] key=mode
+              button role="radio" aria-checked=(customMode == mode) press=editCustomMode(mode) testId=`custom-${mode}-mode` flex=1
+                text (mode == "date" ? "Date and time" : "Duration")
+        column justify-content="center" min-height=180
+          if customMode == "date"
+            input type="datetime-local" value=(customEdited ? customField : customStart.field) change=editCustomField aria-label="Snooze until" testId="custom-date" width="100%" box-sizing="border-box"
+          else
+            row align-items="center" gap=8
+              if device.kind == "web"
+                input type="number" value=customAmount input=editCustomAmount step="any" aria-label="Duration amount" testId="custom-amount" flex=1 min-width=0
+              else
+                select value=customAmount change=editCustomAmount aria-label="Duration amount" testId="custom-amount" flex=1 min-width=0
+                  for amount in customStart.amounts key=amount
+                    option amount value=amount
+              select value=customUnit change=editCustomUnit aria-label="Duration unit" testId="custom-unit" flex=1 min-width=0
+                option "Minutes" value="minutes"
+                option "Hours" value="hours"
+                option "Days" value="days"
+        if customError != ""
+          text customError role="alert" testId="custom-error"
       dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
         text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
         button commandfor="discard-draft" command="close" testId="discard-draft-cancel"

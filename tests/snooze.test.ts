@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
-import { canDeferThread, snoozeChoices, snoozeDeadline } from "../snooze";
+import { canDeferThread, customSnoozeDeadline, localSnoozeField, snoozeChoices, snoozeDeadline } from "../snooze";
+
+test("a custom snooze accepts only real future local minutes or a positive elapsed duration", () => {
+  const now = new Date(2027, 2, 13, 12).getTime();
+  expect(localSnoozeField(now)).toBe("2027-03-13T12:00");
+  expect(customSnoozeDeadline("date", "2027-03-14T12:00", "", "", now)).toBe(new Date(2027, 2, 14, 12).getTime());
+  for (const field of ["2027-03-13T12:00", "2027-04-31T12:00", "2027-03-14T24:00", ""]) expect(customSnoozeDeadline("date", field, "", "", now)).toBe(0);
+  if (new Date(2027, 2, 14, 2, 30).getHours() !== 2) expect(customSnoozeDeadline("date", "2027-03-14T02:30", "", "", now)).toBe(0);
+  expect(customSnoozeDeadline("duration", "", "1.5", "hours", now)).toBe(now + 90 * 60_000);
+  expect(customSnoozeDeadline("duration", "", "1", "days", now)).toBe(now + 86_400_000);
+  for (const invalid of ["", "0", "-1", "1e300", "abc"]) expect(customSnoozeDeadline("duration", "", invalid, "hours", now)).toBe(0);
+});
 
 test("calendar choices are sorted and minute collisions retain configuration order", () => {
   const sunday = new Date(2026, 10, 29, 17, 0, 35).getTime();

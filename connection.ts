@@ -2986,7 +2986,7 @@ export class DirectSession {
     return { available, sleeping, choices: available && !sleeping ? snoozeChoices(object(this.config.settings).snoozePresets, now) : [] };
   }
 
-  async changeSnooze(id: string, key: string, choiceId: string, opened: number, now: number, auth: unknown) {
+  async changeSnooze(id: string, key: string, choiceId: string, opened: number, now: number, auth: unknown, customWake = 0) {
     if (!controlAccess(auth)) throw new Error("This connection does not have permission to change thread snoozes.");
     const menu = this.snoozeMenu(id, key, now);
     if (!menu.available || menu.sleeping !== (choiceId === "wake")) throw new Error("This thread action is no longer available.");
@@ -2995,8 +2995,8 @@ export class DirectSession {
       await this.query("orchestration.dispatchCommand", { type: "thread.unsnooze", commandId, threadId: id, reason: "user" });
     } else {
       const choices = snoozeChoices(object(this.config.settings).snoozePresets, opened);
-      const wake = snoozeDeadline(choices.find(choice => choice.id === choiceId), now);
-      if (!wake) throw new Error("Choose a future snooze time.");
+      const wake = choiceId === "custom" ? customWake : snoozeDeadline(choices.find(choice => choice.id === choiceId), now);
+      if (!(wake > now) || !Number.isFinite(new Date(wake).getTime())) throw new Error("Choose a future snooze time.");
       await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId, threadId: id, snoozedUntil: new Date(wake).toISOString() });
     }
   }
