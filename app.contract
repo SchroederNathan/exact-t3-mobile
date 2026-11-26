@@ -548,7 +548,8 @@ component T3Code
   resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
   state usageDays = 30
   state usageRefresh = 0
-  resource usageReport = loadUsage(current.name == "usage" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + performanceNow() as shape UsageRow[] else empty()
+  state usageWindowTime = 0
+  resource usageReport = loadUsage(current.name == "usage" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
   state gitConfirmAction = ""
@@ -985,6 +986,8 @@ component T3Code
         nav = nav
 
   action selectTab(name: string)
+    if name == "usage"
+      usageWindowTime = performanceNow()
     cancelForkNavigation()
     clearForceStopDialogs()
     nav = select(nav, split and name == "threads" ? "threadDetail" : split and name == "settings" ? "settingsDetail" : name)
@@ -1010,9 +1013,11 @@ component T3Code
     nav = go(split ? select(settingsNav, "settingsDetail") : nav, "/environments")
 
   action refreshUsage
+    usageWindowTime = performanceNow()
     usageRefresh = usageRefresh + 1
 
   action selectUsageDays(days: number)
+    usageWindowTime = performanceNow()
     usageDays = days
     usageRefresh = 0
 
