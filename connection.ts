@@ -578,6 +578,28 @@ function activity(thread: ObjectValue, settled: boolean): number {
   );
 }
 
+function threadSearchFields(thread: ObjectValue) {
+  const terms = [string(thread.branch).toLowerCase()].filter(Boolean);
+  const references = new Set<string>();
+  const links = records(thread.pullRequests);
+  const visible = links.filter(link => link.source !== "stack-dismissed");
+  const changedAt = (link: ObjectValue) => timestamp(object(link.snapshot).updatedAt) || timestamp(link.linkedAt);
+  for (const link of visible.sort((left, right) => changedAt(right) - changedAt(left)).slice(0, 3)) {
+    const title = string(object(link.snapshot).title).trim().toLowerCase();
+    if (title) terms.push(title);
+  }
+  for (const link of [...visible, object(thread.branchPullRequest), ...(links.length ? [] : [object(thread.linkedPullRequest)])]) {
+    if (typeof link.number !== "number" || !Number.isSafeInteger(link.number) || link.number < 1) continue;
+    references.add(`#${link.number}`);
+    references.add(String(link.number));
+    const repository = string(link.repository).trim().toLowerCase();
+    const url = string(link.url).trim().toLowerCase();
+    if (repository) references.add(`${repository}#${link.number}`);
+    if (url) references.add(url);
+  }
+  return { searchTerms: terms, searchReferences: [...references] };
+}
+
 function relativeTime(at: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - at) / 1000));
   if (!at || seconds < 60) return "<1m";
@@ -1004,8 +1026,7 @@ export class DirectSession {
     const words = query.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").split(/\s+/);
     if (!words.some(word => Array.from(word).length >= 3 || (Array.from(word).length === 2 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(word)))) return [];
     const result = await this.query("orchestration.searchThreads", {
-      query, limit: 50, environmentLabel: this.environment.label,
-      ...(projectId ? { projectIds: [projectId] } : {}),
+      query, limit: 50,
     });
     const seen = new Set<string>();
     return records(result.matches).slice(0, 50).flatMap(match => {
@@ -3530,6 +3551,7 @@ export class DirectSession {
           environmentId: this.environment.id,
           project: string(project.title) || "Project",
           projectId: scopedThreadId(this.environment.id, string(thread.projectId)),
+          ...threadSearchFields(thread),
           ...projectIcon(project),
           ...(!project.projectIcon && this.favicons.get(string(thread.projectId))?.url
             ? { projectIcon: this.favicons.get(string(thread.projectId))!.url }

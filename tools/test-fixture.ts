@@ -19,6 +19,7 @@ const controlsMode = process.argv.includes("--controls");
 const composerMode = process.argv.includes("--composer");
 const usageMode = process.argv.includes("--usage");
 const threadTimeMode = process.argv.includes("--thread-time");
+const threadSearchMode = process.argv.includes("--thread-search");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
@@ -33,6 +34,7 @@ for (let index = 2; index < process.argv.length; index++) {
       "--composer",
       "--usage",
       "--thread-time",
+      "--thread-search",
       "--attachments",
       "--third-environment",
     ].includes(argument)
@@ -277,6 +279,13 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       runtimeMode: "full-access",
       updatedAt: timestamp,
       latestUserMessageAt: timestamp,
+      ...(threadSearchMode && id === "alpha" ? {
+        branch: "release/subscription-clock",
+        pullRequests: [
+          { repository: "fixture/ui", number: 72, url: "https://example.test/fixture/ui/pull/72", source: "manual", snapshot: { title: "Restore keyboard focus" } },
+          { repository: "fixture/ui", number: 81, url: "https://example.test/fixture/ui/pull/81", source: "stack-dismissed" },
+        ],
+      } : {}),
       ...(threadTimeMode && id === "beta" ? { settledOverride: "settled", settledAt: "2026-11-09T13:00:00Z" } : {}),
       modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
     }))
@@ -595,7 +604,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, threadSearchMode ? "thread-search.test.contract" : threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

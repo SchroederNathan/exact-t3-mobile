@@ -228,6 +228,8 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  searchTerms: string[]
+  searchReferences: string[]
   listed: bool
   visit: VisitMetadata
   history: ThreadHistory
@@ -479,7 +481,8 @@ fn toolChild(tool: ToolSummary): ToolChild = ToolChild(id=tool.id, category=tool
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadEnvironment(threads: Thread[]): string = match first(threads) { case some(thread) => thread.environmentId, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
-fn filteredThreads(threads: Thread[], environmentId: string, query: string, hits: SearchHit[]): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or hits.filter(hit => hit.id == thread.id).length > 0 or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn threadMatches(thread: Thread, query: string, hits: SearchHit[]): bool = query == "" or thread.title.toLowerCase().includes(query) or thread.project.toLowerCase().includes(query) or thread.searchReferences.includes(query) or thread.searchTerms.filter(term => term.includes(query)).length > 0 or hits.filter(hit => hit.id == thread.id).length > 0
+fn filteredThreads(threads: Thread[], environmentId: string, query: string, hits: SearchHit[]): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and threadMatches(thread, query, hits))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
@@ -682,7 +685,7 @@ component T3Code
   derive searchHosts = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and searchText.length >= 2 and searchText == messageQuery ? catalog.environments.filter(host => host.enabled and host.status == "Connected" and (selectedEnvironment == "" or host.id == selectedEnvironment) and (selectedProject == "" or catalog.projects.filter(project => project.id == selectedProject and project.environmentId == host.id).length > 0)).map(host => host.id) : []
   resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
-  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query, searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId))).length > 0
   task startThreadListClock when agesVisible key=agesVisible
     change(sampleThreadListClock)

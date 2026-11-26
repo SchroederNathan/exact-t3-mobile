@@ -32,7 +32,7 @@ test("usage refresh sends the selected window to its environment", async () => {
   expect((await result).tokens).toBe(0);
 });
 
-test("message search uses the raw project id and scopes each excerpt to a live shell", async () => {
+test("message search uses the base wire contract and scopes each excerpt to a live project shell", async () => {
   const { session, requests } = settingsSession();
   const before = requests.length;
   expect(await session.searchThreadMessages("a to", "project")).toEqual([]);
@@ -41,12 +41,29 @@ test("message search uses the raw project id and scopes each excerpt to a live s
   const pending = session.searchThreadMessages(`  ${query}  `, "project");
   const request = requests.at(-1)!;
   expect(request.tag).toBe("orchestration.searchThreads");
-  expect(request.payload).toEqual({query: query.slice(0, 200), limit: 50, projectIds: ["project"], environmentLabel: "Mac"});
+  expect(request.payload).toEqual({ query: query.slice(0, 200), limit: 50 });
   const match = { threadId: "thread", projectId: "project", source: "user", snippet: "needle" };
   session.receive(JSON.stringify({_tag: "Exit", requestId: request.id, exit: {_tag: "Success", value: {matches: [
     {...match, threadId: "absent"}, {...match, projectId: "wrong"}, {...match, source: "tool"}, match, match,
   ]}}}));
   expect(await pending).toEqual([{id: "env:thread", source: "user", snippet: "needle"}]);
+});
+
+test("thread search keeps older PR references but excludes dismissed links and stale titles", () => {
+  const { session, updateThread } = settingsSession();
+  const link = (number: number) => ({ repository: "Fixture/UI", number, linkedAt: `2026-11-0${number}T10:00:00Z`, snapshot: { title: `Title ${number}` } });
+  updateThread({
+    branch: "Design/Keyboard", linkedPullRequest: link(6), branchPullRequest: link(7),
+    pullRequests: [...[1, 3, 2, 4].map(link), { ...link(5), source: "stack-dismissed" }],
+  });
+  const row = session.threads()[0]!;
+  expect(row.searchTerms).toEqual(["design/keyboard", "title 4", "title 3", "title 2"]);
+  expect(row.searchReferences).toContain("fixture/ui#1");
+  expect(row.searchReferences).toContain("#7");
+  expect(row.searchReferences).not.toContain("#5");
+  expect(row.searchReferences).not.toContain("#6");
+  updateThread({ linkedPullRequest: link(6) });
+  expect(session.threads()[0]!.searchReferences).toContain("#6");
 });
 
 function settingsSession(initializeShell = true) {
@@ -1585,6 +1602,8 @@ describe("direct T3 connection", () => {
         updatedAt: "1m",
         lastError: "",
         lastErrorTime: expect.any(String),
+        searchReferences: [],
+        searchTerms: [],
         rows: [],
         toolViewKey: expect.any(String),
         markdownRevision: 0,
