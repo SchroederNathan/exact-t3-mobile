@@ -535,6 +535,19 @@ const addProject = addProjectSources({
 });
 
 const sources: Sources = {
+  searchMessages: async ([environmentId, query, project], _store, _storage, native) => {
+    const reply = { query, hits: [], unavailable: false };
+    try {
+      const scope = project ? threadIdentity(project) : null;
+      if (scope && scope.environmentId !== environmentId) return reply;
+      const session = sessionFor(environmentId);
+      const key = session.controlAccessKey();
+      const hits = await awaitReply(session.searchThreadMessages(query, scope?.threadId ?? ""), native);
+      return session === sessionFor(environmentId) && key === session.controlAccessKey() ? { ...reply, hits } : reply;
+    } catch {
+      return { ...reply, unavailable: true };
+    }
+  },
   ...composerSources({sessionFor, sessions: allSessions, composerSettings, awaitReply}),
   ...composerImportSources({ sessionFor, awaitReply, readableEnvironmentIds: (environmentId) => sessionFor(environmentId).readableComposerEnvironmentIds() }),
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),

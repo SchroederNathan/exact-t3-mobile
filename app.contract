@@ -123,6 +123,16 @@ shape Environment
   enabled: bool
   machineSymbol: string
 
+shape SearchHit
+  id: string
+  snippet: string
+  source: string
+
+shape SearchReply
+  query: string
+  hits: SearchHit[]
+  unavailable: bool
+
 shape EnvironmentState
   loaded: bool
   items: Environment[]
@@ -449,7 +459,7 @@ fn toolChild(tool: ToolSummary): ToolChild = ToolChild(id=tool.id, category=tool
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadEnvironment(threads: Thread[]): string = match first(threads) { case some(thread) => thread.environmentId, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
-fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn filteredThreads(threads: Thread[], environmentId: string, query: string, hits: SearchHit[]): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or hits.filter(hit => hit.id == thread.id).length > 0 or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
@@ -492,6 +502,7 @@ component T3Code
   state showLegacyModels = false
   state settingsThreadId = ""
   state query = ""
+  state messageQuery = ""
   state sidebarHidden = false
   state selectedEnvironment = ""
   state selectedProject = ""
@@ -644,7 +655,13 @@ component T3Code
   derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
-  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive searchText = query.trim().slice(0, 200).trim()
+  derive searchHosts = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and searchText.length >= 2 and searchText == messageQuery ? catalog.environments.filter(host => host.enabled and host.status == "Connected" and (selectedEnvironment == "" or host.id == selectedEnvironment) and (selectedProject == "" or catalog.projects.filter(project => project.id == selectedProject and project.environmentId == host.id).length > 0)).map(host => host.id) : []
+  resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
+  derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
+  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query, searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  task debounceThreadSearch when searchText != messageQuery key=searchText
+    after(120, startMessageSearch)
   derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = activeDraft.text
@@ -996,6 +1013,9 @@ component T3Code
 
   action search(value: string)
     query = value
+
+  action startMessageSearch
+    messageQuery = searchText
 
   action toggleSidebar
     sidebarHidden = not sidebarHidden
@@ -1384,7 +1404,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2470,6 +2490,9 @@ component ThreadList
     discardDraft: action
     aimDraft: action
     visibleThreads: Thread[]
+    searchHits: SearchHit[]
+    searchPending: bool
+    searchIncomplete: bool
     selectedEnvironment: string
     selectedProject: string
     selectedProjectLabel: string
@@ -2518,7 +2541,11 @@ component ThreadList
             row press=openDraft(draft.key, draft.kind, draft.threadId) swipeleft=discardDraft(draft.key, draft.kind) contextmenu=aimDraft(draft.key, draft.kind) contextPopover="draft-menu" role="button" width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) aria-label=draft.title testId=`home-draft-${draft.key}`
               HomeDraftRowContent(draft=draft, sidebar=sidebar, showEnvironment=(catalog.environments.length > 1), last=(index == drafts.length - 1))
       section
-        if visibleThreads.length == 0 and drafts.length == 0
+        if searching and searchIncomplete
+          text "Some environments could not search messages." font="-exact-footnote" color="muted" text-align="center"
+        if searching and searchPending and visibleThreads.length == 0 and drafts.length == 0
+          text "Searching thread messages…" font="-exact-body" color="muted" text-align="center"
+        else if visibleThreads.length == 0 and drafts.length == 0
           column align-items="center" padding="28px 21px" gap=7
             text (searching ? (sidebar ? "No matching threads" : "No results") : selectedProject != "" ? `No threads in ${selectedProjectLabel}` : selectedEnvironment != "" ? `No threads in ${environmentLabel(catalog, selectedEnvironment)}` : "No threads yet") font="-exact-title3" font-weight=700 text-align="center" testId="empty-title"
             if not sidebar
@@ -2547,7 +2574,9 @@ component ThreadList
                   else
                     text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
                 row align-items="center" gap=7 min-height=14 padding-left=28
-                  if thread.lastError != ""
+                  if searchHits.filter(hit => hit.id == thread.id).length > 0
+                    SearchExcerpt(hits=searchHits, id=thread.id)
+                  else if thread.lastError != ""
                     text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
                   else if catalog.environments.length > 1
                     image "symbol:sf/laptopcomputer" font-size=12 color="muted"
@@ -2573,8 +2602,21 @@ component ThreadList
                   image thread.projectIcon width=20 height=20 border-radius=4 opacity=0.4
                 else
                   text thread.projectInitials width=20 height=20 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center" opacity=0.4
-                text thread.title font-size=16 line-height="23px" font-weight=400 flex=1 min-width=0 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
+                column flex=1 min-width=0
+                  text thread.title font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
+                  SearchExcerpt(hits=searchHits, id=thread.id)
                 text thread.updatedAt font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+
+component SearchExcerpt
+  props
+    hits: SearchHit[]
+    id: string
+  view
+    match first(hits.filter(hit => hit.id == id))
+      case some(hit)
+        text `${hit.source == "user" ? "You" : "Agent"}: ${hit.snippet}` testId=`thread-excerpt-${id}` font="-exact-footnote" flex=1 min-width=0 line-clamp=1 color="muted"
+      case none
+        view display="none"
 
 component EnvironmentList
   props

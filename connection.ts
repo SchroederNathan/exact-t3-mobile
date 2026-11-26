@@ -999,6 +999,27 @@ export class DirectSession {
     return cwd;
   }
 
+  async searchThreadMessages(raw: string, projectId: string) {
+    const query = raw.trim().slice(0, 200).trim();
+    const words = query.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").split(/\s+/);
+    if (!words.some(word => Array.from(word).length >= 3 || (Array.from(word).length === 2 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(word)))) return [];
+    const result = await this.query("orchestration.searchThreads", {
+      query, limit: 50, environmentLabel: this.environment.label,
+      ...(projectId ? { projectIds: [projectId] } : {}),
+    });
+    const seen = new Set<string>();
+    return records(result.matches).slice(0, 50).flatMap(match => {
+      const id = string(match.threadId);
+      const shell = this.shells.get(id);
+      const snippet = string(match.snippet).trim().slice(0, 240);
+      if (!shell || shell.archivedAt || shell.deletedAt || seen.has(id) || !snippet ||
+          match.projectId !== shell.projectId || (projectId && shell.projectId !== projectId) ||
+          (match.source !== "user" && match.source !== "assistant")) return [];
+      seen.add(id);
+      return [{ id: scopedThreadId(this.environment.id, id), snippet, source: match.source }];
+    });
+  }
+
   private composerCatalogProvider(value: unknown, cwd: string): ComposerProviderCatalog {
     const raw = object(value);
     const instanceId = string(raw.instanceId);

@@ -32,6 +32,23 @@ test("usage refresh sends the selected window to its environment", async () => {
   expect((await result).tokens).toBe(0);
 });
 
+test("message search uses the raw project id and scopes each excerpt to a live shell", async () => {
+  const { session, requests } = settingsSession();
+  const before = requests.length;
+  expect(await session.searchThreadMessages("a to", "project")).toEqual([]);
+  expect(requests.length).toBe(before);
+  const query = "needle".repeat(40);
+  const pending = session.searchThreadMessages(`  ${query}  `, "project");
+  const request = requests.at(-1)!;
+  expect(request.tag).toBe("orchestration.searchThreads");
+  expect(request.payload).toEqual({query: query.slice(0, 200), limit: 50, projectIds: ["project"], environmentLabel: "Mac"});
+  const match = { threadId: "thread", projectId: "project", source: "user", snippet: "needle" };
+  session.receive(JSON.stringify({_tag: "Exit", requestId: request.id, exit: {_tag: "Success", value: {matches: [
+    {...match, threadId: "absent"}, {...match, projectId: "wrong"}, {...match, source: "tool"}, match, match,
+  ]}}}));
+  expect(await pending).toEqual([{id: "env:thread", source: "user", snippet: "needle"}]);
+});
+
 function settingsSession(initializeShell = true) {
   const requests: SettingsRequest[] = [];
   const frames: { _tag: string; requestId?: string }[] = [];

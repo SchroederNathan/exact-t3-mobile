@@ -11,6 +11,7 @@ import { ComposerFixture } from "./composer-fixture";
 
 const app = NodePath.resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
+const conversation = "This is a deterministic test conversation.";
 const activityMode = process.argv.includes("--activities");
 const attachmentMode = process.argv.includes("--attachments");
 const markdownMode = process.argv.includes("--markdown");
@@ -424,6 +425,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               exit: { _tag: "Success", value: { favorites: modelFavorites } },
             }),
           );
+        } else if (frame.tag === "orchestration.searchThreads") {
+          const query = String(frame.payload.query).trim().toLowerCase();
+          const matches = conversation.toLowerCase().includes(query) ? threads
+            .filter(thread => !frame.payload.projectIds || frame.payload.projectIds.includes(thread.projectId))
+            .map(thread => ({ threadId: thread.id, projectId: thread.projectId, source: "assistant", snippet: conversation, messageCreatedAt: timestamp })) : [];
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: { matches } } }));
         } else if (frame.tag === "orchestration.subscribeThread") {
           chunk(socket, frame.id, {
             kind: "snapshot",
@@ -432,7 +439,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
                 {
                   id: `${frame.payload.threadId}-message`,
                   role: "assistant",
-                  text: "This is a deterministic test conversation.",
+                  text: conversation,
                   createdAt: timestamp,
                 },
               ],
