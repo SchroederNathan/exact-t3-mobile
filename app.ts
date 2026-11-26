@@ -40,6 +40,7 @@ import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
   normalizeEnvironmentUrl,
+  parsePairingAddress,
   object,
   pair,
   readJson,
@@ -54,6 +55,7 @@ import {
 } from "./connection";
 
 export const grants =
+  "device.camera purpose.camera\n" +
   "device.microphone purpose.microphone\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
@@ -539,6 +541,15 @@ const addProject = addProjectSources({
 });
 
 const sources: Sources = {
+  decodePairingScan: ([value, route]) => {
+    try {
+      if (value.length > 8192 || !/^(https?|t3code):\/\//i.test(value.trim())) throw new Error();
+      const { origin, credential } = parsePairingAddress(value, "");
+      return { route, address: origin, code: credential, error: "" };
+    } catch {
+      return { route, address: "", code: "", error: "Invalid pairing QR code. Scan the code from t3 pair or desktop Connections settings." };
+    }
+  },
   searchMessages: async ([environmentId, query, project], _store, _storage, native) => {
     const reply = { query, hits: [], unavailable: false };
     try {

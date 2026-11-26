@@ -3,6 +3,21 @@ import { expect, test, spyOn } from "bun:test";
 import { answer as sourceAnswer } from "../app";
 import type { Answer, NativeModule, Storage, Store } from "../app.contract.d.ts";
 
+test("a scanned pairing link only returns reviewable fields and never contacts the host", async () => {
+  const inaccessible = new Proxy({}, { get() { throw new Error("scan must not read or persist credentials"); } });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => { throw new Error("scan must not connect"); });
+  const decode = (text: string) => sourceAnswer("decodePairingScan", [text, "route-a"], inaccessible as Store, inaccessible as Storage);
+  try {
+    expect(await decode("t3code://pair?pairingUrl=http%3A%2F%2Flocalhost%3A8181%2F%23token%3Dfixture")).toEqual({
+      route: "route-a", address: "http://localhost:8181", code: "fixture", error: "",
+    });
+    for (const text of ["", "https://example.test", "unrelated QR code", "file:///tmp/test#token=fixture", "x".repeat(8193)]) {
+      expect(await decode(text)).toMatchObject({ route: "route-a", address: "", code: "", error: expect.stringContaining("Invalid pairing QR code") });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally { fetchSpy.mockRestore(); }
+});
+
 test("native environments aggregate colliding IDs and keep commands and connection lifetimes scoped", async () => {
   let saved = JSON.stringify(
     ["a", "b"].map((id) => ({
