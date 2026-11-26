@@ -649,6 +649,30 @@ component T3Code
   mutation terminalCleared as shape Reply queue
   mutation terminalScriptStarted as shape TerminalLaunchReply then afterTerminalScript
   mutation lifecycleChanged as shape Reply refreshes catalog
+  state pinTargetId = ""
+  state pinTargetKey = ""
+  state pinTargetDesired = false
+  mutation pinChanged as shape Reply then afterPinChange
+  action aimPin(id: string, key: string, desired: bool)
+    if not pending(pinChanged)
+      pinTargetId = id
+      pinTargetKey = key
+      pinTargetDesired = desired
+  action changePin
+    if not pending(pinChanged) and pinTargetId != "" and pinTargetKey != ""
+      haptic("selection")
+      send pinChanged = setThreadPin(pinTargetId, pinTargetKey, pinTargetDesired)
+  action afterPinChange
+    match pinChanged
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = pinTargetDesired ? "Could not pin thread" : "Could not unpin thread"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        pinTargetId = ""
+        pinTargetKey = ""
+      case none
+        pinTargetId = ""
   state lifecycleThreadId = ""
   derive lifecycleBusy = pending(lifecycleChanged) and lifecycleThreadId == activeThreadId
   derive lifecycleError = match lifecycleChanged { case some(reply) => lifecycleThreadId == activeThreadId ? reply.error : "", case none => "" }
@@ -1458,7 +1482,7 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSnoozed=showSnoozed, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleShelf=toggleShelf, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, aimPin=aimPin, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSnoozed=showSnoozed, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleShelf=toggleShelf, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2474,6 +2498,10 @@ component T3Code
         button press=confirmDiscardDraft(discardKey, discardKind) destructive=true popovertarget="draft-menu" popovertargetaction="hide" testId="draft-menu-discard"
           image "symbol:delete"
           text (discardKind == "unsent" ? "Delete" : "Discard")
+      column id="thread-row-menu" popover="auto" role="menu" aria-label="Thread actions"
+        button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged)) testId="thread-menu-pin"
+          image (pinTargetDesired ? "symbol:pin" : "symbol:sf/pin.slash")
+          text (pinTargetDesired ? "Pin" : "Unpin")
       dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
         text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
         button commandfor="discard-draft" command="close" testId="discard-draft-cancel"
@@ -2598,6 +2626,7 @@ component ThreadList
     openDraft: action
     discardDraft: action
     aimDraft: action
+    aimPin: action
     visibleThreads: Thread[]
     searchHits: SearchHit[]
     searchPending: bool
@@ -2673,7 +2702,7 @@ component ThreadList
                 view flex=1 height=1 background-color="edge"
                 image (showWorking ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
           for thread, index in threads key=thread.id
-            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+            button press=openThread(path("thread", thread.id)) contextmenu=aimPin(thread.id, thread.controls.accessKey, thread.pinRank < 0) contextPopover="thread-row-menu" appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               column flex=1 min-width=0 gap=3.5 opacity=(thread.working and selectedId != thread.id ? 0.55 : 1) padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
                 row align-items="flex-start" gap=7 color=(sidebar ? "sidebar-foreground" : "foreground")
                   if thread.projectIcon != ""
@@ -2721,7 +2750,7 @@ component ThreadList
                   svg viewBox="0 0 10 10" width=10 height=10 fill="none" stroke="muted" stroke-width=1.4 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
                     path d=((shelf == "snoozed" ? showSnoozed : showSettled) ? "M1.5 6.5 5 3l3.5 3.5" : "M1.5 3.5 5 7l3.5-3.5")
           for thread in (shelf == "snoozed" ? snoozedThreads : settledThreads).filter(thread => searching or (shelf == "snoozed" ? showSnoozed : showSettled) or selectedId == thread.id) key=thread.id
-            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+            button press=openThread(path("thread", thread.id)) contextmenu=aimPin(thread.id, thread.controls.accessKey, thread.pinRank < 0) contextPopover="thread-row-menu" appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               row flex=1 min-width=0 min-height=44 box-sizing="border-box" align-items="center" gap=7 padding=(sidebar ? "7px 10.5px" : "7px 17.5px")
                 if thread.projectIcon != ""
                   image thread.projectIcon width=20 height=20 border-radius=4 opacity=0.4

@@ -40,6 +40,7 @@ import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
   rankThreadPins,
+  newPinKey,
   normalizeEnvironmentUrl,
   parsePairingAddress,
   object,
@@ -1203,6 +1204,21 @@ const sources: Sources = {
     loaded: true,
     items: await loadEnvironments(storage),
   }),
+  setThreadPin: async ([id, key, pin], store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      const session = sessionFor(identity.environmentId);
+      const token = credentials(store)[identity.environmentId];
+      if (!key || !token || key !== session.controlAccessKey()) throw new Error("Reconnect before changing pinned threads.");
+      const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+      if (session !== sessionFor(identity.environmentId)) throw new Error("The connection changed. Try again.");
+      const orderKey = pin ? newPinKey(allSessions().flatMap(item => item.pinKeys())) : undefined;
+      await awaitReply(session.setThreadPinned(identity.threadId, key, pin, auth, orderKey), native);
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not change the thread pin." };
+    }
+  },
   loadControlAccess: async ([environmentId, key, _retry, forDraft], store) => {
     if (!environmentId || (!key && !forDraft)) return { key, allowed: false, error: "" };
     try {

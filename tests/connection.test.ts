@@ -9,6 +9,7 @@ import {
   parsePairingAddress,
   scopedThreadId,
   rankThreadPins,
+  newPinKey,
   threadIdFromUrl,
   threadIdentity,
 } from "../connection";
@@ -31,6 +32,40 @@ test("pins sort by case-sensitive keys then creation time without reordering sea
   expect(rankThreadPins(rows).map(row => row.pinRank)).toEqual([2,5,1,0,3,4]);
   updateThread({ pinnedAt: null, pinOrderKey: "B" });
   expect(session.threads()[0]!.pinRank).toBe(-1);
+});
+
+test("new pins precede existing lowercase fractional keys without rewriting another host", () => {
+  expect(newPinKey([])).toBe("n");
+  expect(newPinKey(["z", "d", "n"])).toBe("c");
+  expect(newPinKey(["aab"])).toBe("aaan");
+  expect(newPinKey(["abz"])).toBe("ab");
+  expect(newPinKey(["bad-key"])).toBeUndefined();
+  expect(newPinKey(["aa"])).toBeUndefined();
+});
+
+test("pin actions require a live row, current connection, and fresh operate scope", async () => {
+  const {session, commands, updateThread, accept} = settingsSession();
+  const key = session.controlAccessKey();
+  const auth = { authenticated: true, permissions: ["orchestration:operate"] };
+  await expect(session.setThreadPinned("thread", key, true, { authenticated: true, scopes: ["orchestration:read"] })).rejects.toThrow("permission");
+  await expect(session.setThreadPinned("thread", "old", true, auth)).rejects.toThrow("Reconnect");
+  await expect(session.setThreadPinned("missing", key, true, auth)).rejects.toThrow("available");
+  updateThread({ archivedAt: "2026-11-01" });
+  await expect(session.setThreadPinned("thread", key, true, auth)).rejects.toThrow("available");
+  updateThread({});
+  expect(commands()).toHaveLength(0);
+  const pin = session.setThreadPinned("thread", key, true, auth, "n");
+  await expect(session.setThreadPinned("thread", key, true, auth, "n")).rejects.toThrow("pending");
+  expect(commands()).toHaveLength(1);
+  expect(commands()[0]?.payload).toEqual({type:"thread.pin", commandId:expect.any(String), threadId:"thread", orderKey:"n"});
+  accept(commands()[0]!); await pin;
+  expect(session.threads()[0]!.pinRank).toBe(-1);
+  updateThread({ pinnedAt: "2026-11-26", pinOrderKey: "n" });
+  await session.setThreadPinned("thread", key, true, auth, "g");
+  expect(commands()).toHaveLength(1);
+  const unpin = session.setThreadPinned("thread", key, false, auth, "n");
+  expect(commands()[1]?.payload).toEqual({type:"thread.unpin", commandId:expect.any(String), threadId:"thread"});
+  accept(commands()[1]!); await unpin;
 });
 
 test("usage refresh sends the selected window to its environment", async () => {

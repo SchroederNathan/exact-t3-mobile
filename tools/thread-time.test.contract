@@ -59,3 +59,26 @@ test "snoozed threads can be searched while collapsed and wake without replacing
   tap "thread-fixture:soon"
   clock settle
   expect state activeThreadId == "fixture:soon"
+
+test "pin and unpin a list row without opening it or replacing its subscription"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/clock/start"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:alpha"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree missing "pin-fixture:alpha"
+  expect state activeThreadId == ""
+  request POST "http://127.0.0.1:0/clock/check"

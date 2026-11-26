@@ -65,6 +65,16 @@ export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
 type ListThread = Thread & { pinKey: string | null; createdAtMillis: number };
 
+export function newPinKey(keys: string[]): string | undefined {
+  const first = keys.reduce<string | undefined>((best, key) => best === undefined || key < best ? key : best, undefined);
+  if (!first) return "n";
+  if (!/^[a-z]+$/.test(first) || first.endsWith("a")) return undefined;
+  const leading = first.match(/^a*/)?.[0] ?? "";
+  const digit = first.charCodeAt(leading.length) - 97;
+  if (digit === 1) return leading + (first.length > leading.length + 1 ? "b" : "an");
+  return leading + String.fromCharCode(97 + Math.ceil(digit / 2));
+}
+
 export function rankThreadPins(rows: ListThread[]): Thread[] {
   const ordered = rows.filter(row => row.pinRank >= 0).sort((left, right) => {
     if (left.pinKey !== right.pinKey) {
@@ -928,6 +938,7 @@ export class DirectSession {
     { pending: boolean; error: string; threadId: string; runId: string; result: string }
   >();
   private forceStops = new Map<string, { accessKey: string }>();
+  private pinWrites = new Set<string>();
   private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
@@ -2955,6 +2966,27 @@ export class DirectSession {
 
   configLoaded(): boolean {
     return this.configReady;
+  }
+
+  pinKeys(): string[] {
+    return [...this.shells.values()].flatMap(row => row.pinnedAt != null && typeof row.pinOrderKey === "string" ? [row.pinOrderKey] : []);
+  }
+
+  async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string): Promise<void> {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady)
+      throw new Error("Reconnect before changing pinned threads.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change pinned threads.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    if ((row.pinnedAt != null) === pin) return;
+    const operation = JSON.stringify([key, id]);
+    if (this.pinWrites.has(operation)) throw new Error("A pin change is already pending for this thread.");
+    this.pinWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { type: pin ? "thread.pin" : "thread.unpin", commandId: crypto.randomUUID(), threadId: id, ...(pin && orderKey ? { orderKey } : {}) });
+    } finally {
+      this.pinWrites.delete(operation);
+    }
   }
 
   async readableComposerEnvironmentIds(): Promise<string[]> {

@@ -280,7 +280,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       runtimeMode: "full-access",
       updatedAt: timestamp,
       latestUserMessageAt: timestamp,
-      ...(threadTimeMode && ["build", "later", "beta"].includes(id) ? { pinnedAt: timestamp, pinOrderKey: id } : {}),
+      ...(threadTimeMode && ["build", "later", "beta"].includes(id) ? { pinnedAt: timestamp, pinOrderKey: id === "beta" ? "betb" : id } : {}),
       ...(id === "build" ? { status: "running", latestRunId: "fixture-build" } : {}),
       ...(threadSearchMode && id === "alpha" ? {
         branch: "release/subscription-clock",
@@ -425,6 +425,13 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               ],
             },
           });
+        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin"].includes(frame.payload.type)) {
+          const row = threads.find(thread => thread.id === frame.payload.threadId);
+          if (!row || !frame.payload.commandId) throw new Error("Pin command missing thread or command identifier");
+          if (frame.payload.type === "thread.pin") Object.assign(row, { pinnedAt: timestamp, pinOrderKey: frame.payload.orderKey });
+          else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
+          accepted(socket, frame.id);
+          for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
         } else if (frame.tag === "server.getUsageSummary" && usageMode) {
           const count = frame.payload.resolution === "hour" ? 2 : 10;
           const periods = [
