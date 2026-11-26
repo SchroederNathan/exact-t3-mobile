@@ -68,6 +68,27 @@ test("pin actions require a live row, current connection, and fresh operate scop
   accept(commands()[1]!); await unpin;
 });
 
+test("snooze rechecks the grant, capability, row state and offered preset before dispatch", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), now = Date.UTC(2026, 10, 26, 12);
+  const auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const change = (choice = "after:90", access = key, grant = auth) => session.changeSnooze("thread", access, choice, now, now + 60_000, grant);
+  await expect(change()).rejects.toThrow("no longer available");
+  session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadSnooze: true } }, settings: { snoozePresets: [{ kind: "after", minutes: 90 }] } } }] }));
+  await expect(change("after:90", key, { authenticated: true, scopes: [] })).rejects.toThrow("permission");
+  await expect(change("after:90", "old-session")).rejects.toThrow("no longer available");
+  await expect(change("after:60")).rejects.toThrow("future snooze");
+  await expect(change("wake")).rejects.toThrow("no longer available");
+  updateThread({ status: "queued" });
+  await expect(change()).rejects.toThrow("no longer available");
+  expect(commands()).toHaveLength(0);
+  updateThread({ status: "completed" });
+  const snoozed = change();
+  expect(commands()[0]!.payload).toMatchObject({ type: "thread.snooze", threadId: "thread", snoozedUntil: new Date(now + 91 * 60_000).toISOString() });
+  accept(commands()[0]!); await snoozed;
+  expect(session.snoozeMenu("thread", key, now).sleeping).toBe(false);
+});
+
 test("Undo restores the original pin position before the unexpired snooze, once", async () => {
   for (const expired of [false, true]) {
     const {session, updateThread, commands, accept} = settingsSession();

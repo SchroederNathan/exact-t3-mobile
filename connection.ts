@@ -60,6 +60,8 @@ import {
   type ComposerQueueState,
 } from "./composer-queue";
 
+import { canDeferThread, snoozeChoices, snoozeDeadline } from "./snooze";
+
 export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
@@ -2974,6 +2976,29 @@ export class DirectSession {
 
   pinKeys(): string[] {
     return [...this.shells.values()].flatMap(row => row.pinnedAt != null && typeof row.pinOrderKey === "string" ? [row.pinOrderKey] : []);
+  }
+
+  snoozeMenu(id: string, key: string, now: number) {
+    const row = this.shells.get(id);
+    const enabled = Boolean(row && listedThread(row) && key && key === this.controlAccessKey() && this.shellLive && this.configReady && object(object(this.config.environment).capabilities).threadSnooze === true);
+    const sleeping = enabled && listWakeTime(row!) > now;
+    const available = enabled && (sleeping || canDeferThread(row!, now));
+    return { available, sleeping, choices: available && !sleeping ? snoozeChoices(object(this.config.settings).snoozePresets, now) : [] };
+  }
+
+  async changeSnooze(id: string, key: string, choiceId: string, opened: number, now: number, auth: unknown) {
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change thread snoozes.");
+    const menu = this.snoozeMenu(id, key, now);
+    if (!menu.available || menu.sleeping !== (choiceId === "wake")) throw new Error("This thread action is no longer available.");
+    const commandId = crypto.randomUUID();
+    if (choiceId === "wake") {
+      await this.query("orchestration.dispatchCommand", { type: "thread.unsnooze", commandId, threadId: id, reason: "user" });
+    } else {
+      const choices = snoozeChoices(object(this.config.settings).snoozePresets, opened);
+      const wake = snoozeDeadline(choices.find(choice => choice.id === choiceId), now);
+      if (!wake) throw new Error("Choose a future snooze time.");
+      await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId, threadId: id, snoozedUntil: new Date(wake).toISOString() });
+    }
   }
 
   async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string, receipt = ""): Promise<string> {

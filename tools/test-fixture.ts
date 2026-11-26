@@ -214,7 +214,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const serverConfig = () => ({
-    settings: { favorites: modelFavorites },
+    settings: { favorites: modelFavorites, ...(threadTimeMode ? { snoozePresets: [{kind:"after", minutes:90}, {kind:"at", day:"tomorrow", time:"09:00"}] } : {}) },
     environment: {
       platform: { machine: secondary ? "laptop" : "mac-mini" },
       ...(threadTimeMode ? { capabilities: { threadSnooze: true } } : {}),
@@ -425,11 +425,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               ],
             },
           });
-        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin", "thread.snooze"].includes(frame.payload.type)) {
+        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin", "thread.snooze", "thread.unsnooze"].includes(frame.payload.type)) {
           const row = threads.find(thread => thread.id === frame.payload.threadId);
           if (!row || !frame.payload.commandId) throw new Error("Pin command missing thread or command identifier");
           if (frame.payload.type === "thread.pin") Object.assign(row, { pinnedAt: timestamp, pinOrderKey: frame.payload.orderKey, snoozedAt: null, snoozedUntil: null });
           else if (frame.payload.type === "thread.snooze") Object.assign(row, { snoozedAt: timestamp, snoozedUntil: frame.payload.snoozedUntil });
+          else if (frame.payload.type === "thread.unsnooze") Object.assign(row, { snoozedAt: null, snoozedUntil: null });
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });

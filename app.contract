@@ -465,6 +465,18 @@ shape PinReply
   error: string
   undo: string
 
+shape SnoozeChoice
+  id: string
+  label: string
+  detail: string
+  wake: number
+  minutes: number
+
+shape RowSnoozeMenu
+  available: bool
+  sleeping: bool
+  choices: SnoozeChoice[]
+
 shape TerminalLaunchReply
   ok: bool
   error: string
@@ -665,6 +677,28 @@ component T3Code
   state pinTargetId = ""
   state pinTargetKey = ""
   state pinTargetDesired = false
+  state rowMenuOpened = 0
+  resource rowSnooze = loadRowSnooze(pinTargetId, pinTargetKey, rowMenuOpened) as shape RowSnoozeMenu else empty()
+  mutation rowSnoozed as shape Reply then afterRowSnooze
+  action submitRowSnooze(choice: string)
+    hidePopover("row-snooze-menu")
+    hidePopover("thread-row-menu")
+    if rowSnooze.available and not pending(rowSnoozed) and not pending(pinChanged)
+      haptic("selection")
+      if pinTargetId == undoThreadId
+        undoReceipt = ""
+      send rowSnoozed = setRowSnooze(pinTargetId, pinTargetKey, choice, rowMenuOpened, time.epochAtZero + performanceNow())
+  action afterRowSnooze
+    match rowSnoozed
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not update snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        pinTargetId = ""
+        pinTargetKey = ""
+      case none
+        rowMenuOpened = 0
   state undoReceipt = ""
   state undoThreadId = ""
   state undoAccessKey = ""
@@ -693,13 +727,14 @@ component T3Code
       undoReceipt = ""
       send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
   action aimPin(id: string, key: string, desired: bool)
-    if not pending(pinChanged)
+    if not pending(pinChanged) and not pending(rowSnoozed)
+      rowMenuOpened = time.epochAtZero + performanceNow()
       pinTargetId = id
       pinTargetKey = key
       pinTargetDesired = desired
   action changePin
     hidePopover("thread-row-menu")
-    if not pending(pinChanged) and pinTargetId != "" and pinTargetKey != ""
+    if not pending(pinChanged) and not pending(rowSnoozed) and pinTargetId != "" and pinTargetKey != ""
       haptic("selection")
       undoingPin = false
       if pinTargetId == undoThreadId or not pinTargetDesired
@@ -2559,10 +2594,24 @@ component T3Code
         button press=confirmDiscardDraft(discardKey, discardKind) destructive=true popovertarget="draft-menu" popovertargetaction="hide" testId="draft-menu-discard"
           image "symbol:delete"
           text (discardKind == "unsent" ? "Delete" : "Discard")
-      column id="thread-row-menu" popover="auto" role="menu" aria-label="Thread actions"
-        button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged)) testId="thread-menu-pin"
+      column id="thread-row-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Thread actions"
+        button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged) or pending(rowSnoozed)) testId="thread-menu-pin"
           image (pinTargetDesired ? "symbol:pin" : "symbol:sf/pin.slash")
           text (pinTargetDesired ? "Pin" : "Unpin")
+        if rowSnooze.available
+          if rowSnooze.sleeping
+            button role="menuitem" press=submitRowSnooze("wake") disabled=pending(rowSnoozed) testId="thread-menu-wake"
+              image "symbol:sf/sunrise"
+              text "Unsnooze"
+          else
+            button role="menuitem" popovertarget="row-snooze-menu" disabled=pending(rowSnoozed) testId="thread-menu-snooze"
+              image "symbol:sf/clock"
+              text "Snooze"
+      column id="row-snooze-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Snooze thread"
+        for choice in rowSnooze.choices key=choice.id
+          button role="menuitem" press=submitRowSnooze(choice.id) disabled=pending(rowSnoozed) testId=`snooze-${choice.id}`
+            text choice.label
+            text choice.detail
       dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
         text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
         button commandfor="discard-draft" command="close" testId="discard-draft-cancel"

@@ -219,6 +219,16 @@ function sessionScope(value: unknown, scope: string): boolean {
   return scope === "terminal:read" && scopes?.includes("terminal:operate") === true;
 }
 
+async function authorizeRow(id: string, key: string, store: Store) {
+  const identity = threadIdentity(id);
+  const session = sessionFor(identity.environmentId);
+  const token = credentials(store)[identity.environmentId];
+  if (!key || !token || key !== session.controlAccessKey()) throw new Error("Reconnect before updating the thread.");
+  const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+  if (session !== sessionFor(identity.environmentId)) throw new Error("The connection changed. Try again.");
+  return { session, threadId: identity.threadId, auth };
+}
+
 async function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
   if (!native?.available) return operation;
   const receipt = crypto.randomUUID();
@@ -1213,16 +1223,24 @@ const sources: Sources = {
       return { ok: false, error: error instanceof Error ? error.message : "Could not restore snooze." };
     }
   },
-  setThreadPin: async ([id, key, pin, receipt], store, _storage, native) => {
+  loadRowSnooze: ([id, key, opened]) => {
     try {
       const identity = threadIdentity(id);
-      const session = sessionFor(identity.environmentId);
-      const token = credentials(store)[identity.environmentId];
-      if (!key || !token || key !== session.controlAccessKey()) throw new Error("Reconnect before changing pinned threads.");
-      const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
-      if (session !== sessionFor(identity.environmentId)) throw new Error("The connection changed. Try again.");
+      return sessionFor(identity.environmentId).snoozeMenu(identity.threadId, key, opened);
+    } catch { return { available: false, sleeping: false, choices: [] }; }
+  },
+  setRowSnooze: async ([id, key, choice, opened, now], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
+      await awaitReply(session.changeSnooze(threadId, key, choice, opened, now, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update snooze." }; }
+  },
+  setThreadPin: async ([id, key, pin, receipt], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
       const orderKey = pin ? newPinKey(allSessions().flatMap(item => item.pinKeys())) : undefined;
-      const undo = await awaitReply(session.setThreadPinned(identity.threadId, key, pin, auth, orderKey, receipt), native);
+      const undo = await awaitReply(session.setThreadPinned(threadId, key, pin, auth, orderKey, receipt), native);
       return { ok: true, error: "", undo };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Could not change the thread pin.", undo: "" };
