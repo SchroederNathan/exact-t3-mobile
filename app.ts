@@ -1339,7 +1339,8 @@ const sources: Sources = {
       new Date(now), Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
     const tokens = credentials(store);
     return Promise.all(environments.map(async ({ id, label, enabled, status }) => {
-      const row = { id, label, cost: "", tokens: "", sessions: "", note: "", error: "" };
+      const row = { id, label, cost: "", tokens: "", sessions: "", note: "", error: "",
+        chart: { periods: [], legend: [], nativeSeries: "[]", startLabel: "", endLabel: "", hasActivity: false, notice: "" } };
       if (!enabled || status !== "Connected" || !tokens[id])
         return { ...row, error: enabled ? "Waiting for connection…" : "Environment disabled." };
       try {
@@ -1356,7 +1357,7 @@ const sources: Sources = {
         if (generation !== session.controlAccessKey() || session !== sessionFor(id))
           return { ...row, error: "The environment connection changed. Refresh usage." };
         return {
-          ...row, cost: result.priced ? `$${result.cost.toFixed(2)}` : "Unpriced",
+          ...row, chart: { ...result.chart, nativeSeries: native?.available ? JSON.stringify(result.chart.periods) : "[]" }, cost: result.priced ? `$${result.cost.toFixed(2)}` : "Unpriced",
           tokens: result.tokens.toLocaleString(), sessions: `Across ${result.sessions.toLocaleString()} ${result.sessions === 1 ? "session" : "sessions"}`,
           note: [result.partial ? "Some sources could not report complete usage." : "",
             result.unpriced > 0 ? "Some records have no known price." : ""].filter(Boolean).join(" "),

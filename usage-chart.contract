@@ -1,0 +1,59 @@
+shape UsageSegment
+  provider: string
+  costPercent: number
+  tokenPercent: number
+  cost: number
+  tokens: number
+
+shape UsagePeriod
+  id: string
+  label: string
+  segments: UsageSegment[]
+
+shape UsageChartKey
+  id: string
+  label: string
+
+shape UsageChartData
+  legend: UsageChartKey[]
+  periods: UsagePeriod[]
+  nativeSeries: string
+  startLabel: string
+  endLabel: string
+  notice: string
+  hasActivity: bool
+
+fn providerColor(name: string): string = name == "codex" ? "chart-codex" : name == "claude" ? "chart-claude" : name == "grok" ? "chart-grok" : name == "cursor" ? "chart-cursor" : name == "opencode" ? "chart-opencode" : name == "antigravity" ? "chart-antigravity" : name == "pi" ? "chart-pi" : name == "muse" ? "chart-muse" : "muted"
+
+component UsageChart
+  props
+    data: UsageChartData
+    metric: string
+    environment: string
+    native: bool
+    wide: bool
+    unpriced: bool
+  derive height = wide ? 260 : 180
+  derive empty = data.notice != "" ? data.notice : not data.hasActivity ? "No activity in this window." : metric == "Cost" and unpriced ? "No priced activity in this window." : ""
+  view
+    column gap=8 min-width=0 margin-top=9
+      if empty != ""
+        column height=height align-items="center" justify-content="center"
+          text empty color="muted" text-align="center" testId=`chart-notice-${environment}`
+      else if native
+        workspace-usage-chart series=data.nativeSeries metric=metric height=height width="100%" testId=`chart-${environment}`
+      else
+        row height=height gap=1 align-items="stretch" role="group" aria-label=`${metric} by provider over time` testId=`chart-${environment}`
+          for period in data.periods key=period.id
+            column flex=1 min-width=0 flex-direction="column-reverse" overflow="hidden" border-radius="2px 2px 0 0" testId=`chart-period-${environment}-${period.id}`
+              for part in period.segments key=part.provider
+                view height=`${metric == "Cost" ? part.costPercent : part.tokenPercent}%` background-color=providerColor(part.provider) role="img" aria-label=`${period.label}, ${part.provider}: ${metric == "Cost" ? "$" : ""}${metric == "Cost" ? part.cost : part.tokens}${metric == "Cost" ? "" : " tokens"}`
+      row justify-content="space-between"
+        text data.startLabel color="muted" font="-exact-caption1"
+        text data.endLabel color="muted" font="-exact-caption1"
+      if data.notice == "" and data.legend.length > 0
+        row flex-wrap="wrap" gap="4px 16px" align-items="center"
+          for key in data.legend key=key.id
+            row gap=6 align-items="center"
+              view width=8 height=8 border-radius=4 background-color=providerColor(key.id)
+              text key.label font-size="0.75rem" color="muted" testId=`chart-legend-${environment}-${key.id}`

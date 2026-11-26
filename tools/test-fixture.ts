@@ -423,9 +423,14 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           });
         } else if (frame.tag === "server.getUsageSummary" && usageMode) {
           const count = frame.payload.resolution === "hour" ? 2 : 10;
+          const periods = [
+            [frame.payload.sinceDay, frame.payload.sinceTime, "codex", count, 0.5],
+            [frame.payload.sinceDay, frame.payload.sinceTime, "claude", 2, 0.25],
+            [frame.payload.untilDay, frame.payload.untilTime ? new Date(Date.parse(frame.payload.untilTime) - 3600000).toISOString() : undefined, "claude", 3, frame.payload.awaitRefresh ? 0.75 : 0.25],
+          ];
           socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: {
-            contractVersion: 6, buckets: [{ totals: { uncachedInputTokens: count, cachedInputTokens: 1, cacheCreationTokens: 0, outputTokens: 4, reasoningTokens: 1 },
-              records: 1, unpricedRecords: 0, costUsd: frame.payload.awaitRefresh ? 1.5 : 1 }], sources: [{status: "ok", distinctSessions: 1}],
+            contractVersion: 6, buckets: periods.map(([day, hourStart, provider, tokens, costUsd]) => ({ day, hourStart, provider, totals: { uncachedInputTokens: tokens, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+              records: 1, unpricedRecords: 0, costUsd })), sources: [{status: "ok", distinctSessions: 1}],
           } } }));
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;

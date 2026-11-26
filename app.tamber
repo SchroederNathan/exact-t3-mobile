@@ -4,6 +4,14 @@ theme
   AccentColor = light-dark(#1b4ed8, #346bf1)
   screen = light-dark(#fcfcfc, #0a0a0a)
   card = light-dark(#f4f4f5, #1a1b1b)
+  chart-codex = light-dark(#3c3c43, #e6e6e6)
+  chart-grok = light-dark(#52525b, #a1a1aa)
+  chart-claude = #d97757 scheme=fixed
+  chart-cursor = #8b8b8b scheme=fixed
+  chart-opencode = #5b9bbd scheme=fixed
+  chart-antigravity = #8c7bd1 scheme=fixed
+  chart-pi = #4d9f8a scheme=fixed
+  chart-muse = #0866ff scheme=fixed
   control-surface = light-dark(#fcfcfc, #111111)
   control-secondary = light-dark(#fafafa, #111111)
   scan-center = light-dark(#f4f4f5, #2e2e2e)

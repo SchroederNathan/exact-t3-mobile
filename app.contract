@@ -6,6 +6,7 @@ use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendRe
 use NewTaskView, ProjectChoices, ProjectChoice, EnvironmentChoice, BranchChoices, BranchRow, HomeDraftRow, isDraftKey, launchOf, launching, launchText, launchTitle, launchStrategy, launchError, routeMode, DraftHero, DraftControls, PreparingThread, ProjectMark, InlineControl, EnvironmentControl, ProjectPicker, EnvironmentPicker, BranchPicker, HomeDraftRowContent from "./new-task.contract"
 use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
+use UsageChart, UsageChartData from "./usage-chart.contract"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
 use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
@@ -156,6 +157,7 @@ shape LimitProvider
   windows: LimitWindow[]
 
 shape UsageRow
+  chart: UsageChartData
   id: string
   label: string
   cost: string
@@ -587,6 +589,9 @@ component T3Code
   state usageView = "Limits"
   state usageRefresh = 0
   state usageWindowTime = 0
+  state usageWide = false
+  action measureUsage(width: number, height: number)
+    usageWide = width >= 600
   resource usageReport = loadUsage(current.name == "usage" and usageView != "Limits" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
@@ -2359,7 +2364,7 @@ component T3Code
                     if catalog.environments.length > 0 and usageView != "Limits"
                       button press=refreshUsage buttonStyle="glass" aria-label="Refresh usage" testId="usage-refresh" disabled=pending(usageReport)
                         image "symbol:refresh"
-                  scroll id="usage" flex=1 min-height=0 background-color="screen"
+                  scroll id="usage" resize=measureUsage flex=1 min-height=0 background-color="screen"
                     column padding="16px 16px 0" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center"
                       row role="radiogroup" aria-label="Usage view" width="100%" box-sizing="border-box"
                         for metric in ["Cost", "Tokens", "Limits"] key=metric
@@ -2393,19 +2398,28 @@ component T3Code
                           text (failed(usageReport) ? "Usage could not be loaded." : "Scanning provider transcripts…") color="muted" text-align="center" testId="usage-loading"
                         else
                           for report in usageReport key=report.id
-                            column gap=7 testId=`usage-environment-${report.id}`
+                            column gap=8 min-width=0 testId=`usage-environment-${report.id}`
                               text report.label role="heading" aria-level=3 font="-exact-headline"
                               if report.error != ""
                                 text report.error color="muted"
                               else
-                                if usageView == "Cost"
-                                  text "Raw token cost" color="muted"
-                                  text report.cost testId=`usage-cost-${report.id}` font="-exact-title1" font-weight=700
-                                  text "If billed at full API rate" color="muted"
-                                else
-                                  text "Processed tokens" color="muted"
-                                  text report.tokens testId=`usage-tokens-${report.id}` font="-exact-title1" font-weight=700
-                                text report.sessions color="muted"
+                                view display="flex" flex-direction=(usageWide ? "row" : "column") gap=(usageWide ? 24 : 16) align-items=(usageWide ? "flex-start" : "stretch") padding=(usageWide ? 0 : 16) border-radius=24 background-color=(usageWide ? "transparent" : "card")
+                                  column width=(usageWide ? "18rem" : "100%") min-width=0 box-sizing="border-box" gap=2 padding=(usageWide ? 16 : 0) border-radius=24 background-color="card" testId=`chart-summary-${report.id}`
+                                    text (usageView == "Cost" ? "Raw token cost" : "Processed tokens") font-size="0.875rem" color="muted"
+                                    if usageView == "Cost"
+                                      row align-items="baseline" gap=0
+                                        text report.cost testId=`usage-cost-${report.id}` font-size="2.25rem" line-height="2.5rem" font-weight=700 font-variant-numeric="tabular-nums"
+                                        if report.cost != "Unpriced"
+                                          text "*" font-size="2.25rem" line-height="2.5rem" font-weight=700
+                                      if report.cost != "Unpriced"
+                                        text "* if billed at full API rate" font-size="0.875rem" color="muted"
+                                    else
+                                      text report.tokens testId=`usage-tokens-${report.id}` font-size="2.25rem" line-height="2.5rem" font-weight=700 font-variant-numeric="tabular-nums"
+                                      text report.sessions font-size="0.875rem" color="muted"
+                                  column flex=(usageWide ? "1 1 0px" : "0 0 auto") min-width=0 padding=(usageWide ? 16 : 0) gap=7 border-radius=24 background-color="card" testId=`chart-card-${report.id}`
+                                    if usageWide
+                                      text `${usageDays == 1 ? "Hourly" : "Daily"} ${usageView == "Cost" ? "cost" : "processed tokens"}` font-size="0.875rem" font-weight=500
+                                    UsageChart(data=report.chart, metric=usageView, environment=report.id, native=(device.kind != "web" and device.kind != ""), wide=usageWide, unpriced=(report.cost == "Unpriced"))
                                 if report.note != ""
                                   text report.note color="muted"
               if e.name == "settings"

@@ -3,7 +3,7 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
-import { subscriptionLimits, usageTotals, type usageWindow } from "./usage";
+import { subscriptionLimits, usageChart, usageTotals, type usageWindow } from "./usage";
 import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
@@ -1174,9 +1174,10 @@ export class DirectSession {
   }
 
   async readUsage(window: ReturnType<typeof usageWindow>, refresh: boolean) {
-    return usageTotals(await this.query("server.getUsageSummary", {
+    const summary = await this.query("server.getUsageSummary", {
       ...window, ...(refresh ? { awaitRefresh: true } : {}),
-    }));
+    });
+    return { ...usageTotals(summary), chart: usageChart(summary.buckets, window) };
   }
 
   async refreshStatusAt(cwd: string, localOnly = false): Promise<GitStatus> {
