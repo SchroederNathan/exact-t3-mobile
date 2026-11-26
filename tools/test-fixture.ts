@@ -270,16 +270,18 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}),
     ...(composer ? { workspaceRoot: composer.cwd } : {}),
   }));
-  const threads = (secondary ? ["gamma"] : threadTimeMode ? ["alpha", "beta", "later", "soon"] : ["alpha", "beta"])
+  const threads = (secondary ? ["gamma"] : threadTimeMode ? ["alpha", "beta", "later", "soon", "build"] : ["alpha", "beta"])
     .map((id) => ({
       id,
       projectId: secondary ? "remote" : "active",
       title:
-        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : id === "later" ? "Later nap" : id === "soon" ? "Soon nap" : "Beta thread",
+        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : id === "later" ? "Later nap" : id === "soon" ? "Soon nap" : id === "build" ? "Pinned build" : "Beta thread",
       status: "idle",
       runtimeMode: "full-access",
       updatedAt: timestamp,
       latestUserMessageAt: timestamp,
+      ...(threadTimeMode && ["build", "later", "beta"].includes(id) ? { pinnedAt: timestamp, pinOrderKey: id } : {}),
+      ...(id === "build" ? { status: "running", latestRunId: "fixture-build" } : {}),
       ...(threadSearchMode && id === "alpha" ? {
         branch: "release/subscription-clock",
         pullRequests: [

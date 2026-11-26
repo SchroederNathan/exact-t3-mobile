@@ -8,6 +8,7 @@ import {
   pair,
   parsePairingAddress,
   scopedThreadId,
+  rankThreadPins,
   threadIdFromUrl,
   threadIdentity,
 } from "../connection";
@@ -18,6 +19,19 @@ type SettingsRequest = {
   tag: string;
   payload: Record<string, unknown>;
 };
+
+test("pins sort by case-sensitive keys then creation time without reordering search input", () => {
+  const { session, updateThread } = settingsSession();
+  updateThread({ pinnedAt: "2026-11-01T12:00:00Z", pinOrderKey: "B" });
+  const sample = session.threads()[0]!;
+  expect(sample.pinRank).toBe(0);
+  expect(sample.pinKey).toBe("B");
+  const row = (environmentId: string, id: string, pinKey: string | null, createdAtMillis: number) => ({ ...sample, id: scopedThreadId(environmentId, id), environmentId, pinKey, createdAtMillis });
+  const rows = [row("a", "z", "B", 1), row("a", "none", null, 4), row("z", "x", "B", 2), row("a", "x", "B", 3), row("a", "lower", "a", 1), row("a", "new", null, 8)];
+  expect(rankThreadPins(rows).map(row => row.pinRank)).toEqual([2,5,1,0,3,4]);
+  updateThread({ pinnedAt: null, pinOrderKey: "B" });
+  expect(session.threads()[0]!.pinRank).toBe(-1);
+});
 
 test("usage refresh sends the selected window to its environment", async () => {
   const { session, requests } = settingsSession();
@@ -1604,6 +1618,9 @@ describe("direct T3 connection", () => {
         lastErrorTime: expect.any(String),
         searchReferences: [],
         wakeAt: 0,
+        pinRank: -1,
+        pinKey: null,
+        createdAtMillis: expect.any(Number),
         searchTerms: [],
         rows: [],
         toolViewKey: expect.any(String),

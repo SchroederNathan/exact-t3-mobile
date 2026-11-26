@@ -63,6 +63,21 @@ import {
 export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
+type ListThread = Thread & { pinKey: string | null; createdAtMillis: number };
+
+export function rankThreadPins(rows: ListThread[]): Thread[] {
+  const ordered = rows.filter(row => row.pinRank >= 0).sort((left, right) => {
+    if (left.pinKey !== right.pinKey) {
+      if (left.pinKey === null) return 1;
+      if (right.pinKey === null) return -1;
+      return left.pinKey < right.pinKey ? -1 : 1;
+    }
+    const age = left.pinKey === null ? right.createdAtMillis - left.createdAtMillis : 0;
+    return age || threadIdentity(left.id).threadId.localeCompare(threadIdentity(right.id).threadId) || left.environmentId.localeCompare(right.environmentId);
+  });
+  const ranks = new Map(ordered.map((row, index) => [row.id, index]));
+  return rows.map(({ pinKey, createdAtMillis, ...row }) => ({ ...row, pinRank: ranks.get(row.id) ?? -1 }));
+}
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
 let sessionSerial = 0;
@@ -3520,7 +3535,7 @@ export class DirectSession {
     });
   }
 
-  threads(now = 0): Thread[] {
+  threads(now = 0): ListThread[] {
     const supportsSnooze = object(object(this.config.environment).capabilities).threadSnooze === true;
     return [...this.shells.entries()]
       .filter(([id, thread]) => !thread.deletedAt && (id === this.selected || listedThread(thread)))
@@ -3575,6 +3590,9 @@ export class DirectSession {
           settled,
           working: working(thread),
           wakeAt: supportsSnooze ? listWakeTime(thread) : 0,
+          pinRank: thread.pinnedAt != null ? 0 : -1,
+          pinKey: typeof thread.pinOrderKey === "string" ? thread.pinOrderKey : null,
+          createdAtMillis: timestamp(thread.createdAt),
           activityAt,
           title: string(thread.title),
           status: status(thread),

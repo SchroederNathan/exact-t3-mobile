@@ -230,6 +230,7 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  pinRank: number
   wakeAt: number
   searchTerms: string[]
   searchReferences: string[]
@@ -694,7 +695,7 @@ component T3Code
   resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
-  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
+  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (thread.pinRank >= 0 or not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
   task startThreadListClock when agesVisible key=agesVisible
     change(sampleThreadListClock)
   task tickThreadListClock when agesVisible
@@ -2620,8 +2621,10 @@ component ThreadList
   derive searching = query.trim() != ""
   derive awakeThreads = visibleThreads.filter(thread => thread.wakeAt <= now)
   derive snoozedThreads = sortBy(visibleThreads.filter(thread => thread.wakeAt > now), thread => thread.wakeAt)
-  derive activeThreads = awakeThreads.filter(thread => not thread.settled and (searching or not thread.working))
-  derive workingThreads = awakeThreads.filter(thread => not searching and not thread.settled and thread.working)
+  derive pinnedThreads = sortBy(awakeThreads.filter(thread => not thread.settled and thread.pinRank >= 0), thread => thread.pinRank)
+  derive ordinaryThreads = awakeThreads.filter(thread => not thread.settled and thread.pinRank < 0 and not thread.working)
+  derive activeThreads = searching ? awakeThreads.filter(thread => not thread.settled) : pinnedThreads.concat(ordinaryThreads)
+  derive workingThreads = awakeThreads.filter(thread => not searching and not thread.settled and thread.pinRank < 0 and thread.working)
   derive displayedWorking = workingThreads.filter(thread => showWorking or selectedId == thread.id)
   derive settledThreads = awakeThreads.filter(thread => thread.settled)
   derive availableProjects = catalog.projects.filter(project => selectedEnvironment == "" or project.environmentId == selectedEnvironment)
@@ -2678,6 +2681,13 @@ component ThreadList
                   else
                     text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
                   text thread.title font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
+                  if thread.pinRank >= 0
+                    column width=11 height=23 flex-shrink=0 justify-content="center" testId=`pin-${thread.id}` aria-label="Pinned"
+                      if nativeMenus
+                        image "symbol:pin" width=11 height=11 font-size=11 color=(sidebar ? "sidebar-muted" : "muted")
+                      else
+                        svg viewBox="0 0 16 16" width=11 height=11 fill="none" stroke=(sidebar ? "sidebar-muted" : "muted") stroke-width=1.5 stroke-linejoin="round" stroke-linecap="round" aria-hidden=true
+                          path d="m6 1 6 2-1 1-1.5 4 1 2-7-2 .9-1.6L6.5 6 8 2.8ZM6.9 9.2 5 14.5"
                   if thread.status != ""
                     row align-items="center" gap=3.5 min-height=23 color=(sidebar and selectedId == thread.id ? "foreground" : threadStatusColor(thread.status))
                       image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600

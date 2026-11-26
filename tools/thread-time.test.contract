@@ -36,6 +36,9 @@ test "snoozed threads can be searched while collapsed and wake without replacing
   clock data
   clock settle
   expect text "snoozed-title" == "Snoozed (2)"
+  expect tree has "pin-fixture:build"
+  expect tree missing "working-threads"
+  expect tree missing "pin-fixture:beta"
   expect tree missing "thread-fixture:soon"
   type "search" "Soon nap"
   expect tree missing "snoozed-threads"
@@ -44,6 +47,7 @@ test "snoozed threads can be searched while collapsed and wake without replacing
   expect tree missing "thread-fixture:soon"
   tap "snoozed-threads"
   expect text "wake-fixture:later" == "4h"
+  expect tree missing "pin-fixture:later"
   request POST "http://127.0.0.1:0/clock/start"
   clock +16000
   expect tree missing "wake-fixture:soon"

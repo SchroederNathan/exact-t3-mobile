@@ -39,6 +39,7 @@ import { projectTurnDiff } from "./turn-review";
 import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
+  rankThreadPins,
   normalizeEnvironmentUrl,
   parsePairingAddress,
   object,
@@ -326,8 +327,8 @@ function nativeCatalog(
       };
     }),
     projects: [...connections.values()].flatMap(({ session }) => session.projectList()),
-    threads: [...connections.values()]
-      .flatMap(({ session }) => session.threads(now))
+    threads: rankThreadPins([...connections.values()]
+      .flatMap(({ session }) => session.threads(now)))
       .sort(
         (left, right) =>
           Number(left.settled) - Number(right.settled) ||
@@ -377,7 +378,7 @@ async function loadCatalog(
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,
     ),
-    threads: session.threads(now),
+    threads: rankThreadPins(session.threads(now)),
     projects: session.projectList(),
   });
   try {
