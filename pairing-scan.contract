@@ -1,0 +1,66 @@
+use getSupportedFormats, detectedBarcodes, BarcodeFormats, BarcodeScan from "@exact/barcode-detection"
+use getUserMedia, stopTrack, MediaStream, MediaStreamTrack, MediaTrackConstraints from "@exact/media-capture"
+
+shape PairingScanFields
+  route: string
+  address: string
+  code: string
+  error: string
+
+members T3Code
+  state scanRoute = ""
+  state scanTrack = ""
+  state scanNotice = ""
+  derive pairingRoute = current.name == "addEnvironment" ? `${current.id}` : ""
+  derive scanConstraints = MediaTrackConstraints(deviceId=none, groupId=none, facingMode=some("environment"), width=none, height=none, aspectRatio=none, frameRate=none, resizeMode=none, zoom=none, torch=none, sampleRate=none, sampleSize=none, channelCount=none, echoCancellation=none, autoGainControl=none, noiseSuppression=none, latency=none)
+  resource scanFormats = getSupportedFormats() as shape BarcodeFormats else empty()
+  resource scanResult = detectedBarcodes(track=scanTrack, formats=["qr_code"]) as shape BarcodeScan else empty()
+  derive scanValue = match first(scanResult.barcodes) { case some(item) => item.rawValue, case none => "" }
+  mutation scanOpened as shape MediaStream then useScanCamera
+  mutation scanStopped as shape MediaStreamTrack
+  mutation scanFields as shape PairingScanFields then fillScannedPairing
+  derive scanMessage = scanRoute == pairingRoute and scanRoute != "" and failed(scanOpened) ? "Camera unavailable. Check camera access in Settings or enter the address and code below." : scanNotice
+  action startPairingScan
+    if pairingRoute != "" and not pending(scanOpened) and not pending(scanFields)
+      if scanFormats.tracks and scanFormats.formats.includes("qr_code")
+        scanRoute = pairingRoute
+        scanNotice = ""
+        send scanOpened = getUserMedia(video=true, videoConstraints=scanConstraints)
+      else
+        scanNotice = "QR scanning isn’t available here. Enter the address and code below."
+  action useScanCamera
+    match scanOpened
+      case some(stream)
+        let track = match first(stream.tracks) { case some(item) => item.id, case none => "" }
+        if scanRoute == pairingRoute and pairingRoute != "" and track != ""
+          scanTrack = track
+        else if track != ""
+          send scanStopped = stopTrack(track=track)
+      case none
+        scanTrack = ""
+  action stopPairingCamera
+    if scanTrack != ""
+      send scanStopped = stopTrack(track=scanTrack)
+    scanTrack = ""
+  action clearPairingScan
+    stopPairingCamera()
+    scanRoute = ""
+    scanNotice = ""
+  task clearAbandonedScan when pairingRoute == "" and (scanRoute != "" or scanNotice != "") key=scanRoute
+    after(1, clearPairingScan)
+  task readPairingScan when scanTrack != "" and scanRoute == pairingRoute and scanValue != "" key=scanTrack
+    after(1, readPairingCode)
+  action readPairingCode
+    if scanTrack != "" and scanRoute == pairingRoute and scanValue != ""
+      send scanFields = decodePairingScan(scanValue, scanRoute)
+      stopPairingCamera()
+  action fillScannedPairing
+    match scanFields
+      case some(fields)
+        if fields.route == pairingRoute and fields.route == scanRoute and pairingRoute != ""
+          scanNotice = fields.error != "" ? fields.error : "Code scanned. Review the address, then connect."
+          if fields.error == ""
+            address = fields.address
+            code = fields.code
+      case none
+        scanNotice = "Could not read that pairing code. Try again or enter it below."

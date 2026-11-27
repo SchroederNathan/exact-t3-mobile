@@ -12,13 +12,43 @@ test "an empty search keeps the filters available and recovers when cleared"
   clock settle
   expect tree has "thread-fixture:alpha"
   type "search" "No matching thread"
+  clock +121
+  clock data
   clock settle
   expect tree missing "thread-fixture:alpha"
+  expect text "empty-title" == "No results"
+  expect text "empty-thread-detail" == "No threads matching \"No matching thread\"."
   expect tree has "all-environments"
   expect tree has "all-projects"
   type "search" ""
   clock settle
   expect tree has "thread-fixture:alpha"
+
+test "search can find a thread by its message and clears the excerpt on a title search"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "search" "deterministic"
+  clock +121
+  clock data
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  expect text "thread-excerpt-fixture:beta" == "Agent: This is a deterministic test conversation."
+  type "search" "Alpha"
+  clock +121
+  clock data
+  clock settle
+  expect tree has "thread-fixture:alpha"
+  expect tree missing "thread-fixture:beta"
+  expect tree missing "thread-excerpt-fixture:alpha"
+  tap "thread-fixture:alpha"
+  clock settle
+  expect state activeThreadId == "fixture:alpha"
 
 test "thread drafts survive switching conversations and relaunch"
   clock data
@@ -93,6 +123,7 @@ test "accepted sends preserve other drafts and newer edits across relaunch"
   tap "connect"
   clock data
   clock settle
+  request POST "http://127.0.0.1:0/capture/home-socket"
   tap "thread-fixture:alpha"
   clock settle
   type "composer" "Accept after release"
@@ -100,6 +131,7 @@ test "accepted sends preserve other drafts and newer edits across relaunch"
   back
   tap "thread-fixture:beta"
   type "composer" "Beta draft during Alpha send"
+  request POST "http://127.0.0.1:0/assert/home-socket"
   request POST "http://127.0.0.1:0/release"
   clock data
   expect text "composer" == "Beta draft during Alpha send"

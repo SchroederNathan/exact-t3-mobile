@@ -4,6 +4,8 @@ This repository is an active, personal clone of T3 Code's Expo mobile experience
 
 The sibling `t3-exact-ios` checkout is the upstream T3 Code reference. Use it to check server behavior and wire compatibility. Keep this client independent and do not import code from that checkout.
 
+In each fresh checkout or worktree, run `bun run deps` before building. It links `.exact/framework` to the same Exact checkout as the main project (`EXACT` can override it) and installs the frozen dependencies without changing tracked paths.
+
 <!-- exact:begin (exact new writes this block; bun exact.mjs update rewrites it) -->
 # exact-t3-mobile: an Exact app
 

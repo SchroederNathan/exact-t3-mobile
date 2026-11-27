@@ -17,6 +17,7 @@
     "workspace-composer-metrics",
     "workspace-composer-editor",
     "workspace-filter-menu",
+    "workspace-usage-chart",
     "workspace-tool-label",
     "workspace-markdown-table",
     "workspace-working-island",
@@ -39,7 +40,7 @@
       "ios": "0"
     }
   },
-  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar"],
+  "data": ["workspace-header", "search-placement", "brand-stage", "hides-back", "sidebar", "review-subtitle"],
   "commands": {
     "prepare-ios": ["python3", "native/highlight/build.py", "--install"]
   }

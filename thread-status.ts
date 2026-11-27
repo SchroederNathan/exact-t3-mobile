@@ -66,15 +66,7 @@ const record = (value: unknown): Record<string, unknown> =>
     : {};
 const activeStatuses = new Set(["preparing", "starting", "running", "waiting"]);
 
-export function threadLifecycleStatus(
-  shell: Record<string, unknown>,
-  nowMs: number,
-): ThreadLifecycleStatus | null {
-  if (Array.isArray(shell.pendingBackgroundTasks) && shell.pendingBackgroundTasks.length > 0)
-    return null;
-  const settled = shell.settledOverride === "settled";
-  const until = validDate(shell.snoozedUntil);
-  if (until === null || !Number.isFinite(nowMs)) return settled ? { state: "settled" } : null;
+function snoozeInterruption(shell: Record<string, unknown>) {
   const snoozedAt = validDate(shell.snoozedAt);
   const request = record(shell.pendingRuntimeRequest);
   const questionAt = request.kind === "user_input" ? validDate(request.createdAt) : null;
@@ -90,6 +82,26 @@ export function threadLifecycleStatus(
     shell.pendingSubagentRequest != null ||
     (typeof shell.pendingGuestMessageCount === "number" && shell.pendingGuestMessageCount > 0) ||
     (shell.status === "failed" && (snoozedAt === null || freshFailure));
+  const raisedAt = !raisedHand ? null : freshFailure && (!freshQuestion || Date.parse(failedAt) >= Date.parse(questionAt))
+    ? failedAt : freshQuestion ? questionAt : validDate(shell.updatedAt) ?? snoozedAt;
+  return { raisedHand, raisedAt };
+}
+
+export function listWakeTime(shell: Record<string, unknown>): number {
+  const until = validDate(shell.snoozedUntil);
+  return until && !snoozeInterruption(shell).raisedHand ? Date.parse(until) : 0;
+}
+
+export function threadLifecycleStatus(
+  shell: Record<string, unknown>,
+  nowMs: number,
+): ThreadLifecycleStatus | null {
+  if (Array.isArray(shell.pendingBackgroundTasks) && shell.pendingBackgroundTasks.length > 0)
+    return null;
+  const settled = shell.settledOverride === "settled";
+  const until = validDate(shell.snoozedUntil);
+  if (until === null || !Number.isFinite(nowMs)) return settled ? { state: "settled" } : null;
+  const { raisedHand, raisedAt } = snoozeInterruption(shell);
   const snoozed = !raisedHand && Date.parse(until) > nowMs;
   const recovery = record(shell.limitRecovery);
   const recoveryOwnsSnooze =
@@ -102,15 +114,7 @@ export function threadLifecycleStatus(
     Date.parse(until) === Date.parse(String(recovery.resetAt));
   if (snoozed && !recoveryOwnsSnooze) return { state: "snoozed", until };
   if (settled) return { state: "settled" };
-  const wokeAt = raisedHand
-    ? freshFailure && (!freshQuestion || Date.parse(failedAt) >= Date.parse(questionAt))
-      ? failedAt
-      : freshQuestion
-        ? questionAt
-        : (validDate(shell.updatedAt) ?? snoozedAt)
-    : Date.parse(until) <= nowMs
-      ? until
-      : null;
+  const wokeAt = raisedHand ? raisedAt : Date.parse(until) <= nowMs ? until : null;
   if (wokeAt === null) return null;
   const seen = [shell.lastVisitedAt, shell.latestRunCompletedAt].some((value) => {
     const at = validDate(value);

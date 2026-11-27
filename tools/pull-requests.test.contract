@@ -1,0 +1,439 @@
+test "PRs load on demand and resolve duplicate repository and PR numbers on the selected source control host" on web
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/settings"
+  tap "environments-button"
+  clock settle
+  tap "environment-add-environments"
+  clock settle
+  type "address" "http://127.0.0.2:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/pulls/none"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  type "root" "/pulls"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect text "pulls-error" == "Unavailable project: Offline"
+  tap "pull-fixture-second.test-fixture/client-shared-9"
+  clock data
+  clock settle
+  expect tree missing "pull-request-comment-fixture-second.test"
+  expect tree has "pull-description-content"
+  expect tree missing "pull-link-options"
+  expect tree missing "pull-description-toggle"
+  tap "pull-section-Activity"
+  clock data
+  expect tree has "pull-request-comment-fixture-second.test"
+  expect tree missing "pull-request-comment-automated"
+  expect tree missing "pull-request-comment-thread-post"
+  expect tree missing "pull-request-discussion-resolved"
+  tap "pull-activity-show"
+  tap "pull-activity-resolved"
+  clock data
+  expect tree has "pull-request-discussion-resolved"
+  tap "pull-open-discussion-resolved"
+  clock data
+  clock settle
+  expect text "pull-discussion-path" == "example:8"
+  expect tree has "pull-discussion-post-thread-post"
+  expect tree missing "pull-discussion-post-older"
+  tap "discussion-more"
+  clock data
+  clock settle
+  expect tree has "pull-discussion-post-older"
+  expect text "discussion-hidden" == "1 reply hidden by the provider."
+  expect tree missing "discussion-more"
+  tap "pull-discussion-back"
+  clock data
+  clock settle
+  expect state visiblePullSection == "Activity"
+  expect tree has "pull-request-discussion-resolved"
+  tap "pull-activity-kind"
+  tap "pull-activity-kind-Commits"
+  clock data
+  expect tree has "pull-request-commit-abcd1234"
+  expect tree missing "pull-request-comment-fixture-second.test"
+  expect tree missing "pull-activity-partial"
+  expect tree missing "pull-file-example"
+  tap "pull-section-Overview"
+  expect text "pull-request-change-counts" == "0 files"
+  expect text "pull-identity-status" == "Draft"
+  expect text "pull-identity-author" == "juniper"
+  expect text "pull-copy-base" == "main"
+  expect text "pull-copy-head" == "fix"
+  expect tree has "pull-file-example"
+  expect tree missing "pull-viewed-example"
+  expect tree has "pull-file-omitted"
+  expect tree has "pull-files-partial"
+  tap "pull-file-example"
+  clock data
+  clock settle
+  expect state current.name == "pullFile"
+  expect text "pull-diff-line:5:example" == "+second.test"
+  expect tree missing "pull-toggle-viewed-example"
+  tap "pull-diff-file-example"
+  expect tree missing "pull-diff-line:5:example"
+  tap "pull-diff-file-example"
+  expect text "pull-diff-line:5:example" == "+second.test"
+  tap "pull-diff-back"
+  clock settle
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,list"
+  tap "pull-files-more"
+  clock data
+  clock settle
+  expect tree has "pull-file-final.txt"
+  expect text "pull-file-origin-final.txt" == "Renamed from docs/old.txt"
+  tap "pull-file-final.txt"
+  clock settle
+  expect state current.params.file == "final.txt"
+  expect text "pull-diff-line:7:final.txt" == "+last"
+  tap "pull-diff-open-picker"
+  clock data
+  clock settle
+  expect text "pull-picker-subtitle" == "#9 · fixture/client"
+  expect tree has "pull-picker-file:final.txt"
+  tap "pull-picker-dir:"
+  clock data
+  expect tree missing "pull-picker-file:final.txt"
+  tap "pull-picker-dir:"
+  clock data
+  tap "pull-picker-file:example"
+  clock settle
+  expect state current.name == "pullFile"
+  expect state current.params.file == "example"
+  tap "pull-diff-back"
+  clock settle
+  expect tree has "pull-file-example"
+  expect tree missing "pull-files-more"
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,diff,list"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  tap "pull-request-back"
+  clock settle
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-fixture-first.test-fixture/client-shared-9"
+  clock data
+  clock settle
+  expect tree has "pull-file-src/panel.test.ts"
+  expect tree has "pull-viewed-src/panel.test.ts"
+  expect tree has "pull-description-toggle"
+  tap "pull-description-toggle"
+  expect state descriptionExpanded == true
+  tap "pull-description-toggle"
+  expect state descriptionExpanded == false
+  expect text "pull-identity-title" == "Updated title from the environment after the list was loaded"
+  tap "pull-link-options"
+  expect tree has "pull-request-open-url"
+  tap "pull-copy-link"
+  expect text "pull-request-change-counts" == "1 file"
+  expect text "pull-files-summary" == "1 changed file · 1 viewed · Test files included"
+  tap "pull-file-src/panel.test.ts"
+  clock data
+  clock settle
+  expect state current.params.file == "src/panel.test.ts"
+  tap "pull-diff-options"
+  expect tree missing "pull-diff-copy"
+  tap "pull-diff-wrap"
+  expect state wrapPullDiff == true
+  tap "pull-select-line:2:src/panel.test.ts"
+  tap "pull-diff-options"
+  tap "pull-diff-copy"
+  tap "pull-diff-options"
+  tap "pull-diff-hide-tests"
+  expect tree missing "pull-diff-file-src/panel.test.ts"
+  tap "pull-diff-show-tests"
+  tap "pull-diff-options"
+  expect tree missing "pull-diff-copy"
+  tap "pull-diff-wrap"
+  expect state wrapPullDiff == false
+  request POST "http://127.0.0.1:0/assert/viewed-writes/0"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/viewed-writes/1"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  expect tree missing "pull-diff-line:2:src/panel.test.ts"
+  request POST "http://127.0.0.1:0/fixture/viewed-permission/deny"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  expect text "pull-viewed-error" == "This connection cannot change viewed files."
+  request POST "http://127.0.0.1:0/assert/viewed-writes/2"
+  request POST "http://127.0.0.1:0/fixture/viewed-permission/allow"
+  reload
+  clock data
+  clock settle
+  expect tree has "pull-diff-file-src/panel.test.ts"
+  expect text "pull-diff-line:2:src/panel.test.ts" == "+ok"
+  tap "pull-diff-back"
+  clock settle
+  tap "pull-file-filter"
+  tap "pull-hide-test-files"
+  expect tree missing "pull-file-src/panel.test.ts"
+  expect text "pull-files-summary" == "0 visible files · 0 viewed · 1 test file hidden"
+  reload
+  clock data
+  clock settle
+  expect tree has "pull-show-test-files"
+  tap "pull-show-test-files"
+  expect tree has "pull-file-src/panel.test.ts"
+  tap "pull-request-back"
+  clock settle
+  type "root" "/pulls/shared/9"
+  clock data
+  clock settle
+  expect tree has "pull-request-ambiguous"
+  type "root" "/pulls"
+  clock settle
+  tap "pull-filter-more"
+  tap "pull-more-draft"
+  tap "pull-choice-draft:only"
+  clock data
+  clock settle
+  expect tree missing "pull-fixture-first.test-fixture/client-shared-9"
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-filter-more"
+  tap "pull-more-sort"
+  tap "pull-choice-sort:created"
+  expect state pullSort == "created"
+  expect state pullControls.count == 1
+  tap "pull-filter-more"
+  tap "pull-more-reset"
+  clock data
+  clock settle
+  expect state pullSort == "updated"
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  tap "pull-filter-labels"
+  tap "pull-labels-triage"
+  clock data
+  clock settle
+  expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-filter-authors"
+  tap "pull-authors-me"
+  clock data
+  clock settle
+  expect state pullControls.count == 2
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  tap "pull-filter-more"
+  tap "pull-more-reset"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-filter-environment"
+  tap "pull-environment-secondary"
+  clock data
+  clock settle
+  expect tree has "pull-secondary-second.test-secondary/client-shared-9"
+  expect tree missing "pull-fixture-first.test-fixture/client-shared-9"
+  expect state selectedEnvironment == ""
+  request POST "http://127.0.0.2:0/assert/pulls/list"
+  tap "pull-filter-more"
+  tap "pull-more-project"
+  expect tree missing "pull-choice-project:fixture:shared"
+  tap "pull-choice-project:secondary:shared"
+  clock data
+  clock settle
+  expect state pullControls.count == 1
+  expect tree has "pull-secondary-second.test-secondary/client-shared-9"
+  request POST "http://127.0.0.2:0/assert/project/shared"
+  tap "pull-filter-labels"
+  tap "pull-search-labels"
+  clock data
+  clock settle
+  expect tree has "pr-facet-result-host-only"
+  request POST "http://127.0.0.2:0/assert/options/labels/shared/empty"
+  type "pr-facet-query" "host-only"
+  clock +249
+  expect state facetSent == ""
+  clock +1
+  clock data
+  clock settle
+  request POST "http://127.0.0.2:0/assert/options/labels/shared/host-only"
+  tap "pr-facet-result-host-only"
+  expect tree has "pr-facet-close"
+  tap "pr-facet-result-host-only"
+  tap "pr-facet-close"
+  clock settle
+  request POST "http://127.0.0.1:0/assert/options/none"
+  tap "pull-filter-authors"
+  tap "pull-search-authors"
+  clock data
+  clock settle
+  tap "pr-facet-result-offpage-author"
+  clock data
+  clock settle
+  expect tree missing "pr-facet-close"
+  expect text "pull-filter-authors" == "offpage-author"
+  tap "pull-filter-authors"
+  tap "pull-authors-"
+  tap "pull-filter-more"
+  tap "pull-more-project"
+  tap "pull-choice-project:secondary:remote"
+  clock data
+  clock settle
+  expect tree missing "pull-secondary-second.test-secondary/client-shared-9"
+  request POST "http://127.0.0.2:0/assert/project/remote"
+  tap "pull-filter-environment"
+  tap "pull-environment-all"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  tap "pull-filter-state"
+  tap "pull-state-closed"
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No matching pull requests"
+  request POST "http://127.0.0.1:0/assert/filters/closed-all"
+  tap "pull-filter-environment"
+  tap "pull-environment-secondary"
+  clock data
+  clock settle
+  expect state pullState == "open"
+  expect state pullProject == "secondary:remote"
+  reload
+  clock data
+  clock settle
+  expect state selectedPullEnvironment == "secondary"
+  expect state pullProject == "secondary:remote"
+  request POST "http://127.0.0.2:0/assert/project/remote"
+  tap "pull-filter-environment"
+  tap "pull-environment-all"
+  clock data
+  clock settle
+  expect state pullState == "closed"
+  expect state pullProject == ""
+  tap "pull-filter-involvement"
+  tap "pull-involvement-reviewing"
+  clock data
+  request POST "http://127.0.0.1:0/assert/filters/closed-reviewing"
+  tap "pull-filter-state"
+  tap "pull-state-merged"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
+  request POST "http://127.0.0.1:0/assert/filters/merged-reviewing"
+  type "pulls-search" "draft:false unmatched"
+  clock +179
+  expect state pullQuery == ""
+  clock +1
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No results"
+  type "pulls-search" "author:@me keyboard"
+  clock +180
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  type "pulls-search" "pages"
+  clock +180
+  clock data
+  clock settle
+  expect tree has "pulls-more"
+  tap "pulls-more"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-19"
+  expect tree missing "pulls-more"
+  type "root" "/pulls/pr-5b227365636f6e64617279222c22736861726564222c227365636f6e642e74657374222c227365636f6e646172792f636c69656e74225d/29"
+  clock data
+  clock settle
+  expect tree missing "pull-request-comment-secondary-second.test"
+  expect text "pull-description-empty" == "No description provided."
+  tap "pull-section-Activity"
+  clock data
+  expect tree has "pull-request-comment-secondary-second.test"
+  tap "pull-section-Overview"
+  expect tree has "pull-file-example"
+  expect tree missing "pull-request-not-found"
+  reload
+  clock data
+  clock settle
+  expect tree missing "pull-request-comment-secondary-second.test"
+  tap "pull-section-Activity"
+  clock data
+  expect tree has "pull-request-comment-secondary-second.test"
+  tap "pull-section-Overview"
+  expect tree has "pull-file-example"
+  type "root" "/pulls/pr-5b227365636f6e64617279222c22736861726564222c227365636f6e642e74657374222c227365636f6e646172792f636c69656e74225d/29/discussion/resolved"
+  clock data
+  clock settle
+  expect tree has "pull-discussion-path"
+  expect tree missing "discussion-reply"
+  expect tree missing "discussion-resolution"
+  tap "discussion-more"
+  clock data
+  clock settle
+  expect text "discussion-page-error" == "The environment repeated a replies page."
+  expect tree missing "discussion-more"
+  type "root" "/pulls/pr-5b2266697874757265222c22736861726564222c227365636f6e642e74657374222c22666978747572652f636c69656e74225d/9/discussion/resolved"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/discussion-writes/0"
+  type "discussion-reply" "fixture rejected"
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect text "discussion-write-message" == "Fixture rejected the reply."
+  expect state replyDraft == "fixture rejected"
+  type "discussion-reply" "Checked on the narrow screen."
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect state replyDraft == ""
+  expect tree has "pull-discussion-post-posted-1"
+  expect text "discussion-write-message" == "Reply posted."
+  tap "discussion-resolution"
+  clock data
+  clock settle
+  expect text "discussion-write-message" == "Discussion status updated."
+  request POST "http://127.0.0.1:0/assert/discussion-writes/3"
+  type "discussion-reply" "Do not lose this draft"
+  request POST "http://127.0.0.1:0/fixture/discussion-viewer/deny"
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect state replyDraft == "Do not lose this draft"
+  expect text "discussion-write-message" == "This connection cannot change this discussion."
+  expect tree missing "discussion-post"
+  request POST "http://127.0.0.1:0/assert/discussion-writes/3"
+  request POST "http://127.0.0.2:0/assert/discussion-writes/0"
+  type "root" "/pulls/pr-5b2266697874757265222c22736861726564222c227365636f6e642e74657374222c22666978747572652f636c69656e74225d/9"
+  clock data
+  clock settle
+  tap "pull-section-Activity"
+  clock data
+  tap "pull-open-commit-abcd1234"
+  clock data
+  clock settle
+  expect text "pull-diff-summary" == "abcd123 · 1 file"
+  expect text "pull-diff-line:2:example" == "+commit-only example"
+  expect tree missing "pull-diff-file-omitted"
+  tap "pull-diff-open-picker"
+  clock settle
+  tap "pull-picker-more"
+  clock data
+  clock settle
+  tap "pull-picker-file:src/final.ts"
+  clock settle
+  expect state current.name == "pullCommitFile"
+  expect text "pull-diff-line:2:src/final.ts" == "+commit-only src/final.ts"
+  reload
+  clock data
+  clock settle
+  clock +10
+  clock data
+  clock settle
+  expect text "pull-diff-line:2:src/final.ts" == "+commit-only src/final.ts"
+  expect tree missing "pull-toggle-viewed-src/final.ts"

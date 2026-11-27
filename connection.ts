@@ -3,6 +3,10 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
+import { usageChart, usageTotals, type usageWindow } from "./usage";
+import { limitReports } from "./limit-pools";
+import { pullSearch } from "./pull-search";
+import type { PullPageRequest } from "./pull-pages";
 import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
@@ -10,6 +14,7 @@ import {
   projectThreadStatus,
   threadIsCompacting,
   threadLifecycleStatus,
+  listWakeTime,
   threadWorkStartedAt,
 } from "./thread-status";
 import { ThreadHistory, type HistorySummary, type TimelineRow } from "./thread-history";
@@ -58,9 +63,36 @@ import {
   type ComposerQueueState,
 } from "./composer-queue";
 
+import { canDeferThread, snoozeChoices, snoozeDeadline } from "./snooze";
+
 export type Catalog = Omit<Result<"loadCatalog">, "modelDraftRevision">;
 export type Environment = Catalog["environments"][number];
 type Thread = Catalog["threads"][number];
+type ListThread = Thread & { pinKey: string | null; createdAtMillis: number };
+
+export function newPinKey(keys: string[]): string | undefined {
+  const first = keys.reduce<string | undefined>((best, key) => best === undefined || key < best ? key : best, undefined);
+  if (!first) return "n";
+  if (!/^[a-z]+$/.test(first) || first.endsWith("a")) return undefined;
+  const leading = first.match(/^a*/)?.[0] ?? "";
+  const digit = first.charCodeAt(leading.length) - 97;
+  if (digit === 1) return leading + (first.length > leading.length + 1 ? "b" : "an");
+  return leading + String.fromCharCode(97 + Math.ceil(digit / 2));
+}
+
+export function rankThreadPins(rows: ListThread[]): Thread[] {
+  const ordered = rows.filter(row => row.pinRank >= 0).sort((left, right) => {
+    if (left.pinKey !== right.pinKey) {
+      if (left.pinKey === null) return 1;
+      if (right.pinKey === null) return -1;
+      return left.pinKey < right.pinKey ? -1 : 1;
+    }
+    const age = left.pinKey === null ? right.createdAtMillis - left.createdAtMillis : 0;
+    return age || threadIdentity(left.id).threadId.localeCompare(threadIdentity(right.id).threadId) || left.environmentId.localeCompare(right.environmentId);
+  });
+  const ranks = new Map(ordered.map((row, index) => [row.id, index]));
+  return rows.map(({ pinKey, createdAtMillis, ...row }) => ({ ...row, pinRank: ranks.get(row.id) ?? -1 }));
+}
 type Reply = Result<"command">;
 type ObjectValue = Record<string, unknown>;
 let sessionSerial = 0;
@@ -316,6 +348,15 @@ export function threadIdentity(id: string): { environmentId: string; threadId: s
     environmentId: decodeURIComponent(id.slice(0, separator)),
     threadId: decodeURIComponent(id.slice(separator + 1)),
   };
+}
+
+export function catalogThreadIdentity(id: string): ReturnType<typeof threadIdentity> | undefined {
+  try {
+    const identity = threadIdentity(id);
+    return identity.threadId ? identity : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function threadIdFromUrl(url: string): string {
@@ -575,6 +616,28 @@ function activity(thread: ObjectValue, settled: boolean): number {
       ].map(timestamp),
     ) || timestamp(thread.updatedAt)
   );
+}
+
+function threadSearchFields(thread: ObjectValue) {
+  const terms = [string(thread.branch).toLowerCase()].filter(Boolean);
+  const references = new Set<string>();
+  const links = records(thread.pullRequests);
+  const visible = links.filter(link => link.source !== "stack-dismissed");
+  const changedAt = (link: ObjectValue) => timestamp(object(link.snapshot).updatedAt) || timestamp(link.linkedAt);
+  for (const link of visible.sort((left, right) => changedAt(right) - changedAt(left)).slice(0, 3)) {
+    const title = string(object(link.snapshot).title).trim().toLowerCase();
+    if (title) terms.push(title);
+  }
+  for (const link of [...visible, object(thread.branchPullRequest), ...(links.length ? [] : [object(thread.linkedPullRequest)])]) {
+    if (typeof link.number !== "number" || !Number.isSafeInteger(link.number) || link.number < 1) continue;
+    references.add(`#${link.number}`);
+    references.add(String(link.number));
+    const repository = string(link.repository).trim().toLowerCase();
+    const url = string(link.url).trim().toLowerCase();
+    if (repository) references.add(`${repository}#${link.number}`);
+    if (url) references.add(url);
+  }
+  return { searchTerms: terms, searchReferences: [...references] };
 }
 
 function relativeTime(at: number, now: number): string {
@@ -889,6 +952,14 @@ export class DirectSession {
     { pending: boolean; error: string; threadId: string; runId: string; result: string }
   >();
   private forceStops = new Map<string, { accessKey: string }>();
+  private pinWrites = new Set<string>();
+  private titleWrites = new Set<string>();
+  private autoSettleWrites = new Set<string>();
+  private snoozeUndo?: { receipt: string; id: string; key: string; wake: number; observedAt?: string };
+  private settleWrites = new Set<string>();
+  private settleUndo?: { receipt: string; id: string; key: string; pinned: boolean; orderKey: string; snoozedUntil: string; observedAt?: string };
+  private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
+  private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
   private tools = new Map<string, ExpandedTool>();
   private socket: StreamSocket | undefined;
   private nextId = 0;
@@ -996,6 +1067,26 @@ export class DirectSession {
       string(this.projects.get(string(shell.projectId))?.workspaceRoot);
     if (!cwd) throw new Error("This thread has no available workspace.");
     return cwd;
+  }
+
+  async searchThreadMessages(raw: string, projectId: string) {
+    const query = raw.trim().slice(0, 200).trim();
+    const words = query.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").split(/\s+/);
+    if (!words.some(word => Array.from(word).length >= 3 || (Array.from(word).length === 2 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(word)))) return [];
+    const result = await this.query("orchestration.searchThreads", {
+      query, limit: 50,
+    });
+    const seen = new Set<string>();
+    return records(result.matches).slice(0, 50).flatMap(match => {
+      const id = string(match.threadId);
+      const shell = this.shells.get(id);
+      const snippet = string(match.snippet).trim().slice(0, 240);
+      if (!shell || shell.archivedAt || shell.deletedAt || seen.has(id) || !snippet ||
+          match.projectId !== shell.projectId || (projectId && shell.projectId !== projectId) ||
+          (match.source !== "user" && match.source !== "assistant")) return [];
+      seen.add(id);
+      return [{ id: scopedThreadId(this.environment.id, id), snippet, source: match.source }];
+    });
   }
 
   private composerCatalogProvider(value: unknown, cwd: string): ComposerProviderCatalog {
@@ -1125,6 +1216,18 @@ export class DirectSession {
     return this.gitOperationStateByThread.get(threadId) ?? { status: "idle" };
   }
 
+  subscriptionLimits() {
+    return this.configReady && this.environment.status === "Connected"
+      ? limitReports(this.environment.id, this.environment.label, this.config.providers, this.config.usageLimitSources) : [];
+  }
+
+  async readUsage(window: ReturnType<typeof usageWindow>, refresh: boolean) {
+    const summary = await this.query("server.getUsageSummary", {
+      ...window, ...(refresh ? { awaitRefresh: true } : {}),
+    });
+    return { ...usageTotals(summary), chart: usageChart(summary.buckets, window) };
+  }
+
   async refreshStatusAt(cwd: string, localOnly = false): Promise<GitStatus> {
     const result = await this.query("vcs.refreshStatus", { cwd, ...(localOnly ? { localOnly } : {}) });
     return this.normalizeGitStatus(cwd, result);
@@ -1199,29 +1302,56 @@ export class DirectSession {
     return result;
   }
 
-  async listPullRequests(): Promise<ObjectValue> {
-    return this.query("pullRequests.list", { state: "open", involvement: "all", limit: 100 });
+  async listPullRequests(state = "open", involvement = "all", search = "", page: PullPageRequest = {limit:30}, projectId?: string, labels: string[] = [], author = ""): Promise<ObjectValue> {
+    if (!["open", "closed", "merged", "all"].includes(state) || !["all", "reviewing", "authored"].includes(involvement)) throw new Error("Unknown pull request filter.");
+    return this.query("pullRequests.list", { state, involvement, ...page, ...pullSearch(search,labels,author), ...(projectId ? {projectId} : {}) });
   }
 
-  async pullRequestDetail(projectId: string, repository: string, number: number): Promise<ObjectValue> {
+  async pullRequestDetail(projectId: string, repository: string, number: number, host?: string, allowStale = true): Promise<ObjectValue> {
     return this.query("pullRequests.detail", {
+      ...(host ? { host } : {}),
       projectId,
       repository,
       number,
-      allowStale: true,
+      allowStale,
     });
+  }
+
+  async pullFilterOptions(kind:string, query:string, projectId?:string): Promise<ObjectValue> {
+    if (kind !== "labels" && kind !== "authors") throw new Error("Unknown pull request option kind.");
+    const text = query.trim().slice(0,100);
+    return this.query("pullRequests.filterOptions",{kind,...(text ? {query:text} : {}),...(projectId ? {projectId} : {})});
+  }
+
+  async pullFilesViewed(projectId: string, repository: string, number: number, host: string) {
+    return this.query("pullRequests.filesViewed", { projectId, repository, number, host });
+  }
+
+  async pullThreadComments(projectId:string,repository:string,number:number,host:string,threadId:string,cursor:string) {
+    return this.query("pullRequests.threadComments",{projectId,repository,number,host,threadId,cursor});
+  }
+
+  async changePullDiscussion(ref: {projectId:string; repository:string; number:number; host:string; threadId:string}, change: {body:string} | {resolved:boolean}) {
+    await this.query("body" in change ? "pullRequests.replyToThread" : "pullRequests.setThreadResolution", {...ref,...change});
+  }
+
+  async setPullFileViewed(projectId: string, repository: string, number: number, host: string, path: string, viewed: boolean) {
+    await this.query("pullRequests.setFilesViewed", {projectId,repository,number,host,files:[{path,viewed}]});
   }
 
   async pullRequestActivity(
     projectId: string,
     repository: string,
     number: number,
+    host?: string,
+    allowStale = true,
   ): Promise<ObjectValue> {
     return this.query("pullRequests.activity", {
+      ...(host ? { host } : {}),
       projectId,
       repository,
       number,
-      allowStale: true,
+      allowStale,
     });
   }
 
@@ -1690,6 +1820,10 @@ export class DirectSession {
   }
 
   open(socket: StreamSocket) {
+    this.pinUndo = undefined;
+    this.snoozeUndo = undefined;
+    this.settleUndo = undefined;
+    this.snoozeRestore = undefined;
     this.controlEpoch++;
     this.controlGrant = false;
     this.clearToolPanels();
@@ -2886,6 +3020,183 @@ export class DirectSession {
     return this.configReady;
   }
 
+  pinKeys(): string[] {
+    return [...this.shells.values()].flatMap(row => row.pinnedAt != null && typeof row.pinOrderKey === "string" ? [row.pinOrderKey] : []);
+  }
+
+  async updateRowTitle(id: string, key: string, original: string, value: string, regenerate: boolean, auth: unknown) {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before updating the title.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to update thread titles.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    const title = value.trim();
+    if (regenerate) {
+      if (object(object(this.config.environment).capabilities).threadTitleRegeneration !== true) throw new Error("This server does not support title regeneration.");
+      if (row.titleRegeneration != null) throw new Error("The title is already regenerating.");
+    } else {
+      if (!title) throw new Error("Thread title cannot be empty.");
+      if (title === original || title === string(row.title)) return;
+      if (original !== string(row.title)) throw new Error("The thread title changed. Reopen Rename to edit the new title.");
+    }
+    const operation = JSON.stringify([key, id]);
+    if (this.titleWrites.has(operation)) throw new Error("A title change is already pending.");
+    this.titleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { type: "thread.metadata.update", commandId: crypto.randomUUID(), threadId: id, ...(regenerate ? { regenerateTitle: true } : { title }) });
+    } finally { this.titleWrites.delete(operation); }
+  }
+
+  async setRowAutoSettle(id: string, key: string, enabled: boolean, auth: unknown) {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before changing auto-settle.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change auto-settle.");
+    if (object(object(this.config.environment).capabilities).threadAutoSettleOptOut !== true) throw new Error("This server does not support per-thread auto-settle.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    const operation = JSON.stringify([key, id]);
+    if (this.autoSettleWrites.has(operation)) throw new Error("An auto-settle change is already pending.");
+    if (enabled === (row.autoSettleDisabledAt == null)) return;
+    this.autoSettleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { type: "thread.auto-settle.set", threadId: id, commandId: crypto.randomUUID(), enabled });
+    } finally { this.autoSettleWrites.delete(operation); }
+  }
+
+  snoozeMenu(id: string, key: string, now: number) {
+    const row = this.shells.get(id);
+    const enabled = Boolean(row && listedThread(row) && key && key === this.controlAccessKey() && this.shellLive && this.configReady && object(object(this.config.environment).capabilities).threadSnooze === true);
+    const sleeping = enabled && listWakeTime(row!) > now;
+    const available = enabled && (sleeping || canDeferThread(row!, now));
+    return { available, sleeping, choices: available && !sleeping ? snoozeChoices(object(this.config.settings).snoozePresets, now) : [] };
+  }
+
+  async changeSettlement(id: string, key: string, settle: boolean, receipt: string, now: number, auth: unknown) {
+    const liveRow = () => {
+      if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before changing settlement.");
+      if (!controlAccess(auth)) throw new Error("This connection does not have permission to change settlement.");
+      const row = this.shells.get(id);
+      if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+      return row;
+    };
+    const row = liveRow(), operation = JSON.stringify([key, id]);
+    if (!receipt && listWakeTime(row) > now) throw new Error("Wake this thread before changing settlement.");
+    if (this.settleWrites.has(operation)) throw new Error("A settlement change is already pending.");
+    const restore = receipt ? this.settleUndo : undefined;
+    if (receipt && (!restore || settle || restore.receipt !== receipt || restore.key !== key || restore.id !== id || row.settledOverride !== "settled" || restore.observedAt !== string(row.settledAt))) throw new Error("This settle undo is no longer available.");
+    if ((row.settledOverride === "settled" && row.status !== "queued") === settle) throw new Error("The thread's settlement has changed.");
+    if (this.settleUndo?.id === id) this.settleUndo = undefined;
+    if (this.pinUndo?.id === id) this.pinUndo = undefined;
+    if (this.snoozeUndo?.id === id) this.snoozeUndo = undefined;
+    const commandId = crypto.randomUUID();
+    this.settleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { commandId, threadId: id, ...(settle ? { type: "thread.settle" } : { type: "thread.unsettle", reason: "user" }) });
+      liveRow();
+      if (settle) {
+        this.settleUndo = { receipt: commandId, id, key, pinned: row.pinnedAt != null, orderKey: string(row.pinOrderKey), snoozedUntil: string(row.snoozedUntil) };
+        this.reconcileSettlement();
+        return commandId;
+      }
+      if (restore?.pinned) {
+        await this.query("orchestration.dispatchCommand", { type: "thread.pin", commandId: crypto.randomUUID(), threadId: id, ...(restore.orderKey ? { orderKey: restore.orderKey } : {}) });
+        liveRow();
+      }
+      if (restore?.snoozedUntil) {
+        this.snoozeRestore = restore;
+        return receipt;
+      }
+      return "";
+    } finally { this.settleWrites.delete(operation); }
+  }
+
+  private reconcileSettlement() {
+    const undo = this.settleUndo;
+    if (!undo) return;
+    const row = this.shells.get(undo.id);
+    if (row?.settledOverride === "settled" && row.status !== "queued" && (undo.observedAt === undefined || undo.observedAt === string(row.settledAt))) undo.observedAt = string(row.settledAt);
+    else if (!row || undo.observedAt !== undefined) this.settleUndo = undefined;
+  }
+
+  async changeSnooze(id: string, key: string, choiceId: string, opened: number, now: number, auth: unknown, customWake = 0) {
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change thread snoozes.");
+    const menu = this.snoozeMenu(id, key, now);
+    if (!menu.available || menu.sleeping !== (choiceId === "wake")) throw new Error("This thread action is no longer available.");
+    const commandId = crypto.randomUUID();
+    if (choiceId === "wake") {
+      if (this.snoozeUndo?.id === id) this.snoozeUndo = undefined;
+      await this.query("orchestration.dispatchCommand", { type: "thread.unsnooze", commandId, threadId: id, reason: "user" });
+      return "";
+    } else {
+      const choices = snoozeChoices(object(this.config.settings).snoozePresets, opened);
+      const wake = choiceId === "custom" ? customWake : snoozeDeadline(choices.find(choice => choice.id === choiceId), now);
+      if (!(wake > now) || !Number.isFinite(new Date(wake).getTime())) throw new Error("Choose a future snooze time.");
+      await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId, threadId: id, snoozedUntil: new Date(wake).toISOString() });
+      if (key !== this.controlAccessKey()) throw new Error("The connection changed. Check the thread before trying again.");
+      this.snoozeUndo = { receipt: commandId, id, key, wake };
+      this.reconcileSnoozeUndo();
+      return commandId;
+    }
+  }
+
+  undoThreadSnooze(id: string, key: string, receipt: string, now: number, auth: unknown) {
+    const prior = this.snoozeUndo;
+    if (!prior || prior.receipt !== receipt || prior.key !== key || prior.id !== id)
+      throw new Error("This snooze undo is no longer available.");
+    this.snoozeUndo = undefined;
+    const row = this.shells.get(id);
+    if (!row || listWakeTime(row) !== prior.wake || prior.wake <= now)
+      throw new Error("The thread's snooze has changed.");
+    return this.changeSnooze(id, key, "wake", now, now, auth);
+  }
+
+  private reconcileSnoozeUndo() {
+    const prior = this.snoozeUndo;
+    if (!prior) return;
+    const row = this.shells.get(prior.id);
+    if (row && listWakeTime(row) === prior.wake && (prior.observedAt === undefined || prior.observedAt === string(row.snoozedAt))) {
+      prior.observedAt = string(row.snoozedAt);
+    } else if (prior.observedAt !== undefined || !row) this.snoozeUndo = undefined;
+  }
+
+  async setThreadPinned(id: string, key: string, pin: boolean, auth: unknown, orderKey?: string, receipt = ""): Promise<string> {
+    if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady)
+      throw new Error("Reconnect before changing pinned threads.");
+    if (!controlAccess(auth)) throw new Error("This connection does not have permission to change pinned threads.");
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+    const restore = receipt ? this.pinUndo : undefined;
+    if (receipt && (!pin || !restore || restore.receipt !== receipt || restore.id !== id || restore.key !== key))
+      throw new Error("This undo is no longer available.");
+    const operation = JSON.stringify([key, id]);
+    if (this.pinWrites.has(operation)) throw new Error("A pin change is already pending for this thread.");
+    if (!pin || receipt || this.pinUndo?.id === id) this.pinUndo = undefined;
+    if ((row.pinnedAt != null) === pin) return "";
+    const prior = pin ? undefined : { receipt: crypto.randomUUID(), id, key, orderKey: string(row.pinOrderKey), snoozedUntil: string(row.snoozedUntil) };
+    this.pinWrites.add(operation);
+    try {
+      const placement = restore?.orderKey || orderKey;
+      await this.query("orchestration.dispatchCommand", { type: pin ? "thread.pin" : "thread.unpin", commandId: crypto.randomUUID(), threadId: id, ...(pin && placement ? { orderKey: placement } : {}) });
+      if (key !== this.controlAccessKey()) throw new Error("The connection changed. Check the thread before trying again.");
+      if (prior) this.pinUndo = prior;
+      if (restore && restore.snoozedUntil) {
+        this.snoozeRestore = restore;
+        return restore.receipt;
+      }
+      return prior?.receipt ?? "";
+    } finally {
+      this.pinWrites.delete(operation);
+    }
+  }
+
+  async finishPinUndo(id: string, receipt: string, now: number): Promise<void> {
+    const restore = this.snoozeRestore;
+    if (!restore || restore.receipt !== receipt || restore.id !== id || restore.key !== this.controlAccessKey()) throw new Error("This undo is no longer available.");
+    this.snoozeRestore = undefined;
+    if (timestamp(restore.snoozedUntil) <= now) return;
+    const row = this.shells.get(id);
+    if (!row || !listedThread(row) || !this.shellLive) throw new Error("The thread changed before its snooze could be restored.");
+    await this.query("orchestration.dispatchCommand", { type: "thread.snooze", commandId: crypto.randomUUID(), threadId: id, snoozedUntil: restore.snoozedUntil });
+  }
+
   async readableComposerEnvironmentIds(): Promise<string[]> {
     if (object(object(this.config.environment).capabilities).peerLinks !== true || object(this.config.settings).linkedEnvironmentsEnabled !== true)
       return [this.environment.id];
@@ -3289,6 +3600,8 @@ export class DirectSession {
       this.switchingSnapshots.delete(string(item.threadId));
       this.pruneTools();
     }
+    this.reconcileSnoozeUndo();
+    this.reconcileSettlement();
   }
 
   private requestFavicon(project: ObjectValue) {
@@ -3464,7 +3777,8 @@ export class DirectSession {
     });
   }
 
-  threads(now = 0): Thread[] {
+  threads(now = 0): ListThread[] {
+    const supportsSnooze = object(object(this.config.environment).capabilities).threadSnooze === true;
     return [...this.shells.entries()]
       .filter(([id, thread]) => !thread.deletedAt && (id === this.selected || listedThread(thread)))
       .map(([id, thread]) => {
@@ -3494,9 +3808,11 @@ export class DirectSession {
         return {
           id: scopedThreadId(this.environment.id, id),
           listed: listedThread(thread),
+          serverThreadId: id,
           environmentId: this.environment.id,
           project: string(project.title) || "Project",
           projectId: scopedThreadId(this.environment.id, string(thread.projectId)),
+          ...threadSearchFields(thread),
           ...projectIcon(project),
           ...(!project.projectIcon && this.favicons.get(string(thread.projectId))?.url
             ? { projectIcon: this.favicons.get(string(thread.projectId))!.url }
@@ -3515,9 +3831,18 @@ export class DirectSession {
           lastError: error.message,
           lastErrorTime: error.time,
           settled,
+          canSettle: this.configReady && this.shellLive,
           working: working(thread),
+          wakeAt: supportsSnooze ? listWakeTime(thread) : 0,
+          pinRank: thread.pinnedAt != null ? 0 : -1,
+          pinKey: typeof thread.pinOrderKey === "string" ? thread.pinOrderKey : null,
+          createdAtMillis: timestamp(thread.createdAt),
           activityAt,
           title: string(thread.title),
+          canRegenerateTitle: object(object(this.config.environment).capabilities).threadTitleRegeneration === true,
+          canSetAutoSettle: this.configReady && object(object(this.config.environment).capabilities).threadAutoSettleOptOut === true,
+          followsAutoSettle: thread.autoSettleDisabledAt == null,
+          regeneratingTitle: thread.titleRegeneration != null,
           status: status(thread),
           visit: visitMetadata(thread),
           updatedAt: relativeTime(activityAt, now),
