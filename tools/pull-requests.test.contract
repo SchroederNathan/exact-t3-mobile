@@ -38,3 +38,22 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect tree has "pull-request-ambiguous"
+  type "root" "/pulls"
+  clock settle
+  tap "pull-filter-state"
+  tap "pull-state-closed"
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No matching pull requests"
+  request POST "http://127.0.0.1:0/assert/filters/closed-all"
+  tap "pull-filter-involvement"
+  tap "pull-involvement-reviewing"
+  clock data
+  request POST "http://127.0.0.1:0/assert/filters/closed-reviewing"
+  tap "pull-filter-state"
+  tap "pull-state-merged"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
+  request POST "http://127.0.0.1:0/assert/filters/merged-reviewing"

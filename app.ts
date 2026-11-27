@@ -1720,10 +1720,10 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async ([ids], store, _storage, native) => {
+  loadPullRequests: async ([ids, state, involvement], store, _storage, native) => {
     const responses = await Promise.all(ids.map(async environmentId => {
       try {
-        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests());
+        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests(state, involvement));
         const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
             const summary = pullRequestSummary(raw);

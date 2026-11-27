@@ -350,6 +350,8 @@ shape PullLabel
   name: string
   color: string
 
+fn pullFilterLabel(value: string, involvement: bool): string = involvement ? (value == "reviewing" ? "Your review" : value == "authored" ? "By you" : "All PRs") : (value == "open" ? "Open" : value == "merged" ? "Merged" : value == "closed" ? "Closed" : "All states")
+
 shape PullRow
   status: string
   conflict: bool
@@ -680,7 +682,9 @@ component T3Code
   resource gitStatus = loadGitStatus(activeThreadId != "" ? activeThreadId : activeDraftKey, gitStatusRevision, newTask.environmentId, newTask.cwd) as shape GitStatus else empty()
   resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
-  resource pullRequests = loadPullRequests(current.name == "pullRequests" or current.name == "pullRequest" ? catalog.environments.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : []) as shape PullRequests else empty()
+  state pullState = "open"
+  state pullInvolvement = "all"
+  resource pullRequests = loadPullRequests(current.name == "pullRequests" or current.name == "pullRequest" ? catalog.environments.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : [], pullState, pullInvolvement) as shape PullRequests else empty()
   derive matchingPulls = pullRequests.items.filter(item => current.name == "pullRequest" and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
   resource pullRequestDetail = loadPullRequestDetail(matchingPulls) as shape PullRequestDetail else empty()
   resource pullRequestActivity = loadPullRequestActivity(matchingPulls) as shape PullRequestActivity else empty()
@@ -1490,6 +1494,14 @@ component T3Code
     let base = split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav
     let followed = go(base, url)
     nav = followed.next == base.next ? followed : open(base, url)
+
+  action filterPullState(value: string)
+    if value == "open" or value == "closed" or value == "merged" or value == "all"
+      pullState = value
+
+  action filterPullInvolvement(value: string)
+    if value == "all" or value == "reviewing" or value == "authored"
+      pullInvolvement = value
 
   action openPullRequest(projectId: string, number: number)
     nav = push(nav, path("pullRequest", projectId, `${number}`))
@@ -2604,6 +2616,10 @@ component T3Code
                 column navigationKey=`${e.id}` navigationScroll=(pullRequests.items.length == 0 ? "pulls" : "pulls-list") data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Pull Requests" role="heading" aria-level=2
+                  scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 background-color="screen" testId="pulls-filters"
+                    row gap=8 align-items="center" padding="2px 16px 10px"
+                      PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
+                      PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
                   if pullRequests.items.length == 0
                     scroll id="pulls" flex=1 min-height=0 background-color="screen"
                       if pending(pullRequests) or not environmentState.loaded or pending(catalog)
@@ -2836,6 +2852,8 @@ component T3Code
           for environment in catalog.environments key=environment.id
             button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
               text environment.label
+        PullFilterMenu(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", choose=filterPullState)
+        PullFilterMenu(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", choose=filterPullInvolvement)
         column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
           button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
             text "All projects"
@@ -3217,6 +3235,37 @@ component ThreadList
                   text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
                 text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+
+component PullFilterChip
+  props
+    field: string
+    selected: string
+    options: string[]
+    label: string
+    native: bool
+    choose: action
+  derive involvement = field == "involvement"
+  derive active = selected != (involvement ? "all" : "open")
+  view
+    if native
+      workspace-filter-menu chip-label=pullFilterLabel(selected, involvement) options-query=options.map(option => `${option}=${encodeURIComponent(pullFilterLabel(option, involvement))}`).join("&") selected-id=selected active=(active ? "true" : "false") accessibility-label=label test-id=`pull-filter-${field}` testId=`pull-filter-${field}` message=choose flex-shrink=0
+    else
+      button popovertarget=`pull-filter-menu-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size=14 line-height="19px" font-weight=500 testId=`pull-filter-${field}`
+        text pullFilterLabel(selected, involvement)
+        image "symbol:sf/chevron.down" width=11 height=11
+
+component PullFilterMenu
+  props
+    field: string
+    selected: string
+    options: string[]
+    label: string
+    choose: action
+  view
+    column id=`pull-filter-menu-${field}` popover="auto" role="menu" aria-label=label
+      for option in options key=option
+        button press=choose(option) role="menuitemradio" aria-checked=(option == selected) popovertarget=`pull-filter-menu-${field}` popovertargetaction="hide" testId=`pull-${field}-${option}`
+          text pullFilterLabel(option, field == "involvement")
 
 component SearchExcerpt
   props
