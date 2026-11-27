@@ -9,6 +9,7 @@ import { decodePullRoute, pullRouteKey } from "./pull-route";
 import { ChangedFilePages } from "./pull-files";
 import { pullListPredicate } from "./pull-search";
 import { PullPages } from "./pull-pages";
+import { readPullPreferences, writePullPreference } from "./pull-preferences";
 import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
@@ -68,7 +69,7 @@ import {
 
 export const grants =
   "device.camera purpose.camera\n" +
-  "device.microphone purpose.microphone\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "device.microphone purpose.microphone\nfs.read app:/data/pull-list-controls-v1.json\nfs.write app:/data/pull-list-controls-v1.json\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
@@ -597,6 +598,14 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  readPullPrefs: async (_args,_store,storage) => {
+    try { return {ready:true,items:await readPullPreferences(storage.fs),error:""}; }
+    catch { return {ready:true,items:[],error:"Saved pull request filters could not be read."}; }
+  },
+  writePullPrefs: async ([entry],_store,storage) => {
+    try { await writePullPreference(storage.fs,entry); return {ok:true,error:""}; }
+    catch { return {ok:false,error:"Pull request filters could not be saved."}; }
+  },
   pullControlMenu: ([state,involvement,draft,review,checks,sort,projects,environments,scope,project,count]) => pullControlMenu(state,involvement,draft,review,checks,sort,projects,environments,scope,project,count),
   pullFacets: ([items,labels,author]) => pullFacets(items,labels,author),
   facetSearchRows: ([selected,loaded,hosted,query]) => facetSearchRows(selected,loaded,hosted,query),

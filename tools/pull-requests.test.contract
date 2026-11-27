@@ -169,6 +169,24 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect text "pulls-empty" == "No matching pull requests"
   request POST "http://127.0.0.1:0/assert/filters/closed-all"
+  tap "pull-filter-environment"
+  tap "pull-environment-secondary"
+  clock data
+  clock settle
+  expect state pullState == "open"
+  expect state pullProject == "secondary:remote"
+  reload
+  clock data
+  clock settle
+  expect state selectedPullEnvironment == "secondary"
+  expect state pullProject == "secondary:remote"
+  request POST "http://127.0.0.2:0/assert/project/remote"
+  tap "pull-filter-environment"
+  tap "pull-environment-all"
+  clock data
+  clock settle
+  expect state pullState == "closed"
+  expect state pullProject == ""
   tap "pull-filter-involvement"
   tap "pull-involvement-reviewing"
   clock data

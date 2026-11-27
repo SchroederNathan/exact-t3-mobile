@@ -398,6 +398,23 @@ shape HostedFacets
   rows: PullFacetOption[]
   failed: bool
 
+shape PullPreference
+  scope: string
+  state: string
+  involvement: string
+  draft: string
+  review: string
+  checks: string
+  sort: string
+  project: string
+  labels: string[]
+  author: string
+
+shape SavedPullPreferences
+  ready: bool
+  items: PullPreference[]
+  error: string
+
 shape PullControlMenu
   count: number
   reset: bool
@@ -724,7 +741,7 @@ component T3Code
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
-  state pullEnvironment = ""
+  state pullEnvironment = "" persist
   derive pullWorkspace = current.name == "pullRequests" or current.name == "pullRequest" or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
   resource pullLink = parsePullLink(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRef[] else empty()
@@ -756,15 +773,25 @@ component T3Code
   resource gitStatus = loadGitStatus(activeThreadId != "" ? activeThreadId : activeDraftKey, gitStatusRevision, newTask.environmentId, newTask.cwd) as shape GitStatus else empty()
   resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
-  state pullState = "open"
-  state pullInvolvement = "all"
-  state pullDraftFilter = "all"
-  state pullReviewFilter = "all"
-  state pullChecksFilter = "all"
-  state pullSort = "updated"
-  state pullProject = ""
-  state pullLabels: string[] = []
-  state pullAuthor = ""
+  resource savedPullPrefs = readPullPrefs() as shape SavedPullPreferences else empty()
+  mutation wrotePullPrefs as shape Reply queue
+  state editedPullPrefs: PullPreference[] = []
+  derive defaultPullPrefs = PullPreference(scope=selectedPullEnvironment, state="open", involvement="all", draft="all", review="all", checks="all", sort="updated", project="", labels=[], author="")
+  derive activePullPrefs = match first(editedPullPrefs.concat(savedPullPrefs.items).filter(pref => pref.scope == selectedPullEnvironment)) { case some(pref) => pref, case none => defaultPullPrefs }
+  derive pullState = activePullPrefs.state
+  derive pullInvolvement = activePullPrefs.involvement
+  derive pullDraftFilter = activePullPrefs.draft
+  derive pullReviewFilter = activePullPrefs.review
+  derive pullChecksFilter = activePullPrefs.checks
+  derive pullSort = activePullPrefs.sort
+  derive pullProject = activePullPrefs.project
+  derive pullLabels = activePullPrefs.labels
+  derive pullAuthor = activePullPrefs.author
+  derive pullPrefsError = savedPullPrefs.error != "" ? savedPullPrefs.error : match wrotePullPrefs { case some(reply) => reply.error, case none => "" }
+  action editPullPrefs(field: string, value: string, labels: string[])
+    let next = field == "reset" ? defaultPullPrefs : PullPreference(scope=selectedPullEnvironment, state=(field == "state" ? value : pullState), involvement=(field == "involvement" ? value : pullInvolvement), draft=(field == "draft" ? value : pullDraftFilter), review=(field == "review" ? value : pullReviewFilter), checks=(field == "checks" ? value : pullChecksFilter), sort=(field == "sort" ? value : pullSort), project=(field == "project" ? value : pullProject), labels=(field == "labels" ? labels : pullLabels), author=(field == "author" ? value : pullAuthor))
+    editedPullPrefs = editedPullPrefs.filter(pref => pref.scope != selectedPullEnvironment).concat([next])
+    send wrotePullPrefs = writePullPrefs(next)
   derive scopedPullProject = catalog.projects.filter(project => project.id == pullProject and not project.isScratch and (selectedPullEnvironment == "" or selectedPullEnvironment == project.environmentId)).length > 0 ? pullProject : ""
   resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort, catalog.projects, catalog.environments, selectedPullEnvironment, scopedPullProject, pullLabels.length + (pullAuthor != "" ? 1 : 0)) as shape PullControlMenu else empty()
   state pullPageIndex = 0
@@ -774,7 +801,7 @@ component T3Code
   task debouncePullSearch when current.name == "pullRequests" and pullSearchText != pullQuery key=pullSearchText
     after(180, applyPullSearch)
   derive pullTargets = catalog.environments.filter(env => selectedPullEnvironment == "" or env.id == selectedPullEnvironment)
-  derive connectedPullTargets = pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id)
+  derive connectedPullTargets = savedPullPrefs.ready and environmentState.loaded ? pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : []
   derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
   resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject, pullLabels, pullAuthor) as shape PullRequests else empty()
   resource facets = pullFacets(pullRequests.items, pullLabels, pullAuthor) as shape PullFacets else empty()
@@ -802,11 +829,11 @@ component T3Code
     if facetKind == "labels"
       let held = pullLabels.filter(label => label.toLowerCase() == value.toLowerCase())
       if held.length > 0
-        pullLabels = pullLabels.filter(label => label.toLowerCase() != value.toLowerCase())
+        editPullPrefs("labels", "", pullLabels.filter(label => label.toLowerCase() != value.toLowerCase()))
       else if pullLabels.length < 10
-        pullLabels = pullLabels.concat([value])
+        editPullPrefs("labels", "", pullLabels.concat([value]))
     else if facetKind == "authors"
-      pullAuthor = pullAuthor.toLowerCase() == value.toLowerCase() ? "" : value
+      editPullPrefs("author", pullAuthor.toLowerCase() == value.toLowerCase() ? "" : value, [])
       nav = back(nav)
     pullPageIndex = 0
   action labelMenuAction(id: string)
@@ -821,48 +848,37 @@ component T3Code
       pickPullAuthor(id.slice(6))
   action pickPullLabel(id: string)
     if id == ""
-      pullLabels = []
+      editPullPrefs("labels", "", [])
     else if pullLabels.includes(id)
-      pullLabels = pullLabels.filter(label => label != id)
+      editPullPrefs("labels", "", pullLabels.filter(label => label != id))
     else if pullLabels.length < 10
-      pullLabels = pullLabels.concat([id])
+      editPullPrefs("labels", "", pullLabels.concat([id]))
     pullPageIndex = 0
   action pickPullAuthor(id: string)
-    pullAuthor = id
+    editPullPrefs("author", id, [])
     pullPageIndex = 0
   resource orderedPulls = orderPulls(pullRequests.items, pullSort) as shape PullRequest[] else empty()
   action choosePullControl(id: string)
     if id == "reset"
-      pullLabels = []
-      pullAuthor = ""
-      pullProject = ""
-      pullDraftFilter = "all"
-      pullReviewFilter = "all"
-      pullChecksFilter = "all"
-      pullSort = "updated"
-      pullInvolvement = "all"
-      pullState = "open"
+      editPullPrefs("reset", "", [])
       pullPageIndex = 0
     else if id.startsWith("project:")
-      pullProject = id.slice(8)
+      editPullPrefs("project", id.slice(8), [])
       pullPageIndex = 0
     else if ["sort:updated", "sort:created", "sort:oldest"].includes(id)
-      pullSort = id.slice(5)
+      editPullPrefs("sort", id.slice(5), [])
     else if ["draft:all", "draft:only", "draft:hide"].includes(id)
-      pullDraftFilter = id.slice(6)
+      editPullPrefs("draft", id.slice(6), [])
       pullPageIndex = 0
     else if ["review:all", "review:approved", "review:changes-requested", "review:review-required", "review:none"].includes(id)
-      pullReviewFilter = id.slice(7)
+      editPullPrefs("review", id.slice(7), [])
       pullPageIndex = 0
     else if ["checks:all", "checks:passing", "checks:failing"].includes(id)
-      pullChecksFilter = id.slice(7)
+      editPullPrefs("checks", id.slice(7), [])
       pullPageIndex = 0
   action filterPullEnvironment(id: string)
     if id == "" or environmentState.items.filter(env => env.id == id).length > 0
       pullEnvironment = id
-      pullLabels = []
-      pullAuthor = ""
-      pullProject = ""
       pullPageIndex = 0
   task resetHiddenPullPages when not pullWorkspace key=current.name
     change(resetPullPages)
@@ -1711,12 +1727,12 @@ component T3Code
 
   action filterPullState(value: string)
     if value != pullState and (value == "open" or value == "closed" or value == "merged" or value == "all")
-      pullState = value
+      editPullPrefs("state", value, [])
       pullPageIndex = 0
 
   action filterPullInvolvement(value: string)
     if value != pullInvolvement and (value == "all" or value == "reviewing" or value == "authored")
-      pullInvolvement = value
+      editPullPrefs("involvement", value, [])
       pullPageIndex = 0
 
   action openPullRequest(projectId: string, number: number)
@@ -2852,6 +2868,8 @@ component T3Code
                       PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
                       PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=labelMenuAction)
                       PullFacetChip(field="authors", title=(pullAuthor == "me" ? "By you" : pullAuthor != "" ? pullAuthor : "Author"), label="Filter by author", active=(pullAuthor != ""), facet=facets.authors, native=(device.kind != "web" and device.kind != ""), choose=authorMenuAction)
+                  if pullPrefsError != ""
+                    text pullPrefsError color="danger" padding="7px 14px" role="status" testId="pull-preference-error"
                   if pullRequests.items.length == 0
                     scroll id="pulls" flex=1 min-height=0 background-color="screen"
                       if pending(pullRequests) or not environmentState.loaded or pending(catalog)
