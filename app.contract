@@ -2880,8 +2880,8 @@ component T3Code
                   header
                     text "Pull Requests" role="heading" aria-level=2
                     input type="search" value=pullSearchDraft input=editPullSearch placeholder="Search pull requests" aria-label="Search pull requests" testId="pulls-search"
-                  scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 background-color="screen" testId="pulls-filters"
-                    row gap=8 align-items="center" padding="2px 16px 10px"
+                  scroll display="flex" flex-direction="row" overflow-x="auto" overflow-y="hidden" flex-shrink=0 min-width=0 background-color="screen" testId="pulls-filters"
+                    row gap=8 align-items="center" flex-shrink=0 min-width="100%" box-sizing="border-box" padding="2px 16px 10px"
                       if device.kind == "web" or device.kind == ""
                         button popovertarget="pull-controls-menu" aria-haspopup="menu" aria-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") appearance="none" display="flex" align-items="center" gap=5.25 padding="5.25px 10.5px" min-height=28 border-radius=16 backgroundMaterial="glass" color=(pullControls.count > 0 ? "white" : "muted") background-color=(pullControls.count > 0 ? "AccentColor" : "transparent") testId="pull-filter-more"
                           image "symbol:filter" width=15 height=15 flex-shrink=0
@@ -3470,13 +3470,13 @@ component T3Code
           text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details")
       workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail and device.kind != "web" ? "flex" : "none")
       row role="tablist" aria-label="Workspace" testId="tabs" padding-right=(device.kind == "web" ? 64 : 0) display=(device.rail or (atRoot and device.kind == "web") ? "flex" : "none")
-        button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
+        button role="tab" aria-label="Chats" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1 min-width=0
           image (device.kind == "web" ? "symbol:messages" : "symbol:sf/text.bubble")
-          text "Chats"
+          text "Chats" max-width="100%" line-clamp=1
         button role="tab" aria-controls="panel-threadDetail" aria-selected=(nav.tab == "threadDetail") press=selectTab("threadDetail") testId="tab-threadDetail" display="none"
           image "symbol:sf/text.bubble"
           text "Thread"
-        button role="tab" appearance="none" aria-controls="panel-pullRequests" aria-selected=(nav.tab == "pullRequests") press=selectTab("pullRequests") testId="tab-pullRequests" flex=1 display="flex" flex-direction="column" justify-content="center" align-items="center" padding="0 8px" gap=3 border="none" background-color="transparent" color=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted") font-size="0.75rem" font-weight=500
+        button role="tab" appearance="none" aria-label="PRs" aria-controls="panel-pullRequests" aria-selected=(nav.tab == "pullRequests") press=selectTab("pullRequests") testId="tab-pullRequests" flex=1 min-width=0 display="flex" flex-direction="column" justify-content="center" align-items="center" padding="0 8px" gap=3 border="none" background-color="transparent" color=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted") font-size="0.75rem" font-weight=500
           if device.kind == "web"
             svg viewBox="0 0 24 24" width=20 height=20 fill="none" stroke=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted") stroke-width=2 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
               path d="M6 8v8 M18 16V9a3 3 0 0 0-3-3h-4 M14 3l-3 3 3 3"
@@ -3485,13 +3485,13 @@ component T3Code
               circle cx=18 cy=18 r=2
           else
             image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted")
-          text "PRs"
-        button role="tab" aria-controls="panel-usage" aria-selected=(nav.tab == "usage") press=selectTab("usage") testId="tab-usage" flex=1
+          text "PRs" max-width="100%" line-clamp=1
+        button role="tab" aria-label="Usage" aria-controls="panel-usage" aria-selected=(nav.tab == "usage") press=selectTab("usage") testId="tab-usage" flex=1 min-width=0
           image (device.kind == "web" ? "symbol:chart" : "symbol:sf/chart.bar.xaxis")
-          text "Usage"
-        button role="tab" aria-controls="panel-settings" aria-selected=(nav.tab == "settings") press=selectTab("settings") testId="tab-settings" flex=1
+          text "Usage" max-width="100%" line-clamp=1
+        button role="tab" aria-label="Settings" aria-controls="panel-settings" aria-selected=(nav.tab == "settings") press=selectTab("settings") testId="tab-settings" flex=1 min-width=0
           image "symbol:settings"
-          text "Settings"
+          text "Settings" max-width="100%" line-clamp=1
         button role="tab" aria-controls="panel-settingsDetail" aria-selected=(nav.tab == "settingsDetail") press=selectTab("settingsDetail") testId="tab-settingsDetail" display="none"
           image "symbol:settings"
           text "Setting"
