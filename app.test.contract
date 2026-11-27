@@ -8,6 +8,7 @@ test "a refused pairing keeps the address available to correct"
   clock data
   tap "empty-add-environment"
   clock settle
+  expect enabled "pair-scan"
   type "address" "file:///untrusted"
   type "pair-code" "example"
   tap "connect"

@@ -1,4 +1,6 @@
 use ProviderIcon from "./provider-icon.contract"
+use cameraStatus, getUserMedia, stopTrack, CameraStatus, MediaStream, MediaStreamTrack, MediaTrackConstraints from "@exact/media-capture"
+use detectedBarcodes, BarcodeScan from "@exact/barcode-detection"
 use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAttempt, matchingToolPanels, toolCopyText from "./tool-row.contract"
 use MediaBatch, MediaImage from "./media-image.contract"
 use TurnReview, TurnReviewContent from "./turn-review.contract"
@@ -407,6 +409,14 @@ shape Reply
   ok: bool
   error: string
 
+shape PairingScanResult
+  address: string
+  code: string
+  error: string
+
+shape ScannerPage
+  visibilityState: string
+
 shape TerminalLaunchReply
   ok: bool
   error: string
@@ -488,6 +498,30 @@ component T3Code
   state draftEdits: ThreadDraft[] = []
   state address = ""
   state code = ""
+  state cameraOwner = ""
+  state parkedScan = ""
+  state scanTrack = ""
+  state parsingTrack = ""
+  state lastScan = ""
+  state scanMessage = ""
+  resource scannerPage = exactPage() as shape ScannerPage
+  resource pairingCamera = cameraStatus() when current.name == "addEnvironment" as shape CameraStatus else empty()
+  derive scanRoute = current.name == "addEnvironment" ? `${current.id}` : ""
+  derive scanVisible = scanRoute != "" and scannerPage.visibilityState == "visible"
+  derive rearCamera = MediaTrackConstraints(deviceId=none, groupId=none, facingMode=some("environment"), width=none, height=none, aspectRatio=none, frameRate=none, resizeMode=none, zoom=none, torch=none, sampleRate=none, sampleSize=none, channelCount=none, echoCancellation=none, autoGainControl=none, noiseSuppression=none, latency=none)
+  mutation cameraOpened as shape MediaStream then cameraReady
+  mutation cameraStopped as shape MediaStreamTrack queue
+  mutation parsedScan as shape PairingScanResult then finishScan
+  resource pairingFrames = detectedBarcodes(track=scanTrack, formats=["qr_code"]) when scanVisible and cameraOwner == scanRoute and scanTrack != "" as shape BarcodeScan else empty()
+  derive framePayload = match first(pairingFrames.barcodes) { case some(barcode) => barcode.rawValue, case none => "" }
+  task resumeCamera when scanVisible and pairingCamera.state == "granted" and parkedScan != scanRoute and cameraOwner == "" and not pending(cameraOpened) key=scanRoute
+    after(1, openCamera)
+  task leaveCamera when cameraOwner != "" and (not scanVisible or cameraOwner != scanRoute) key=cameraOwner
+    after(1, releaseCamera)
+  task readScan when scanVisible and scanTrack != "" and cameraOwner == scanRoute and framePayload != "" and framePayload != lastScan and not pending(parsedScan) key=`${scanTrack}:${framePayload}`
+    after(1, parseScan)
+  task cameraFailure when cameraOwner != "" and (failed(cameraOpened) or (scanTrack != "" and (failed(pairingFrames) or pairingFrames.state == "ended" or pairingFrames.error != none))) key=cameraOwner
+    after(1, cameraUnavailable)
   state expandedEnvironment = ""
   state environmentName = ""
   state environmentUrl = ""
@@ -1041,12 +1075,76 @@ component T3Code
     nav = split ? push(select(settingsNav, "settingsDetail"), "/environments/new") : push(nav, "/environments/new")
 
   action editAddress(value: string)
+    parkCamera()
     address = value
 
   action editCode(value: string)
+    parkCamera()
     code = value
 
+  action releaseCamera
+    if scanTrack != ""
+      send cameraStopped = stopTrack(track=scanTrack)
+    cameraOwner = ""
+    scanTrack = ""
+    lastScan = ""
+    scanMessage = ""
+
+  action parkCamera
+    parkedScan = scanRoute
+    releaseCamera()
+
+  action openCamera
+    if scanVisible and not pending(cameraOpened) and cameraOwner == ""
+      cameraOwner = scanRoute
+      parkedScan = ""
+      scanMessage = ""
+      send cameraOpened = getUserMedia(video=true, videoConstraints=rearCamera)
+
+  action openCameraSettings
+    parkedScan = ""
+    scanMessage = ""
+    openURL("app-settings:")
+
+  action cameraReady
+    match cameraOpened
+      case some(stream)
+        let track = match first(stream.tracks) { case some(video) => video.id, case none => "" }
+        if track == ""
+          cameraUnavailable()
+        else if scanVisible and cameraOwner == scanRoute
+          scanTrack = track
+        else
+          send cameraStopped = stopTrack(track=track)
+      case none
+        cameraUnavailable()
+
+  action cameraUnavailable
+    if cameraOwner != "" and cameraOwner == scanRoute
+      parkCamera()
+      scanMessage = "Camera unavailable. Check camera access in Settings or enter the details below."
+
+  action parseScan
+    if scanVisible and cameraOwner == scanRoute and scanTrack != "" and framePayload != "" and framePayload != lastScan and not pending(parsedScan)
+      parsingTrack = scanTrack
+      lastScan = framePayload
+      send parsedScan = scannedPairing(framePayload)
+
+  action finishScan
+    if scanVisible and cameraOwner == scanRoute and scanTrack != "" and parsingTrack == scanTrack
+      match parsedScan
+        case some(result)
+          if result.error == "" and result.address != "" and result.code != ""
+            parkCamera()
+            address = result.address
+            code = result.code
+          else
+            scanMessage = result.error != "" ? result.error : "Scanned QR code was not recognized."
+        case none
+          scanMessage = "Scanned QR code was not recognized."
+
   action pair
+    parkCamera()
     send paired = command("pair", address.trim(), code.trim())
 
   action afterPair
@@ -1414,11 +1512,22 @@ component T3Code
                       image "symbol:sf/checkmark"
                   scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
                     column gap=22.75
-                      column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
-                        column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
-                          image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
-                          text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
-                        text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
+                      column height=250 position="relative" overflow="hidden" border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
+                        if scanVisible and cameraOwner == `${e.id}` and scanTrack != ""
+                          exact-camera srcObject=scanTrack object-fit="cover" position="absolute" inset=0 width="100%" height="100%" aria-label="QR camera viewfinder" testId="pair-viewfinder"
+                        column width=150 height=150 box-sizing="border-box" border-radius=28 border=(scanTrack != "" ? "3px solid white" : "3px solid #4d4d4d") align-items="center" justify-content="center" gap=7
+                          if scanTrack == ""
+                            image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
+                            text (pairingCamera.state == "denied" ? "Open Settings" : pending(cameraOpened) ? "Opening camera…" : "Tap to scan") font-size=14 font-weight=500 color="#4d4d4d"
+                        text (pairingCamera.state == "denied" ? "Camera access is off. Enable it in Settings or enter the details below." : "Scan the code from t3 pair or desktop Connections settings") font-size=14 color=(scanTrack != "" ? "white" : "#4d4d4d") background-color=(scanTrack != "" ? "rgba(0,0,0,0.65)" : "transparent") text-align="center"
+                        if scanTrack == "" and pairingCamera.state == "denied"
+                          button press=openCameraSettings appearance="none" position="absolute" inset=0 width="100%" height="100%" background-color="transparent" aria-label="Open Settings" testId="pair-camera-settings"
+                            text ""
+                        else if scanTrack == ""
+                          button press=openCamera appearance="none" position="absolute" inset=0 width="100%" height="100%" background-color="transparent" disabled=pending(cameraOpened) aria-label="Scan QR code" testId="pair-scan"
+                            text ""
+                      if scanMessage != "" and pairingCamera.state != "denied" and (cameraOwner == `${e.id}` or parkedScan == `${e.id}`)
+                        text scanMessage role="alert" color="-exact-system-red" padding="0 14px" testId="pair-scan-message"
                       column gap=7
                         text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
                         column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"

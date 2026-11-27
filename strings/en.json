@@ -1,3 +1,4 @@
 {
+  "purpose.camera": "Scan a pairing QR code to fill in the environment address and code.",
   "purpose.microphone": "Record speech to add it to your message."
 }
