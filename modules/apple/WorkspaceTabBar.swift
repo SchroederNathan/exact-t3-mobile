@@ -365,6 +365,9 @@ final class T3NativeModule: ExactModule {
       "workspace-filter-menu": ExactNativeFactory { props, events in
         try WorkspaceFilterMenuInstance(props: props, events: events)
       },
+      "workspace-usage-chart": ExactNativeFactory { props, events in
+        try UsageChartInstance(props: props, events: events)
+      },
       "workspace-tool-label": ExactNativeFactory { props, events in
         ToolLabelInstance(props: props, events: events)
       },

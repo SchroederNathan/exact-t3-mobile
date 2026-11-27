@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { emptyControls } from "../thread-controls";
 import {
   formatWorkingDuration,
+  listWakeTime,
   projectThreadStatus,
   threadIsCompacting,
   threadLifecycleStatus,
@@ -10,6 +11,17 @@ import {
 } from "../thread-status";
 
 const start = "2026-11-11T10:00:00.000Z";
+test("the inbox keeps background work asleep but surfaces a fresh request or failure", () => {
+  const shell = { snoozedUntil: "2026-11-12T10:00:00Z", snoozedAt: start };
+  const deadline = Date.parse(shell.snoozedUntil);
+  expect(listWakeTime({ ...shell, pendingBackgroundTasks: [{ kind: "subagent" }] })).toBe(deadline);
+  expect(listWakeTime({ ...shell, pendingRuntimeRequest: { kind: "user_input", createdAt: start } })).toBe(deadline);
+  expect(listWakeTime({ ...shell, pendingRuntimeRequest: { kind: "user_input", createdAt: "2026-11-11T10:01:00Z" } })).toBe(0);
+  expect(listWakeTime({ ...shell, pendingRuntimeRequest: { kind: "approval" } })).toBe(0);
+  expect(listWakeTime({ ...shell, status: "failed", latestRunCompletedAt: "2026-11-11T10:02:00Z" })).toBe(0);
+  expect(listWakeTime({ ...shell, status: "failed", latestRunCompletedAt: start })).toBe(deadline);
+  expect(listWakeTime({ ...shell, snoozedUntil: "not a date" })).toBe(0);
+});
 const input = (patch: Partial<ThreadStatusInput> = {}): ThreadStatusInput => ({
   connection: { phase: "connected", label: "Mac mini", error: null },
   history: { ready: true, synchronized: true, error: "" },

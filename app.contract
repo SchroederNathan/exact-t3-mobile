@@ -1,11 +1,12 @@
 use ProviderIcon from "./provider-icon.contract"
 use ToolRow, ToolChild, ToolExpansion, ToolImage, ToolPanel, ToolBatch, toolAttempt, matchingToolPanels, toolCopyText from "./tool-row.contract"
 use MediaBatch, MediaImage from "./media-image.contract"
-use TurnReview, TurnReviewContent from "./turn-review.contract"
+use TurnReview, TurnReviewContent, ReviewRow from "./turn-review.contract"
 use ThreadDraft, threadDraft, DraftAttachment, PendingSend, DraftReceipt, SendReply, CleanupAttachment, ComposerAttachments, ComposerThumbnail, TaskStamp from "./attachments.contract"
 use NewTaskView, ProjectChoices, ProjectChoice, EnvironmentChoice, BranchChoices, BranchRow, HomeDraftRow, isDraftKey, launchOf, launching, launchText, launchTitle, launchStrategy, launchError, routeMode, DraftHero, DraftControls, PreparingThread, ProjectMark, InlineControl, EnvironmentControl, ProjectPicker, EnvironmentPicker, BranchPicker, HomeDraftRowContent from "./new-task.contract"
 use TurnChanges, TurnChangeStat, Message, BlockRef, CodeBatch, TableBatch, MarkdownLink, FilePreview, MarkdownMessage, MarkdownBlock, MarkdownBlockView, markdownPalette, syntaxColor from "./markdown.contract"
 use EmptyState from "exact:content"
+use UsageChart, UsageChartData, providerColor from "./usage-chart.contract"
 use ThreadControls, ControlAccess, ControlReply, QuestionDraft, ControlQuestion, RequestCard, noControls, questionDraft from "./controls.contract"
 use ThreadScrollPosition from "./thread-scroll.contract"
 use CloneBannerModel, AddProjectSourceScreen, AddProjectRepositoryScreen, AddProjectDestinationScreen, AddProjectLocalScreen, AddProjectNewScreen, AddProjectCloneBanner from "./add-project.contract"
@@ -19,6 +20,14 @@ font "DM Sans"
   400 italic = "assets/fonts/DMSans_400Regular_Italic.ttf"
   500 italic = "assets/fonts/DMSans_500Medium_Italic.ttf"
   700 italic = "assets/fonts/DMSans_700Bold_Italic.ttf"
+
+keyframes undoArrival
+  from translate="0px 62px"
+keyframes undoDeparture
+  to opacity=0
+
+shape UndoViewport
+  prefersReducedMotion: bool
 
 routes nav
   tab threads "/"
@@ -44,10 +53,18 @@ routes nav
       draftEnvironment "/threads/:id/environment"
       draftBranch "/threads/:id/branch"
   tab pullRequests "/pulls"
+    pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
+      pullDiscussion "/pulls/:project/:number/discussion/:thread"
+      pullCommit "/pulls/:project/:number/commit/:oid"
+        pullCommitPicker "/pulls/:project/:number/commit/:oid/picker"
+      pullCommitFile "/pulls/:project/:number/commit/:oid/file/:file"
+      pullFile "/pulls/:project/:number/file/:file"
+        pullFilesSheet "/pulls/:project/:number/file/:file/picker"
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
+    keyboardSettings "/settings/keyboard"
     environments "/environments"
       addEnvironment "/environments/new"
       environmentDetail "/environments/:id"
@@ -122,9 +139,58 @@ shape Environment
   enabled: bool
   machineSymbol: string
 
+shape ExcerptRun
+  start: number
+  text: string
+  highlighted: bool
+
+shape SearchHit
+  id: string
+  snippet: string
+  source: string
+  runs: ExcerptRun[]
+
+shape SearchReply
+  query: string
+  hits: SearchHit[]
+  unavailable: bool
+
 shape EnvironmentState
   loaded: bool
   items: Environment[]
+
+shape LimitColumn
+  id: string
+  name: string
+  origin: string
+  number: number
+  color: string
+  reported: bool
+  remaining: number
+  pace: number
+
+shape LimitWindow
+  id: string
+  label: string
+  remaining: number
+  columns: LimitColumn[]
+
+shape LimitProvider
+  id: string
+  environment: string
+  provider: string
+  notice: string
+  windows: LimitWindow[]
+
+shape UsageRow
+  chart: UsageChartData
+  id: string
+  label: string
+  cost: string
+  tokens: string
+  sessions: string
+  note: string
+  error: string
 
 shape ToolSummary
   id: string
@@ -190,6 +256,15 @@ shape WorkingStatus
 
 shape Thread
   id: string
+  serverThreadId: string
+  canRegenerateTitle: bool
+  canSetAutoSettle: bool
+  followsAutoSettle: bool
+  regeneratingTitle: bool
+  pinRank: number
+  wakeAt: number
+  searchTerms: string[]
+  searchReferences: string[]
   listed: bool
   visit: VisitMetadata
   history: ThreadHistory
@@ -200,6 +275,7 @@ shape Thread
   modelRevision: string
   activityAt: number
   settled: bool
+  canSettle: bool
   working: bool
   projectIcon: string
   projectInitials: string
@@ -277,7 +353,85 @@ shape GitActionReply
   action: string
   result: GitActionResult
 
+shape PullLabel
+  name: string
+  color: string
+
+fn pullFilterLabel(value: string, involvement: bool): string = involvement ? (value == "reviewing" ? "Your review" : value == "authored" ? "By you" : "All PRs") : (value == "open" ? "Open" : value == "merged" ? "Merged" : value == "closed" ? "Closed" : "All states")
+
+shape PullRow
+  status: string
+  conflict: bool
+  checks: string
+  review: string
+  stackText: string
+  labels: PullLabel[]
+  allLabels: PullLabel[]
+  extraLabels: number
+  initial: string
+  updatedMs: number
+  addedText: string
+  deletedText: string
+  accessible: string
+
+shape PullControlOption
+  id: string
+  title: string
+  selected: bool
+
+shape PullControlGroup
+  id: string
+  title: string
+  options: PullControlOption[]
+
+shape PullFacetOption
+  id: string
+  title: string
+  color: string
+  selected: bool
+
+shape PullFacet
+  options: PullFacetOption[]
+  menu: string
+
+shape PullFacets
+  labels: PullFacet
+  authors: PullFacet
+
+shape HostedFacets
+  kind: string
+  query: string
+  rows: PullFacetOption[]
+  failed: bool
+
+shape PullPreference
+  scope: string
+  state: string
+  involvement: string
+  draft: string
+  review: string
+  checks: string
+  sort: string
+  project: string
+  labels: string[]
+  author: string
+
+shape SavedPullPreferences
+  ready: bool
+  items: PullPreference[]
+  error: string
+
+shape PullControlMenu
+  count: number
+  reset: bool
+  groups: PullControlGroup[]
+  menu: string
+
 shape PullRequest
+  row: PullRow
+  routeKey: string
+  environmentId: string
+  host: string
   number: number
   title: string
   url: string
@@ -289,6 +443,7 @@ shape PullRequest
   updatedAt: string
   projectId: string
   author: string
+  createdAt: string
   body: string
   additions: number
   deletions: number
@@ -311,40 +466,152 @@ shape GitRefs
 shape PullRequests
   ready: bool
   error: string
+  hasMore: bool
+  moreError: string
   items: PullRequest[]
 
+shape PullChangedFile
+  path: string
+  previousPath: string
+  copied: bool
+  name: string
+  directory: string
+  testFile: bool
+  additions: number
+  deletions: number
+  omitted: bool
+  rows: ReviewRow[]
+
+shape PullFileList
+  key: string
+  files: PullChangedFile[]
+  truncated: bool
+  nextCursor: string
+  error: string
+
+shape PullDiffRow
+  key: string
+  path: string
+  kind: string
+  text: string
+  oldLine: string
+  newLine: string
+  prefix: string
+  expanded: bool
+  added: number
+  deleted: number
+
+shape FilePickerRow
+  kind: string
+  key: string
+  path: string
+  label: string
+  origin: string
+  added: number
+  deleted: number
+
+shape PullRef
+  environmentId: string
+  projectId: string
+  host: string
+  repository: string
+  number: number
+  routeKey: string
+
+shape PullCounts
+  added: string
+  deleted: string
+  files: string
+
 shape PullRequestDetail
+  discussionAccess: string
+  canReply: bool
+  canResolve: bool
+  counts: PullCounts
+  key: string
+  viewedKey: string
+  items: PullRequest[]
   ready: bool
   error: string
-  body: string
+  description: MarkdownBlock[]
   author: string
   additions: number
   deletions: number
   changedFiles: number
   checksState: string
 
-shape PullRequestComment
+shape ViewedFiles
+  key: string
+  access: string
+  writable: bool
+  paths: string[]
+  complete: bool
+
+shape ViewedChange
+  key: string
+  path: string
+  viewed: bool
+  error: string
+
+shape PullEvent
+  id: string
+  key: string
+  author: string
+  body: string
+  date: string
+  kind: string
+  path: string
+  line: number
+  summary: string
+  bot: bool
+  resolved: bool
+  outdated: bool
+  replyCount: number
+
+shape PullTimeline
+  rows: PullEvent[]
+  hidden: number
+
+shape PullRequestActivity
+  key: string
+  ready: bool
+  error: string
+  events: PullEvent[]
+  discussions: PullDiscussion[]
+  truncated: bool
+
+shape DiscussionPost
   id: string
   author: string
   body: string
-  createdAt: string
-  kind: string
-  path: string
-  reviewState: string
+  date: string
+  edited: string
 
-shape PullRequestCommit
+shape PullDiscussion
   id: string
-  subject: string
-  author: string
-  createdAt: string
+  path: string
+  line: number
+  resolved: bool
+  resolutionAllowed: bool
+  outdated: bool
+  posts: DiscussionPost[]
+  count: number
+  next: string
 
-shape PullRequestActivity
-  ready: bool
+shape DiscussionPage
+  key: string
+  cursor: string
+  posts: DiscussionPost[]
+  next: string
+  hidden: number
   error: string
-  comments: PullRequestComment[]
-  commits: PullRequestCommit[]
-  commentCount: number
-  commentsTruncated: bool
+
+shape DiscussionWrite
+  key: string
+  visit: string
+  operation: string
+  body: string
+  error: string
 
 shape Project
   id: string
@@ -398,6 +665,7 @@ shape TerminalAccess
   error: string
 
 shape Catalog
+  limitProviders: LimitProvider[]
   modelDraftRevision: number
   projects: Project[]
   environments: Environment[]
@@ -406,6 +674,27 @@ shape Catalog
 shape Reply
   ok: bool
   error: string
+
+shape UndoableReply
+  ok: bool
+  error: string
+  undo: string
+
+shape SnoozeChoice
+  id: string
+  label: string
+  detail: string
+  wake: number
+  minutes: number
+
+shape RowSnoozeMenu
+  available: bool
+  sleeping: bool
+  choices: SnoozeChoice[]
+
+shape CustomSnoozeStart
+  field: string
+  amounts: string[]
 
 shape TerminalLaunchReply
   ok: bool
@@ -427,6 +716,8 @@ shape Inspection
   items: InspectionItem[]
 
 fn selectedThread(catalog: Catalog, id: string): Thread[] = catalog.threads.filter(thread => thread.id == id)
+fn wakeLabel(remaining: number): string = remaining < 3600000 ? `${max(1, ceil(remaining / 60000))}m` : remaining < 86400000 ? `${ceil(remaining / 3600000)}h` : `${ceil(remaining / 86400000)}d`
+fn compactAge(at: number, now: number): string = at == 0 or now - at < 60000 ? "<1m" : now - at < 3600000 ? `${floor((now - at) / 60000)}m` : now - at < 86400000 ? `${floor((now - at) / 3600000)}h` : `${floor((now - at) / 86400000)}d`
 fn threadLive(catalog: Catalog, id: string): bool = threadFeed(selectedThread(catalog, id)).filter(row => row.message != none).length > 0
 fn environmentLabel(catalog: Catalog, id: string): string = match first(catalog.environments.filter(environment => environment.id == id)) { case some(environment) => environment.label, case none => "Unknown environment" }
 fn threadFeed(threads: Thread[]): FeedRow[] = match first(threads) { case some(thread) => thread.rows, case none => [] }
@@ -439,7 +730,8 @@ fn toolChild(tool: ToolSummary): ToolChild = ToolChild(id=tool.id, category=tool
 fn currentThreadTitle(threads: Thread[]): string = match first(threads) { case some(thread) => thread.title, case none => "" }
 fn currentThreadEnvironment(threads: Thread[]): string = match first(threads) { case some(thread) => thread.environmentId, case none => "" }
 fn currentThreadSubtitle(catalog: Catalog, threads: Thread[]): string = match first(threads) { case some(thread) => `${thread.project} · ${environmentLabel(catalog, thread.environmentId)}`, case none => "" }
-fn filteredThreads(threads: Thread[], environmentId: string, query: string): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and (query.trim() == "" or thread.title.toLowerCase().includes(query.trim().toLowerCase()) or thread.project.toLowerCase().includes(query.trim().toLowerCase())))
+fn threadMatches(thread: Thread, query: string, hits: SearchHit[]): bool = query == "" or thread.title.toLowerCase().includes(query) or thread.project.toLowerCase().includes(query) or thread.searchReferences.includes(query) or thread.searchTerms.filter(term => term.includes(query)).length > 0 or hits.filter(hit => hit.id == thread.id).length > 0
+fn filteredThreads(threads: Thread[], environmentId: string, query: string, hits: SearchHit[]): Thread[] = threads.filter(thread => thread.listed and (environmentId == "" or thread.environmentId == environmentId) and threadMatches(thread, query, hits))
 fn threadStatusSymbol(status: string): string = status == "Done" ? "symbol:sf/checkmark.circle" : status == "Approval" ? "symbol:sf/exclamationmark.shield" : status == "Input" ? "symbol:sf/questionmark.bubble" : status == "Request" ? "symbol:sf/person.crop.circle" : status == "Working" or status == "Goal" ? "symbol:sf/circle.dashed" : status == "Waiting" ? "symbol:sf/circle.dashed.inset.filled" : "symbol:sf/exclamationmark.circle"
 fn threadStatusColor(status: string): string = status == "Done" ? "status-done" : status == "Approval" or status == "Limited" ? "status-warning" : status == "Input" ? "status-input" : status == "Request" ? "status-request" : status == "Working" or status == "Goal" ? "status-working" : status == "Failed" ? "danger" : "muted"
 fn parentDirectory(path: string): string = path.split("/").slice(0, -1).join("/")
@@ -476,12 +768,14 @@ component T3Code
   members "./add-project-state.contract"
   members "./composer-parity.contract"
   members "./composer-import.contract"
+  members "./pairing-scan.contract"
   state modelQuery = ""
   state modelProviderFilter = ""
   state modelExpansionOverrides: string[] = []
   state showLegacyModels = false
   state settingsThreadId = ""
   state query = ""
+  state messageQuery = ""
   state sidebarHidden = false
   state selectedEnvironment = ""
   state selectedProject = ""
@@ -492,8 +786,9 @@ component T3Code
   state environmentName = ""
   state environmentUrl = ""
   state removedEnvironment = ""
-  state showSettled = false
-  state showWorking = false
+  state showSettled = false persist
+  state showSnoozed = false persist
+  state showWorking = false persist
   state inspectorPath = ""
   state composerBottomAdjustment = 0
   state composerFocus = false
@@ -502,6 +797,7 @@ component T3Code
   state reviewRetry = 0
   state terminalClock = 0
   state terminalFontSize = 10.5 persist
+  state composerReturnBehavior = "send" persist
   state terminalModifier = ""
   state terminalKeyboardVisible = false
   resource turnReview = loadTurnReview(threadRoute.name == "turnReview" ? activeThreadId : "", threadRoute.name == "turnReview" ? threadRoute.params.turn : "0", reviewRetry) as shape TurnReview else empty()
@@ -536,7 +832,31 @@ component T3Code
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
-  resource catalog = loadCatalog(selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
+  state pullEnvironment = "" persist
+  derive commitRoute = current.name == "pullCommit" or current.name == "pullCommitFile" or current.name == "pullCommitPicker"
+  derive commitOid = commitRoute ? current.params.oid : ""
+  derive diffScreen = current.name == "pullFile" or current.name == "pullCommit" or current.name == "pullCommitFile"
+  derive pickerScreen = current.name == "pullFilesSheet" or current.name == "pullCommitPicker"
+  derive pullDetailRoute = current.name == "pullRequest" or diffScreen or pickerScreen or current.name == "pullDiscussion"
+  derive pullWorkspace = current.name == "pullRequests" or pullDetailRoute or current.name == "pullFilterSearch"
+  derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
+  resource pullLink = parsePullLink(pullDetailRoute ? current.params.project : "", pullDetailRoute ? current.params.number : "") as shape PullRef[] else empty()
+  derive pullLinkEnvironment = match first(pullLink) { case some(ref) => ref.environmentId, case none => "" }
+  derive wantedPullEnvironment = pullLinkEnvironment != "" ? pullLinkEnvironment : selectedPullEnvironment
+  derive defaultEnvironmentId = match first(environmentState.items.filter(env => env.enabled)) { case some(env) => env.id, case none => "" }
+  derive pullCatalogEnvironment = wantedPullEnvironment == defaultEnvironmentId and selectedEnvironment == "" ? "" : wantedPullEnvironment
+  resource catalog = loadCatalog(pullWorkspace and device.kind == "web" and wantedPullEnvironment != "" ? pullCatalogEnvironment : selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
+  state usageDays = 30
+  state usageView = "Limits"
+  state usageRefresh = 0
+  state usageWindowTime = 0
+  state usageWide = false
+  state limitBarWidth = 0
+  action measureLimitBar(width: number, height: number)
+    limitBarWidth = width
+  action measureUsage(width: number, height: number)
+    usageWide = width >= 600
+  resource usageReport = loadUsage(current.name == "usage" and usageView != "Limits" ? catalog.environments : [], usageDays, usageRefresh) with time.epochAtZero + usageWindowTime as shape UsageRow[] else empty()
   state gitCommitMessage = ""
   state gitExcludedFiles: string[] = []
   state gitConfirmAction = ""
@@ -549,14 +869,338 @@ component T3Code
   resource gitStatus = loadGitStatus(activeThreadId != "" ? activeThreadId : activeDraftKey, gitStatusRevision, newTask.environmentId, newTask.cwd) as shape GitStatus else empty()
   resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
-  resource pullRequests = loadPullRequests() as shape PullRequests else empty()
-  resource pullRequestDetail = loadPullRequestDetail(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestDetail else empty()
-  resource pullRequestActivity = loadPullRequestActivity(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestActivity else empty()
+  resource savedPullPrefs = readPullPrefs() as shape SavedPullPreferences else empty()
+  mutation wrotePullPrefs as shape Reply queue
+  state editedPullPrefs: PullPreference[] = []
+  derive defaultPullPrefs = PullPreference(scope=selectedPullEnvironment, state="open", involvement="all", draft="all", review="all", checks="all", sort="updated", project="", labels=[], author="")
+  derive activePullPrefs = match first(editedPullPrefs.concat(savedPullPrefs.items).filter(pref => pref.scope == selectedPullEnvironment)) { case some(pref) => pref, case none => defaultPullPrefs }
+  derive pullState = activePullPrefs.state
+  derive pullInvolvement = activePullPrefs.involvement
+  derive pullDraftFilter = activePullPrefs.draft
+  derive pullReviewFilter = activePullPrefs.review
+  derive pullChecksFilter = activePullPrefs.checks
+  derive pullSort = activePullPrefs.sort
+  derive pullProject = activePullPrefs.project
+  derive pullLabels = activePullPrefs.labels
+  derive pullAuthor = activePullPrefs.author
+  derive pullPrefsError = savedPullPrefs.error != "" ? savedPullPrefs.error : match wrotePullPrefs { case some(reply) => reply.error, case none => "" }
+  action editPullPrefs(field: string, value: string, labels: string[])
+    let next = field == "reset" ? defaultPullPrefs : PullPreference(scope=selectedPullEnvironment, state=(field == "state" ? value : pullState), involvement=(field == "involvement" ? value : pullInvolvement), draft=(field == "draft" ? value : pullDraftFilter), review=(field == "review" ? value : pullReviewFilter), checks=(field == "checks" ? value : pullChecksFilter), sort=(field == "sort" ? value : pullSort), project=(field == "project" ? value : pullProject), labels=(field == "labels" ? labels : pullLabels), author=(field == "author" ? value : pullAuthor))
+    editedPullPrefs = editedPullPrefs.filter(pref => pref.scope != selectedPullEnvironment).concat([next])
+    send wrotePullPrefs = writePullPrefs(next)
+  derive scopedPullProject = catalog.projects.filter(project => project.id == pullProject and not project.isScratch and (selectedPullEnvironment == "" or selectedPullEnvironment == project.environmentId)).length > 0 ? pullProject : ""
+  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort, catalog.projects, catalog.environments, selectedPullEnvironment, scopedPullProject, pullLabels.length + (pullAuthor != "" ? 1 : 0)) as shape PullControlMenu else empty()
+  state pullPageIndex = 0
+  state pullSearchDraft = ""
+  state pullQuery = ""
+  derive pullSearchText = pullSearchDraft.trim()
+  task debouncePullSearch when current.name == "pullRequests" and pullSearchText != pullQuery key=pullSearchText
+    after(180, applyPullSearch)
+  derive pullTargets = catalog.environments.filter(env => selectedPullEnvironment == "" or env.id == selectedPullEnvironment)
+  derive connectedPullTargets = savedPullPrefs.ready and environmentState.loaded ? pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : []
+  derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
+  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject, pullLabels, pullAuthor) as shape PullRequests else empty()
+  resource facets = pullFacets(pullRequests.items, pullLabels, pullAuthor) as shape PullFacets else empty()
+  state facetDraft = ""
+  state facetSent = ""
+  state facetSuggestions: PullFacetOption[] = []
+  derive facetKind = current.name == "pullFilterSearch" and ["labels", "authors"].includes(current.params.kind) ? current.params.kind : ""
+  derive facetTyped = facetDraft.trim().slice(0, 100)
+  task debounceFacet when facetKind != "" and facetTyped != facetSent key=facetTyped
+    after(250, applyFacetQuery)
+  resource hostedFacets = loadFacetOptions(facetKind != "" ? connectedPullTargets : [], facetKind, facetSent, scopedPullProject) as shape HostedFacets else empty()
+  derive facetSelected = facetKind == "labels" ? pullLabels : (pullAuthor != "" ? [pullAuthor] : [])
+  derive facetSettled = facetTyped == facetSent and hostedFacets.query == facetSent and hostedFacets.kind == facetKind and not pending(hostedFacets)
+  resource facetRows = facetSearchRows(facetSelected, facetSuggestions, facetSettled ? hostedFacets.rows : [], facetTyped) as shape PullFacetOption[] else empty()
+  action editFacetQuery(value: string)
+    facetDraft = value
+  action applyFacetQuery
+    facetSent = facetTyped
+  action openFacetPicker(kind: string)
+    facetDraft = ""
+    facetSent = ""
+    facetSuggestions = (kind == "labels" ? facets.labels.options : facets.authors.options).filter(option => option.id != "")
+    nav = push(nav, path("pullFilterSearch", kind))
+  action chooseFacetRow(value: string)
+    if facetKind == "labels"
+      let held = pullLabels.filter(label => label.toLowerCase() == value.toLowerCase())
+      if held.length > 0
+        editPullPrefs("labels", "", pullLabels.filter(label => label.toLowerCase() != value.toLowerCase()))
+      else if pullLabels.length < 10
+        editPullPrefs("labels", "", pullLabels.concat([value]))
+    else if facetKind == "authors"
+      editPullPrefs("author", pullAuthor.toLowerCase() == value.toLowerCase() ? "" : value, [])
+      nav = back(nav)
+    pullPageIndex = 0
+  action labelMenuAction(id: string)
+    if id == "search"
+      openFacetPicker("labels")
+    else if id.startsWith("value:")
+      pickPullLabel(id.slice(6))
+  action authorMenuAction(id: string)
+    if id == "search"
+      openFacetPicker("authors")
+    else if id.startsWith("value:")
+      pickPullAuthor(id.slice(6))
+  action pickPullLabel(id: string)
+    if id == ""
+      editPullPrefs("labels", "", [])
+    else if pullLabels.includes(id)
+      editPullPrefs("labels", "", pullLabels.filter(label => label != id))
+    else if pullLabels.length < 10
+      editPullPrefs("labels", "", pullLabels.concat([id]))
+    pullPageIndex = 0
+  action pickPullAuthor(id: string)
+    editPullPrefs("author", id, [])
+    pullPageIndex = 0
+  resource orderedPulls = orderPulls(pullRequests.items, pullSort) as shape PullRequest[] else empty()
+  action choosePullControl(id: string)
+    if id == "reset"
+      editPullPrefs("reset", "", [])
+      pullPageIndex = 0
+    else if id.startsWith("project:")
+      editPullPrefs("project", id.slice(8), [])
+      pullPageIndex = 0
+    else if ["sort:updated", "sort:created", "sort:oldest"].includes(id)
+      editPullPrefs("sort", id.slice(5), [])
+    else if ["draft:all", "draft:only", "draft:hide"].includes(id)
+      editPullPrefs("draft", id.slice(6), [])
+      pullPageIndex = 0
+    else if ["review:all", "review:approved", "review:changes-requested", "review:review-required", "review:none"].includes(id)
+      editPullPrefs("review", id.slice(7), [])
+      pullPageIndex = 0
+    else if ["checks:all", "checks:passing", "checks:failing"].includes(id)
+      editPullPrefs("checks", id.slice(7), [])
+      pullPageIndex = 0
+  action filterPullEnvironment(id: string)
+    if id == "" or environmentState.items.filter(env => env.id == id).length > 0
+      pullEnvironment = id
+      pullPageIndex = 0
+  task resetHiddenPullPages when not pullWorkspace key=current.name
+    change(resetPullPages)
+  derive matchingPulls = pullRequests.items.filter(item => pullDetailRoute and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
+  derive listedRefs = matchingPulls.map(item => PullRef(environmentId=item.environmentId, projectId=item.projectId, host=item.host, repository=item.repository, number=item.number, routeKey=item.routeKey))
+  derive pullRefs = pullLink.length > 0 ? pullLink.filter(ref => catalog.environments.filter(env => env.id == ref.environmentId and env.enabled and env.status == "Connected").length > 0) : listedRefs
+  resource pullRequestDetail = loadPullRequestDetail(pullRefs) as shape PullRequestDetail else empty()
+  resource viewedFiles = loadViewedFiles(pullRefs, commitRoute ? "" : pullRequestDetail.viewedKey) as shape ViewedFiles else empty()
+  derive viewedScope = not commitRoute and viewedFiles.key != "" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == viewedFiles.key).length == 1
+  resource pullRequestActivity = loadPullRequestActivity(pullRefs) as shape PullRequestActivity else empty()
+  state activityKind = "All activity"
+  state activityBots = false
+  state activityResolved = false
+  state activityNewest = true
+  state activityVisit = ""
+  state descriptionExpanded = false
+  action toggleDescription
+    if descriptionExpanded
+      scrollIntoView("pull-description-heading", block="start", behavior="instant")
+    descriptionExpanded = not descriptionExpanded
+  derive activityLocation = `${current.id}:${current.params.project}:${current.params.number}`
+  task startActivity when current.name == "pullRequest" key=activityLocation
+    change(resetActivityOptions)
+  action resetActivityOptions
+    if activityVisit != activityLocation
+      activityVisit = activityLocation
+      descriptionExpanded = false
+      activityKind = "All activity"
+      activityBots = false
+      activityResolved = false
+      activityNewest = true
+  derive correctActivity = pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == pullRequestActivity.key).length == 1
+  resource timeline = localPullTimeline(visiblePullSection == "Activity" and correctActivity ? pullRequestActivity.events : [], activityKind, activityBots, activityResolved, activityNewest) as shape PullTimeline else empty()
+  action filterActivity(kind: string)
+    if ["All activity", "Comments", "Commits"].includes(kind)
+      activityKind = kind
+  action toggleActivityBots
+    activityBots = not activityBots
+  action toggleActivityResolved
+    activityResolved = not activityResolved
+  action orderActivity
+    activityNewest = not activityNewest
+  derive discussionKey = current.name == "pullDiscussion" and correctActivity ? `${pullRequestActivity.key}:${current.params.thread}` : ""
+  derive discussionSeed = pullRequestActivity.discussions.filter(item => discussionKey != "" and item.id == current.params.thread)
+  derive discussionVisit = current.name == "pullDiscussion" ? `${current.id}:${current.params.project}:${current.params.number}:${current.params.thread}` : ""
+  derive canDiscuss = currentPullDetail and discussionSeed.length == 1 and pullRequestDetail.discussionAccess != ""
+  derive replyAllowed = canDiscuss and pullRequestDetail.canReply
+  derive resolveAllowed = canDiscuss and pullRequestDetail.canResolve and discussionSeed.filter(thread => thread.resolutionAllowed).length == 1
+  state replyDraft = ""
+  state replyVisit = ""
+  state writeMessage = ""
+  state writeFailed = false
+  derive shownDraft = replyVisit == discussionVisit ? replyDraft : ""
+  derive discussionBusy = pending(discussionWrite) or pending(moreDiscussion)
+  mutation discussionWrite as shape DiscussionWrite refreshes pullRequestActivity, pullRequestDetail then afterDiscussionWrite
+  action editDiscussionReply(value: string)
+    if replyAllowed and not discussionBusy
+      replyVisit = discussionVisit
+      replyDraft = value.slice(0, 65536)
+      writeMessage = ""
+  action postDiscussionReply
+    if replyAllowed and not discussionBusy and shownDraft.trim() != ""
+      writeMessage = ""
+      send discussionWrite = writePullDiscussion(pullRefs, discussionKey, discussionVisit, current.params.thread, pullRequestDetail.discussionAccess, "reply", shownDraft, false)
+  action toggleDiscussionResolution
+    if resolveAllowed and not discussionBusy
+      match first(discussionSeed)
+        case some(thread)
+          if replyVisit != discussionVisit
+            replyDraft = ""
+          replyVisit = discussionVisit
+          writeMessage = ""
+          send discussionWrite = writePullDiscussion(pullRefs, discussionKey, discussionVisit, current.params.thread, pullRequestDetail.discussionAccess, "resolve", "", not thread.resolved)
+        case none
+          writeMessage = ""
+  action afterDiscussionWrite
+    match discussionWrite
+      case some(result)
+        if result.visit == discussionVisit and replyVisit == discussionVisit
+          writeFailed = result.error != ""
+          writeMessage = (result.error != "" ? result.error : result.operation == "reply" ? "Reply posted." : "Discussion status updated.")
+          if result.error == "" and result.operation == "reply" and replyDraft == result.body
+            replyDraft = ""
+      case none
+        writeFailed = true
+        writeMessage = "The provider could not complete this action."
+  state discussionCacheKey = ""
+  state discussionExtra: DiscussionPost[] = []
+  state discussionNext = ""
+  state discussionUsed: string[] = []
+  state discussionHidden = 0
+  state discussionError = ""
+  derive discussionCursor = discussionCacheKey == discussionKey ? discussionNext : match first(discussionSeed) { case some(thread) => thread.next, case none => "" }
+  resource discussionRows = mergeDiscussionPosts(discussionSeed, discussionCacheKey == discussionKey ? discussionExtra : []) as shape DiscussionPost[] else empty()
+  mutation moreDiscussion as shape DiscussionPage then afterDiscussionPage
+  action openDiscussion(id: string)
+    if current.name == "pullRequest" and correctActivity and pullRequestActivity.discussions.filter(thread => thread.id == id).length == 1
+      discussionCacheKey = ""
+      nav = push(nav,path("pullDiscussion",current.params.project,current.params.number,id))
+  action loadDiscussionPage
+    if discussionSeed.length == 1 and discussionKey != "" and discussionCursor != "" and not discussionBusy
+      let cursor = discussionCursor
+      if discussionCacheKey != discussionKey
+        discussionExtra = []
+        discussionUsed = []
+        discussionHidden = 0
+        discussionNext = cursor
+        discussionCacheKey = discussionKey
+      discussionError = ""
+      send moreDiscussion = nextDiscussionPosts(pullRefs, discussionKey, current.params.thread, cursor)
+  action afterDiscussionPage
+    match moreDiscussion
+      case some(reply)
+        if reply.key == discussionKey and reply.key == discussionCacheKey and reply.cursor == discussionNext
+          discussionError = reply.error
+          if reply.error == ""
+            let used = discussionUsed.concat([reply.cursor])
+            discussionExtra = discussionExtra.concat(reply.posts)
+            discussionHidden = discussionHidden + reply.hidden
+            discussionUsed = used
+            discussionNext = used.includes(reply.next) ? "" : reply.next
+            if used.includes(reply.next)
+              discussionError = "The environment repeated a replies page."
+      case none
+        discussionError = "More replies could not be loaded."
+  state pullFileRevision = 0
+  state collapsedDiffFiles: string[] = []
+  state wrapPullDiff = false persist
+  state selectedDiffVisit = ""
+  state selectedDiffLine = ""
+  action toggleDiffWrap
+    wrapPullDiff = not wrapPullDiff
+  action selectDiffLine(key: string)
+    selectedDiffVisit = diffVisit
+    selectedDiffLine = key
+  derive selectedDiffRows = diffRows.filter(line => diffScreen and selectedDiffVisit == diffVisit and line.key == selectedDiffLine and (line.kind == "addition" or line.kind == "deletion" or line.kind == "context"))
+  action copyDiffLine
+    match first(selectedDiffRows)
+      case some(line)
+        copyText(line.text)
+      case none
+        selectedDiffLine = ""
+  state diffJumped = ""
+  task clearHiddenPullFiles when not pullDetailRoute key=current.name
+    change(resetPullFiles)
+  action resetPullFiles
+    pullFileRevision = 0
+    collapsedDiffFiles = []
+    diffJumped = ""
+  derive diffScope = match first(pullRefs) { case some(ref) => `${ref.routeKey}:${ref.number}:${commitOid}`, case none => "" }
+  resource rawPullFiles = loadPullFiles(pullRefs, pullFileRevision, commitOid) as shape PullFileList else empty()
+  derive pullFiles = rawPullFiles.key == diffScope ? rawPullFiles : PullFileList(key="", files=[], truncated=false, nextCursor="", error="")
+  state hidePullTests = false persist
+  state filteredDiffVisit = ""
+  derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
+  derive hiddenPullFileCount = pullFiles.files.length - visiblePullFiles.length
+  state foldedPullDirectories: string[] = []
+  resource pickerFiles = pullFilePickerRows(pickerScreen ? visiblePullFiles : [], foldedPullDirectories) as shape FilePickerRow[] else empty()
+  action openFilePicker
+    if diffScreen
+      foldedPullDirectories = []
+      nav = push(nav, commitRoute ? path("pullCommitPicker", current.params.project,current.params.number,commitOid) : path("pullFilesSheet", current.params.project, current.params.number, current.params.file))
+  action foldFileDirectory(directory: string)
+    foldedPullDirectories = foldedPullDirectories.includes(directory) ? foldedPullDirectories.filter(item => item != directory) : foldedPullDirectories.concat([directory])
+  action jumpFromFilePicker(file: string)
+    if pickerScreen and visiblePullFiles.filter(item => item.path == file).length == 1
+      let next = commitRoute ? path("pullCommitFile",current.params.project,current.params.number,commitOid,file) : path("pullFile", current.params.project, current.params.number, file)
+      collapsedDiffFiles = collapsedDiffFiles.filter(item => item != file)
+      diffJumped = ""
+      nav = replace(back(nav), next)
+  derive visibleViewedCount = visiblePullFiles.filter(file => viewedFiles.paths.includes(file.path)).length
+  action togglePullTests
+    selectedDiffLine = ""
+    if diffScreen
+      filteredDiffVisit = diffVisit
+    hidePullTests = not hidePullTests
+  action retryPullFiles
+    pullFileRevision = pullFileRevision + 1
+  derive diffPath = current.name == "pullFile" or current.name == "pullFilesSheet" or current.name == "pullCommitFile" ? current.params.file : ""
+  derive diffVisit = diffScreen ? `${current.id}:${commitOid}:${diffPath}` : ""
+  derive diffFileFound = (commitRoute and diffPath == "" and rawPullFiles.key == diffScope and diffScope != "") or pullFiles.files.filter(file => file.path == diffPath).length > 0
+  derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or (file.path == diffPath and filteredDiffVisit != diffVisit))
+  resource diffRows = pullDiffRows(diffScreen or pickerScreen ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
+  task fetchDiffTarget when diffScreen and diffPath != "" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(rawPullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
+    after(1, retryPullFiles)
+  task jumpToPullFile when diffScreen and diffPath != "" and diffVisit != diffJumped and diffRows.filter(row => row.key == `file:${diffPath}`).length > 0 key=diffVisit
+    after(1, revealPullFile)
+  action revealPullFile
+    scrollIntoView("pull-diff-lines", `file:${diffPath}`, block="start", behavior="instant")
+    diffJumped = diffVisit
+  action openPullFile(project: string, number: number, file: string)
+    collapsedDiffFiles = []
+    nav = push(nav, path("pullFile", project, `${number}`, file))
+  action openPullCommit(oid: string)
+    if correctActivity and current.name == "pullRequest" and pullRequestActivity.events.filter(event => event.kind == "commit" and event.id == oid).length == 1
+      collapsedDiffFiles = []
+      nav = push(nav, path("pullCommit",current.params.project,current.params.number,oid))
+  action foldDiffFile(file: string)
+    if selectedDiffRows.filter(line => line.path == file).length > 0
+      selectedDiffLine = ""
+    collapsedDiffFiles = collapsedDiffFiles.includes(file) ? collapsedDiffFiles.filter(path => path != file) : collapsedDiffFiles.concat([file])
+  mutation changedViewedFile as shape ViewedChange refreshes viewedFiles then afterViewedFile
+  state viewedPendingKey = ""
+  state viewedPendingPath = ""
+  derive viewedError = match changedViewedFile { case some(reply) => viewedScope and reply.key == viewedFiles.key ? reply.error : "", case none => "" }
+  action toggleViewedFile(file: string)
+    if current.name == "pullFile" and viewedScope and viewedFiles.writable and not pending(changedViewedFile) and not pending(viewedFiles) and diffVisibleFiles.filter(item => item.path == file).length == 1
+      viewedPendingKey = viewedFiles.key
+      viewedPendingPath = file
+      send changedViewedFile = changeViewedFile(pullRefs, viewedFiles.key, viewedFiles.access, file, not viewedFiles.paths.includes(file))
+  action afterViewedFile
+    match changedViewedFile
+      case some(reply)
+        if reply.error == "" and current.name == "pullFile" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == reply.key).length == 1 and diffVisibleFiles.filter(item => item.path == reply.path).length == 1
+          if reply.viewed and selectedDiffRows.filter(line => line.path == reply.path).length > 0
+            selectedDiffLine = ""
+          collapsedDiffFiles = reply.viewed ? collapsedDiffFiles.filter(path => path != reply.path).concat([reply.path]) : collapsedDiffFiles.filter(path => path != reply.path)
+      case none
+        viewedPendingKey = ""
+    viewedPendingPath = ""
   resource terminalAccess = loadTerminalAccess(activeThreadId) as shape TerminalAccess else empty()
   resource terminalMenu = loadTerminalMenu(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalMenu else empty()
   resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
   derive terminalHost = terminalHostPlatform(catalog, activeThreadId)
   state statusNow = 0
+  state threadListClock = 0
   derive floatingStatus = match first(workingStatus) { case some(status) => status, case none => WorkingStatus(kind="", label="", symbol="", indicator="none", action="none", actionLabel="", actionPendingLabel="", ticking=false) }
   resource workingStatus = loadThreadStatus(activeThreadId, catalog, stopBusy, statusNow) with time.epochAtZero + statusNow as shape WorkingStatus[] else empty()
   task tickThreadStatus when workingStatus.filter(status => status.ticking).length > 0 key=`${activeThreadId}:${statusNow}`
@@ -588,6 +1232,251 @@ component T3Code
   mutation terminalCleared as shape Reply queue
   mutation terminalScriptStarted as shape TerminalLaunchReply then afterTerminalScript
   mutation lifecycleChanged as shape Reply refreshes catalog
+  state pinTargetId = ""
+  state copyTargetId = ""
+  state pinTargetKey = ""
+  state pinTargetDesired = false
+  state renameId = ""
+  state renameKey = ""
+  state renameOriginal = ""
+  state renameDraft = ""
+  state titleActionError = ""
+  mutation titleUpdated as shape Reply then afterTitleUpdate
+  action afterTitleUpdate
+    match titleUpdated
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = titleActionError
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        titleActionError = ""
+  action beginRename(title: string)
+    hidePopover("thread-row-menu")
+    hidePopover("thread-more-menu")
+    renameId = pinTargetId
+    renameKey = pinTargetKey
+    renameOriginal = title
+    renameDraft = title
+    showModal("rename-thread")
+  action editRename(value: string)
+    renameDraft = value
+  action confirmRename
+    if renameDraft.trim() == ""
+      taskAlertTitle = "Could not rename thread"
+      taskAlertBody = "Thread title cannot be empty."
+      showModal("task-alert")
+    else if renameDraft.trim() != renameOriginal and not pending(titleUpdated)
+      haptic("selection")
+      titleActionError = "Could not rename thread"
+      send titleUpdated = updateRowTitle(renameId, renameKey, renameOriginal, renameDraft, false)
+  action regenerateTitle
+    hidePopover("thread-row-menu")
+    hidePopover("thread-more-menu")
+    if not pending(titleUpdated)
+      haptic("selection")
+      titleActionError = "Could not regenerate title"
+      send titleUpdated = updateRowTitle(pinTargetId, pinTargetKey, "", "", true)
+  state rowMenuOpened = 0
+  mutation autoSettleUpdated as shape Reply then afterAutoSettle
+  action afterAutoSettle
+    match autoSettleUpdated
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not update auto-settle"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        taskAlertBody = ""
+  action selectAutoSettle(enabled: bool)
+    hidePopover("auto-settle-menu")
+    hidePopover("thread-more-menu")
+    hidePopover("thread-row-menu")
+    if not pending(autoSettleUpdated)
+      haptic("selection")
+      send autoSettleUpdated = setRowAutoSettle(pinTargetId, pinTargetKey, enabled)
+  state customThread = ""
+  state customKey = ""
+  state customOpened = 0
+  state customMode = "date"
+  state customField = ""
+  state customEdited = false
+  state customAmount = "2"
+  state customUnit = "hours"
+  state customError = ""
+  resource customStart = customSnoozeStart(customOpened) as shape CustomSnoozeStart else empty()
+  mutation customSubmitted as shape UndoableReply then afterCustomSnooze
+  action beginCustomSnooze
+    customThread = pinTargetId
+    customKey = pinTargetKey
+    customOpened = time.epochAtZero + performanceNow()
+    customMode = "date"
+    customEdited = false
+    customAmount = "2"
+    customUnit = "hours"
+    customError = ""
+  action editCustomMode(value: string)
+    customMode = value
+    customError = ""
+  action editCustomField(value: string)
+    customEdited = true
+    customField = value
+    customError = ""
+  action editCustomAmount(value: string)
+    customAmount = value
+    customError = ""
+  action editCustomUnit(value: string)
+    customUnit = value
+    customError = ""
+  action submitCustomSnooze
+    if customKey != "" and not pending(customSubmitted)
+      send customSubmitted = setCustomSnooze(customThread, customKey, customMode, customEdited ? customField : customStart.field, customAmount, customUnit, time.epochAtZero + performanceNow())
+  action afterCustomSnooze
+    match customSubmitted
+      case some(reply)
+        customError = reply.error
+        if reply.ok
+          haptic("selection")
+          hidePopover("custom-snooze")
+          hidePopover("row-snooze-menu")
+          hidePopover("thread-row-menu")
+          offerUndo("snooze", customThread, customKey, reply.undo)
+          customKey = ""
+      case none
+        customError = ""
+  resource rowSnooze = loadRowSnooze(pinTargetId, pinTargetKey, rowMenuOpened) as shape RowSnoozeMenu else empty()
+  mutation rowSnoozed as shape UndoableReply then afterRowSnooze
+  action submitRowSnooze(choice: string)
+    hidePopover("row-snooze-menu")
+    hidePopover("thread-row-menu")
+    if rowSnooze.available and not pending(rowSnoozed) and not pending(pinChanged)
+      haptic("selection")
+      if pinTargetId == undoThreadId
+        undoReceipt = ""
+      send rowSnoozed = setRowSnooze(pinTargetId, pinTargetKey, choice, rowMenuOpened, time.epochAtZero + performanceNow())
+  action afterRowSnooze
+    match rowSnoozed
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not update snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        else if reply.undo != ""
+          offerUndo("snooze", pinTargetId, pinTargetKey, reply.undo)
+        pinTargetId = ""
+        pinTargetKey = ""
+      case none
+        rowMenuOpened = 0
+  state undoReceipt = ""
+  state undoKind = "unpin"
+  state undoThreadId = ""
+  state undoAccessKey = ""
+  state undoingPin = false
+  resource undoViewport = exactViewport() as shape UndoViewport
+  mutation snoozeRestored as shape Reply then afterSnoozeRestored
+  action afterSnoozeRestored
+    match snoozeRestored
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not restore snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        undoingPin = false
+  mutation pinChanged as shape UndoableReply then afterPinChange
+  state settlementId = ""
+  state settlementKey = ""
+  state settlementMode = ""
+  mutation settlementChanged as shape UndoableReply then afterSettlement
+  action changeRowSettlementState(id: string, key: string, mode: string, receipt: string)
+    hidePopover("thread-row-menu")
+    if key != "" and not pending(settlementChanged) and not pending(pinChanged) and not pending(rowSnoozed)
+      settlementId = id
+      settlementKey = key
+      settlementMode = mode
+      if undoThreadId == id
+        undoReceipt = ""
+      if mode != "undo"
+        haptic("selection")
+      send settlementChanged = changeRowSettlement(id, key, mode == "settle", receipt, time.epochAtZero + performanceNow())
+  action afterSettlement
+    match settlementChanged
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = settlementMode == "undo" ? "Could not undo settle" : settlementMode == "settle" ? "Could not settle thread" : "Could not un-settle thread"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        else if reply.undo != ""
+          if settlementMode == "undo"
+            send snoozeRestored = finishPinUndo(settlementId, reply.undo, time.epochAtZero + performanceNow())
+          else
+            offerUndo("settle", settlementId, settlementKey, reply.undo)
+      case none
+        settlementMode = ""
+  mutation snoozeUndone as shape Reply then afterUndoSnooze
+  action afterUndoSnooze
+    match snoozeUndone
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = "Could not undo snooze"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+      case none
+        undoReceipt = ""
+  action offerUndo(kind: string, id: string, key: string, receipt: string)
+    undoKind = kind
+    undoThreadId = id
+    undoAccessKey = key
+    undoReceipt = receipt
+  action dismissPinUndo
+    undoReceipt = ""
+  task pinUndoExpiry when undoReceipt != "" key=undoReceipt
+    after(5000, dismissPinUndo)
+  action restoreThreadAction
+    if undoReceipt != "" and not pending(pinChanged) and not pending(snoozeUndone) and not pending(settlementChanged) and not pending(rowSnoozed)
+      let receipt = undoReceipt
+      haptic("selection")
+      undoReceipt = ""
+      if undoKind == "snooze"
+        send snoozeUndone = undoRowSnooze(undoThreadId, undoAccessKey, receipt, time.epochAtZero + performanceNow())
+      else if undoKind == "settle"
+        changeRowSettlementState(undoThreadId, undoAccessKey, "undo", receipt)
+      else
+        undoingPin = true
+        send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
+  action aimPin(id: string, key: string, desired: bool)
+    copyTargetId = id
+    if not pending(pinChanged) and not pending(rowSnoozed)
+      rowMenuOpened = time.epochAtZero + performanceNow()
+      pinTargetId = id
+      pinTargetKey = key
+      pinTargetDesired = desired
+  action copyRowId(value: string)
+    copyText(value)
+    haptic("impact-light")
+  action changePin
+    hidePopover("thread-row-menu")
+    if not pending(pinChanged) and not pending(rowSnoozed) and pinTargetId != "" and pinTargetKey != ""
+      haptic("selection")
+      undoingPin = false
+      if pinTargetId == undoThreadId or not pinTargetDesired
+        undoReceipt = ""
+      send pinChanged = setThreadPin(pinTargetId, pinTargetKey, pinTargetDesired, "")
+  action afterPinChange
+    match pinChanged
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = undoingPin ? "Could not undo unpin" : pinTargetDesired ? "Could not pin thread" : "Could not unpin thread"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        else if undoingPin and reply.undo != ""
+          send snoozeRestored = finishPinUndo(undoThreadId, reply.undo, time.epochAtZero + performanceNow())
+        else if reply.undo != ""
+          offerUndo("unpin", pinTargetId, pinTargetKey, reply.undo)
+        pinTargetId = ""
+        pinTargetKey = ""
+      case none
+        pinTargetId = ""
   state lifecycleThreadId = ""
   derive lifecycleBusy = pending(lifecycleChanged) and lifecycleThreadId == activeThreadId
   derive lifecycleError = match lifecycleChanged { case some(reply) => lifecycleThreadId == activeThreadId ? reply.error : "", case none => "" }
@@ -605,7 +1494,15 @@ component T3Code
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
-  derive selectedPullRequest = match first(pullRequests.items.filter(item => item.projectId == current.params.project and `${item.number}` == current.params.number)) { case some(item) => some(item), case none => none }
+  derive currentPullDetail = pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == pullRequestDetail.key).length == 1
+  state pullSectionVisit = ""
+  state chosenPullSection = "Overview"
+  derive visiblePullSection = current.name == "pullRequest" and pullSectionVisit == `${current.id}:${current.params.project}:${current.params.number}` ? chosenPullSection : "Overview"
+  action choosePullSection(section: string)
+    if current.name == "pullRequest" and ["Overview", "Activity"].includes(section)
+      pullSectionVisit = `${current.id}:${current.params.project}:${current.params.number}`
+      chosenPullSection = section
+  derive selectedPullRequest = first(currentPullDetail and pullRequestDetail.items.length == 1 ? pullRequestDetail.items : matchingPulls.length == 1 ? matchingPulls : [])
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
   derive split = device.split
@@ -629,7 +1526,24 @@ component T3Code
   derive visitShell = match first(selectedThread(catalog, activeThreadId)) { case some(thread) => thread.visit, case none => VisitMetadata(ready=false, supported=false, at="", watermark=-1, seen=-1, urgent=false) }
   derive atRoot = current.name == "threads" or current.name == "pullRequests" or current.name == "usage" or current.name == "settings"
   derive needsRegroup = split ? nav.tab == "threads" or nav.tab == "settings" or depth(select(nav, "threads")) > 1 or depth(select(nav, "settings")) > 1 : nav.tab == "threadDetail" or nav.tab == "settingsDetail" or depth(threadNav) > 1 or depth(settingsNav) > 1
-  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, query).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive searchText = query.trim().slice(0, 200).trim()
+  derive searchHosts = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and searchText.length >= 2 and searchText == messageQuery ? catalog.environments.filter(host => host.enabled and host.status == "Connected" and (selectedEnvironment == "" or host.id == selectedEnvironment) and (selectedProject == "" or catalog.projects.filter(project => project.id == selectedProject and project.environmentId == host.id).length > 0)).map(host => host.id) : []
+  resource messageResults = searchMessages(host, messageQuery, selectedProject) for host in searchHosts key=host as shape SearchReply transient
+  derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
+  derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
+  derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (thread.pinRank >= 0 or not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
+  derive listClockVisible = agesVisible or (current.name == "pullRequests" and pullRequests.items.length > 0) or (current.name == "pullRequest" and pullRefs.length == 1)
+  task startThreadListClock when listClockVisible key=listClockVisible
+    change(sampleThreadListClock)
+  task tickThreadListClock when listClockVisible
+    every(60000, sampleThreadListClock)
+  derive nearWake = visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero + threadListClock and thread.wakeAt <= time.epochAtZero + threadListClock + 60000).length > 0
+  task tickImminentWake when agesVisible and nearWake
+    every(1000, sampleThreadListClock)
+  action sampleThreadListClock
+    threadListClock = performanceNow()
+  task debounceThreadSearch when searchText != messageQuery key=searchText
+    after(120, startMessageSearch)
   derive catalogLoading = not environmentState.loaded or pending(environmentState) or pending(catalog) or catalog.environments.filter(environment => environment.enabled and (environment.status == "Disconnected" or environment.status == "Connecting" or environment.status == "Reconnecting")).length > 0
   derive selectedProjectLabel = match first(catalog.projects.filter(project => project.id == selectedProject)) { case some(project) => project.title, case none => "All projects" }
   derive composer = activeDraft.text
@@ -973,12 +1887,17 @@ component T3Code
         nav = nav
 
   action selectTab(name: string)
+    if name == "usage"
+      usageWindowTime = performanceNow()
     cancelForkNavigation()
     clearForceStopDialogs()
     nav = select(nav, split and name == "threads" ? "threadDetail" : split and name == "settings" ? "settingsDetail" : name)
 
   action search(value: string)
     query = value
+
+  action startMessageSearch
+    messageQuery = searchText
 
   action toggleSidebar
     sidebarHidden = not sidebarHidden
@@ -996,6 +1915,35 @@ component T3Code
 
   action openEnvironments
     nav = go(split ? select(settingsNav, "settingsDetail") : nav, "/environments")
+
+  action refreshUsage
+    usageWindowTime = performanceNow()
+    usageRefresh = usageRefresh + 1
+
+  action selectUsageView(value: string)
+    if usageView == "Limits"
+      usageWindowTime = performanceNow()
+      usageRefresh = 0
+    usageView = value
+
+  action selectUsageDays(days: number)
+    usageWindowTime = performanceNow()
+    usageDays = days
+    usageRefresh = 0
+
+  action openKeyboardSettings
+    nav = push(split ? settingsNav : nav, "/settings/keyboard")
+
+  action selectReturnBehavior(value: string)
+    composerReturnBehavior = value
+
+  action composerReturnKey(key: string, e: KeyboardEvent)
+    if key == "Enter" and e.code != "" and not e.isComposing and not e.altKey
+      let modified = e.metaKey or e.ctrlKey
+      if (composerReturnBehavior == "send" and not e.shiftKey) or (composerReturnBehavior == "newline" and modified)
+        preventDefault()
+        if not e.repeat
+          sendMessage(composerReturnBehavior == "send" ? modified : e.shiftKey)
 
   action manageEnvironment(id: string)
     expandedEnvironment = ""
@@ -1062,6 +2010,30 @@ component T3Code
     let followed = go(base, url)
     nav = followed.next == base.next ? followed : open(base, url)
 
+  action editPullSearch(value: string)
+    pullSearchDraft = value
+
+  action applyPullSearch
+    pullQuery = pullSearchText
+    pullPageIndex = 0
+
+  action resetPullPages
+    pullPageIndex = 0
+
+  action morePulls
+    if pullRequests.hasMore and not pending(pullRequests)
+      pullPageIndex = pullPageIndex + 1
+
+  action filterPullState(value: string)
+    if value != pullState and (value == "open" or value == "closed" or value == "merged" or value == "all")
+      editPullPrefs("state", value, [])
+      pullPageIndex = 0
+
+  action filterPullInvolvement(value: string)
+    if value != pullInvolvement and (value == "all" or value == "reviewing" or value == "authored")
+      editPullPrefs("involvement", value, [])
+      pullPageIndex = 0
+
   action openPullRequest(projectId: string, number: number)
     nav = push(nav, path("pullRequest", projectId, `${number}`))
 
@@ -1093,8 +2065,11 @@ component T3Code
     else if value == "compose"
       compose()
 
-  action toggleSettled
-    showSettled = not showSettled
+  action toggleShelf(key: string)
+    if key == "snoozed"
+      showSnoozed = not showSnoozed
+    else if key == "settled"
+      showSettled = not showSettled
 
   action toggleWorking
     showWorking = not showWorking
@@ -1307,7 +2282,7 @@ component T3Code
           text "Photo Library"
         if attachmentAccess.maxFileBytes > 0
           button press=pickAttachments(false) role="menuitem" testId="choose-files"
-            image "symbol:sf/folder"
+            image "symbol:icon.directory"
             text "Choose Files"
       match attachmentViewer
         case some(viewer)
@@ -1344,7 +2319,19 @@ component T3Code
                         button press=addEnvironment appearance="none" aria-label="Add environment" testId="empty-add-environment" background-color="AccentColor" color="white" border-radius=999 padding="10px 21px" min-height=42 margin-top=10.5 font-size=16 font-weight=500
                           text "Add environment"
                   else
-                    ThreadList(catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, visibleThreads=visibleThreads, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleSettled=toggleSettled, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                    ThreadList(now=time.epochAtZero + threadListClock, catalog=catalog, drafts=homeDrafts, openDraft=openHomeDraft, discardDraft=confirmDiscardDraft, aimDraft=aimHomeDraft, aimPin=aimPin, visibleThreads=visibleThreads, searchHits=searchHits, searchPending=(searchText.length >= 2 and searchText != messageQuery or pending(messageResults)), searchIncomplete=messageResults.filter(reply => reply.query == searchText and reply.unavailable).length > 0, selectedEnvironment=selectedEnvironment, selectedProject=selectedProject, selectedProjectLabel=selectedProjectLabel, nativeMenus=(device.kind != "web" and device.kind != ""), query=query, showSnoozed=showSnoozed, showSettled=showSettled, showWorking=showWorking, sidebar=split, selectedId=(split ? activeThreadId : ""), toggleShelf=toggleShelf, toggleWorking=toggleWorking, openThread=openThread, filterEnvironment=filterEnvironment, filterProject=filterProject, resetFilters=resetFilters)
+                  if undoReceipt != "" and visibleTab == "threads"
+                    row role="status" aria-live="polite" swipeleft=dismissPinUndo swiperight=dismissPinUndo testId="unpin-notice" position="absolute" bottom=(device.kind == "web" or device.rail ? 8 : "calc(64px + env(safe-area-inset-bottom))") left=(split ? 20 : 29) right=(split ? 20 : 23) z-index=100 align-items="center" gap=10.5 padding="7px 7px 7px 24.5px" backgroundMaterial="glass" background-color="card" border-radius=28 box-shadow="0 0 8px var(--composer-shadow)"
+                      animation=(undoViewport.prefersReducedMotion ? "none" : "undoArrival 200ms cubic-bezier(0.33,1,0.68,1) both")
+                      -exact-exit-animation=(undoViewport.prefersReducedMotion ? "none" : "undoDeparture 150ms ease-out both")
+                      image "symbol:sf/checkmark.circle" width=20 height=20 color="icon"
+                      text (undoKind == "snooze" ? "Snoozed thread" : undoKind == "settle" ? "Settled thread" : "Unpinned thread") font-size="0.8125rem" font-weight=600 flex=1 min-width=0 testId="thread-undo-label"
+                      if device.kind == "web"
+                        button press=restoreThreadAction appearance="none" aria-label=`Undo ${undoKind}` testId=`undo-${undoKind}` min-height=36 padding="0 14px" border-radius=18 background-color="input-fill" color="foreground" font-weight=600
+                          text "Undo"
+                      else
+                        button press=restoreThreadAction buttonStyle="bordered" aria-label=`Undo ${undoKind}` testId=`undo-${undoKind}` min-height=36 padding="0 14px"
+                          text "Undo"
               if e.name == "threadDetail"
                 column navigationKey=`${e.id}` navigationScroll="thread-empty" data-workspace-header="editor" data-sidebar=(sidebarHidden ? "hidden" : "shown") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1364,6 +2351,24 @@ component T3Code
                     text "Settings" role="heading" aria-level=2
                   button press=openEnvironments testId="detail-environments" aria-label="Environments"
                     text "Environments"
+              if e.name == "keyboardSettings"
+                column navigationKey=`${e.id}` navigationScroll=`keyboard-${e.id}` data-workspace-header=(split ? "editor" : "page") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header
+                    text "Keyboard" role="heading" aria-level=2
+                  list id=`keyboard-${e.id}` appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                    section role="radiogroup" aria-label="Return key"
+                      header
+                        text "Return key"
+                      for choice in ["send", "newline"] key=choice
+                        button press=selectReturnBehavior(choice) role="radio" aria-checked=(composerReturnBehavior == choice) testId=`keyboard-${choice}`
+                          column flex=1 min-width=0 gap=3
+                            text (choice == "send" ? "Send message" : "Insert new line") font="-exact-body"
+                            text (choice == "send" ? "Return sends the message. Shift-Return inserts a new line." : "Return inserts a new line. Command-Return sends the message.") font="-exact-footnote" color="muted"
+                          view width=24 height=24 align-items="center" justify-content="center" aria-hidden="true"
+                            if composerReturnBehavior == choice
+                              image "symbol:checkmark" width=18 height=18 color="AccentColor"
+                      footer
+                        text "Applies to the composer when a hardware keyboard is connected."
               if e.name == "environments"
                 column navigationKey=`${e.id}` navigationScroll=`environments-${e.id}` data-workspace-header=(split ? "editor" : "page") data-hides-back=(split ? "true" : "false") position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -1414,11 +2419,23 @@ component T3Code
                       image "symbol:sf/checkmark"
                   scroll id="add-environment" flex=1 min-height=0 padding="4px 16px 36px"
                     column gap=22.75
-                      column height=250 border-radius=26 background-image="radial-gradient(ellipse closest-side, #f4f4f5, #d9d9dc)" align-items="center" padding-top=36 box-sizing="border-box" gap=12.25
-                        column width=150 height=150 box-sizing="border-box" border-radius=28 border="3px solid #4d4d4d" align-items="center" justify-content="center" gap=7
-                          image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="#666666"
-                          text "Tap to scan" font-size=14 font-weight=500 color="#4d4d4d"
-                        text "Scan the code from t3 pair or desktop Connections settings" font-size=14 color="#4d4d4d" text-align="center"
+                      column height=250 border-radius=26 position="relative" background-color="scan-edge" background-image="radial-gradient(ellipse closest-side, scan-center, scan-edge)" align-items="center" box-sizing="border-box" overflow="hidden"
+                        if scanTrack != "" and scanRoute == `${e.id}`
+                          exact-camera srcObject=scanTrack position="absolute" inset=0 width="100%" height="100%" aria-label="Pairing QR viewfinder" testId="pair-scan-camera"
+                          view width=150 height=150 box-sizing="border-box" margin-top=36 border-radius=28 border="3px solid scan-ink" pointer-events="none" aria-hidden=true
+                          button press=clearPairingScan testId="pair-scan-cancel" margin-top=8 buttonStyle="glass"
+                            text "Cancel scan"
+                        else
+                          button press=startPairingScan disabled=(pending(scanOpened) or pending(scanFields) or pending(scanFormats)) aria-label="Scan QR code" testId="pair-scan" appearance="none" display="flex" flex-direction="column" position="absolute" inset=0 align-items="center" padding="36px 0 0" box-sizing="border-box" gap=12.25
+                            column width=150 height=150 box-sizing="border-box" flex-shrink=0 border-radius=28 border="3px solid scan-ink" align-items="center" justify-content="center" gap=7
+                              if device.kind == "web"
+                                svg width=44 height=44 viewBox="0 0 32 32" fill="none" stroke="scan-icon" stroke-width=1.6 stroke-linejoin="round" stroke-linecap="round" aria-hidden=true
+                                  path d="M3 10V6Q3 3 6 3H10 M22 3H26Q29 3 29 6V10 M29 22V26Q29 29 26 29H22 M10 29H6Q3 29 3 26V22"
+                                  path d="M8 8H14V14H8Z M18 8H24V14H18Z M8 18H14V24H8Z M18 18H20V21H24V24H22 M18 23V24 M24 18V19"
+                              else
+                                image "symbol:sf/qrcode.viewfinder" width=44 height=44 font-size=44 font-weight=300 color="scan-icon"
+                              text (pending(scanOpened) ? "Opening camera…" : "Tap to scan") font-size=14 font-weight=500 color="scan-ink"
+                            text (scanMessage != "" ? scanMessage : "Scan the code from t3 pair or desktop Connections settings") role="status" font-size=14 color="scan-ink" text-align="center" padding="0 12px" testId="pair-scan-message"
                       column gap=7
                         text "Or enter it" font-size=14 line-height="19px" font-weight=500 color="muted" padding="0 14px"
                         column background-color="card" border-radius=26 border="1px solid transparent" overflow="hidden"
@@ -1493,7 +2510,7 @@ component T3Code
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     if not isDraftKey(e.params.id) or (e.params.id == newTask.key and newTask.cwd != "")
                       button press=inspect("files") disabled=(isDraftKey(e.params.id) and not newTask.canReadFiles) aria-label="Open files" testId="thread-files"
-                        image "symbol:sf/folder"
+                        image "symbol:icon.directory"
                   column flex=1 min-height=0 min-width=0
                     column flex=1 min-height=0 min-width=0 position="relative"
                       if routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "draft"
@@ -1521,7 +2538,7 @@ component T3Code
                                           if thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))
                                             progress width=18 height=18
                                           else
-                                            image "symbol:sf/chevron.up" width=18 height=18
+                                            image "symbol:icon.disclose-up" width=18 height=18
                                           text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier activity…" : "Load earlier activity") font-size=16 font-weight=500
                                       if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
                                         text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
@@ -1537,7 +2554,7 @@ component T3Code
                                               row align-items="center" padding="0 7px" border-bottom="1px solid edge"
                                                 button press=toggleTool(e.params.id, row.id) appearance="none" display="flex" align-items="center" gap=7 min-width=0 min-height=38.5 flex=1 padding=0 color="muted" aria-label=`${tool.displayTitle}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
                                                   text tool.displayTitle font-size=14 font-weight=500 line-height="19px" line-clamp=1 text-overflow="ellipsis" font-variant-numeric="tabular-nums"
-                                                  image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=15 height=15
+                                                  image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:icon.disclose-down" : "symbol:forward-chevron") width=15 height=15
                                                 match row.changes
                                                   case some(changes)
                                                     TurnChangeStat(changes=changes, threadId=e.params.id, open=openTurnReview)
@@ -1679,9 +2696,9 @@ component T3Code
                                 button popovertarget="attachment-menu" disabled=(not draftsReady or pending(stagedAttachments)) appearance="none" order=1 display="flex" align-items="center" justify-content="center" flex-shrink=0 aria-label="Add attachment" width=44 height=44 opacity=(not draftsReady or pending(stagedAttachments) ? 0.5 : 1) testId="add-attachment"
                                   image "symbol:sf/plus" width=20 height=20
                                 if device.kind != "web"
-                                  workspace-composer-editor id="composer" document-key=composerEditingDraftId document-revision=`${composerSession.nativeRevision}` text=composer tokens=composerDocument.tokens context-json=activeDraft.context context-environment=composerEnvironmentId placeholder-text=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) editable=(draftsReady ? "true" : "false") selection-start=`${composerSession.cursor}` selection-end=`${composerSession.selectionEnd}` selection-revision=`${composerSession.selectionSerial}` focus-request=`${composerSession.focusSerial}` message=nativeComposerEvent order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") min-height=36 max-height=104 aria-label="Message" testId="composer"
+                                  workspace-composer-editor id="composer" enter-behavior=composerReturnBehavior document-key=composerEditingDraftId document-revision=`${composerSession.nativeRevision}` text=composer tokens=composerDocument.tokens context-json=activeDraft.context context-environment=composerEnvironmentId placeholder-text=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) editable=(draftsReady ? "true" : "false") selection-start=`${composerSession.cursor}` selection-end=`${composerSession.selectionEnd}` selection-revision=`${composerSession.selectionSerial}` focus-request=`${composerSession.focusSerial}` message=nativeComposerEvent order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") min-height=36 max-height=104 aria-label="Message" testId="composer"
                                 else
-                                  textarea id="composer" disabled=not draftsReady value=composer input=inputComposer selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
+                                  textarea id="composer" disabled=not draftsReady value=composer input=inputComposer key=composerReturnKey selectionchange=observeComposerSelection rows=1 field-sizing="content" order=(composerExpanded ? 0 : 2) width=(composerExpanded ? "calc(100% - 28px)" : "auto") flex-grow=(composerExpanded ? 0 : 1) flex-shrink=(composerExpanded ? 0 : 1) flex-basis=(composerExpanded ? "auto" : "0px") min-width=0 margin=(composerExpanded ? "0 14px 8px" : "4px") max-height=104 min-height=36 box-sizing="border-box" padding="6px 0" font-family="DM Sans" font-size=16 line-height="23px" appearance="none" border-width=0 outline="none" background-color="transparent" placeholder=(activeDraftKey != "" ? newTask.placeholder : approvalComposerPlaceholder) aria-label="Message" testId="composer"
                                     ::placeholder
                                       color="muted"
                                 if not composerFocus and composerAttachments.length > 0
@@ -1699,7 +2716,7 @@ component T3Code
                                       text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
                                       if composerModel.summary != ""
                                         text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
-                                    image "symbol:sf/chevron.down" width=10 height=10 flex-shrink=0
+                                    image "symbol:icon.disclose-down" width=10 height=10 flex-shrink=0
                                   if voice.available
                                     button press=requestComposerVoice appearance="none" width=44 height=44 aria-label=(voice.phase == "error" and voice.error.includes("Microphone access is off") ? "Open microphone settings" : "Start dictation") testId="composer-voice"
                                       image "symbol:sf/mic" width=20 height=20
@@ -1831,7 +2848,7 @@ component T3Code
                           if modelProviderFilter == "" and modelQuery.trim() == ""
                             if modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false)
                               text `${matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, false).length}` font-size=12 font-weight=500
-                            image (modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false) ? "symbol:sf/chevron.down" : "symbol:sf/chevron.up") width=12 height=12
+                            image (modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false) ? "symbol:icon.disclose-down" : "symbol:icon.disclose-up") width=12 height=12
                         if not modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, modelProviderFilter != "" or modelQuery.trim() != "")
                           column margin="0 14px" border-radius=14 overflow="hidden" background-color="card"
                             for model, index in matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites") key=model.id
@@ -1969,7 +2986,7 @@ component T3Code
                       else
                         for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
                           button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-ref-${ref.name}`
-                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            image (ref.current ? "symbol:select-fill" : "symbol:sf/arrow.branch") width=18 height=18
                             column flex=1 min-width=0 gap=3
                               text ref.name line-clamp=1
                               text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "") font-size=13 color="muted" line-clamp=1
@@ -1997,7 +3014,7 @@ component T3Code
                               for item in result.items key=item.id
                                 button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left" testId=`inspector-entry-${item.id}`
                                   row align-items="center" gap=10
-                                    image (item.kind == "directory" ? "symbol:sf/folder" : item.kind == "file" ? "symbol:sf/doc.text" : "symbol:sf/info.circle") width=20 height=20
+                                    image (item.kind == "directory" ? "symbol:icon.directory" : item.kind == "file" ? "symbol:sf/doc.text" : "symbol:sf/info.circle") width=20 height=20
                                     column flex=1 min-width=0 gap=3
                                       text item.label font-size=16
                                       if item.detail != ""
@@ -2067,7 +3084,7 @@ component T3Code
                       else
                         for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
                           button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-overview-ref-${ref.name}`
-                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            image (ref.current ? "symbol:select-fill" : "symbol:sf/arrow.branch") width=18 height=18
                             column flex=1 min-width=0 gap=3
                               text ref.name line-clamp=1
                               text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "Local branch") font-size=13 color="muted" line-clamp=1
@@ -2104,7 +3121,7 @@ component T3Code
                           text (gitExcludedFiles.length == 0 ? "Deselect all" : "Select all") color="foreground"
                     for file in gitStatus.workingFiles key=file.path
                       button press=toggleGitFile(file.path) role="checkbox" aria-checked=(not gitExcludedFiles.includes(file.path)) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" testId=`git-file-${file.path}`
-                        image (gitExcludedFiles.includes(file.path) ? "symbol:sf/circle" : "symbol:checkmark.circle.fill") width=18 height=18
+                        image (gitExcludedFiles.includes(file.path) ? "symbol:sf/circle" : "symbol:select-fill") width=18 height=18
                         text file.path flex=1 min-width=0 line-clamp=1
                         text `+${file.insertions} −${file.deletions}` font-size=13 color="muted"
                     if gitStatus.workingFiles.length == 0
@@ -2127,35 +3144,109 @@ component T3Code
                     button press=confirmGitAction(true) disabled=gitBusy appearance="none" padding=12 testId="git-confirm-branch"
                       text (gitConfirmIncludesCommit ? "Feature branch & commit" : "Feature branch & continue")
               if e.name == "pullRequests"
-                column navigationKey=`${e.id}` navigationScroll="pulls" data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll=(pullRequests.items.length == 0 ? "pulls" : "pulls-list") data-workspace-header="brand" data-search-placement=(split ? "integrated" : "button") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Pull Requests" role="heading" aria-level=2
-                  list id="pulls" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    if pending(pullRequests)
-                      section
-                        row
-                          progress width=18 height=18
-                          text "Loading pull requests…" font="-exact-body" testId="pulls-loading"
-                    else if pullRequests.error != ""
-                      section
-                        row
-                          text pullRequests.error color="danger" testId="pulls-error"
-                    else if pullRequests.items.length == 0
-                      section
-                        row
-                          text "No pull requests yet" font="-exact-body" testId="pulls-empty"
-                        footer
-                          text "Pull requests linked to your threads will appear here." font="-exact-footnote" color="-exact-secondary-label"
+                    input type="search" value=pullSearchDraft input=editPullSearch placeholder="Search pull requests" aria-label="Search pull requests" testId="pulls-search"
+                  scroll display="flex" flex-direction="row" overflow-x="auto" overflow-y="hidden" flex-shrink=0 min-width=0 background-color="screen" testId="pulls-filters"
+                    row gap=8 align-items="center" flex-shrink=0 min-width="100%" box-sizing="border-box" padding="2px 16px 10px"
+                      if device.kind == "web" or device.kind == ""
+                        button popovertarget="pull-controls-menu" aria-haspopup="menu" aria-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") appearance="none" display="flex" align-items="center" gap=5.25 padding="5.25px 10.5px" min-height=28 border-radius=16 backgroundMaterial="glass" color=(pullControls.count > 0 ? "white" : "muted") background-color=(pullControls.count > 0 ? "AccentColor" : "transparent") testId="pull-filter-more"
+                          image "symbol:filter" width=15 height=15 flex-shrink=0
+                          text (pullControls.count > 0 ? `${pullControls.count}` : "Filters") font-size="0.875rem" font-weight=500
+                      else
+                        workspace-filter-menu chip-label=(pullControls.count > 0 ? `${pullControls.count}` : "Filters") grouped-options=pullControls.menu active=(pullControls.count > 0 ? "true" : "false") accessibility-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") test-id="pull-filter-more" testId="pull-filter-more" message=choosePullControl flex-shrink=0
+                      if catalog.environments.length > 1
+                        if device.kind != "web" and device.kind != ""
+                          workspace-filter-menu chip-label=(selectedPullEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedPullEnvironment)) options-query=("=All%20environments&" + catalog.environments.map(env => `${encodeURIComponent(env.id)}=${encodeURIComponent(env.label)}`).join("&")) selected-id=selectedPullEnvironment active=(selectedPullEnvironment != "" ? "true" : "false") accessibility-label="Choose pull request environment" test-id="pull-filter-environment" testId="pull-filter-environment" message=filterPullEnvironment flex-shrink=0
+                        else
+                          button popovertarget="pull-environments-menu" aria-haspopup="menu" aria-label="Choose pull request environment" appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 white-space="nowrap" backgroundMaterial="glass" font-size="0.875rem" font-weight=500 color=(selectedPullEnvironment != "" ? "white" : "muted") background-color=(selectedPullEnvironment != "" ? "AccentColor" : "transparent") testId="pull-filter-environment"
+                            text (selectedPullEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedPullEnvironment)) max-width=180 line-clamp=1
+                            image "symbol:icon.disclose-down" width=11 height=11
+                      PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
+                      PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
+                      PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=labelMenuAction)
+                      PullFacetChip(field="authors", title=(pullAuthor == "me" ? "By you" : pullAuthor != "" ? pullAuthor : "Author"), label="Filter by author", active=(pullAuthor != ""), facet=facets.authors, native=(device.kind != "web" and device.kind != ""), choose=authorMenuAction)
+                  if pullPrefsError != ""
+                    text pullPrefsError color="danger" padding="7px 14px" role="status" testId="pull-preference-error"
+                  if pullRequests.items.length == 0
+                    scroll id="pulls" flex=1 min-height=0 background-color="screen"
+                      if pending(pullRequests) or not environmentState.loaded or pending(catalog)
+                        column align-items="center" padding="48px 0"
+                          progress width=18 height=18 aria-label="Loading pull requests" testId="pulls-loading"
+                      else
+                        column align-items="stretch" padding="70px 56px" gap=7 overflow-wrap="anywhere"
+                          text (pullRequests.error != "" ? "Couldn't load pull requests" : catalog.environments.length == 0 ? "Connect an environment" : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Environment offline" : pullQuery != "" ? "No results" : "No matching pull requests") role="heading" aria-level=3 font-size="1.3125rem" line-height="1.75rem" font-weight=700 text-align="center" testId="pulls-empty"
+                          text (pullRequests.error != "" ? pullRequests.error : catalog.environments.length == 0 ? "Add an environment in Settings to browse its pull requests." : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Reconnect to load pull requests that aren't saved on this device." : "Pull requests from the selected environments' projects appear here.") font-size="1rem" line-height="1.5rem" text-align="center" color="muted" testId="pulls-empty-detail"
+                      if pullRequests.hasMore
+                        PullPageFooter(error=pullRequests.moreError, busy=pending(pullRequests), load=morePulls)
+                  else
+                    list id="pulls-list" appearance="none" flex=1 min-height=0 background-color="screen"
+                      if pullRequests.error != ""
+                        text pullRequests.error padding="10.5px 14px" font-size=13 line-height="17px" color="muted" testId="pulls-error"
+                      for pull in orderedPulls key=`${pull.routeKey}:${pull.number}`
+                        button press=openPullRequest(pull.routeKey, pull.number) appearance="none" aria-label=pull.row.accessible testId=`pull-${pull.environmentId}-${pull.host}-${pull.repository}-${pull.projectId}-${pull.number}` width="100%" box-sizing="border-box" display="flex" flex-direction="row" align-items="flex-start" text-align="left" gap=10.5 padding="0 14px" border="none" background-color="transparent" color="foreground"
+                          column position="relative" flex-shrink=0 margin-top=8.75 width=20 height=20 aria-hidden=true
+                            if pull.row.status == "Open" or pull.row.status == "Draft"
+                              image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(pull.row.status == "Open" ? "status-done" : "icon-muted")
+                            else
+                              image (pull.row.status == "Merged" ? "symbol:sf/arrow.triangle.merge" : "symbol:sf/xmark.circle") width=20 height=20 color=(pull.row.status == "Merged" ? "status-input" : "danger")
+                            if pull.row.conflict
+                              image "symbol:sf/exclamationmark.triangle.fill" width=10 height=10 position="absolute" bottom=-2 right=-3 color="status-warning" background-color="screen" border-radius=3
+                          column min-width=0 flex=1 padding="8.75px 0" gap=3.5 border-bottom="1px solid border-subtle"
+                            row align-items="center" gap=5.25 min-width=0
+                              column width=16 height=16 flex-shrink=0 border-radius=8 background-color="card" align-items="center" justify-content="center"
+                                text pull.row.initial font-size=7.2 line-height="10px" font-weight=500 color="muted"
+                              text `${pull.repository} #${pull.number}` flex=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1
+                              if pull.row.stackText != ""
+                                image "symbol:sf/square.3.layers.3d" width=12 height=12 color="muted"
+                                text pull.row.stackText font-size=12 line-height="16px" color="muted" font-variant-numeric="tabular-nums"
+                              text compactAge(pull.row.updatedMs, time.epochAtZero + threadListClock) font-size=12 line-height="16px" color="muted" font-variant-numeric="tabular-nums" flex-shrink=0
+                            text pull.title font-size=16 line-height="17.5px" font-weight=500 line-clamp=2
+                            row align-items="center" gap=5.25 min-width=0
+                              row flex=1 min-width=0 align-items="center" gap=3.5
+                                for label in pull.row.labels key=label.name
+                                  row min-width=0 max-width=160 flex-shrink=1 align-items="center" gap=3.5 border-radius=5 padding="1.75px 5.25px" background-color=(label.color == "" ? "subtle" : `${label.color}20`)
+                                    if label.color != ""
+                                      column width=5 height=5 border-radius=3 background-color=label.color flex-shrink=0
+                                    text label.name min-width=0 line-clamp=1 font-size=12 line-height="16px" font-weight=500 color="muted"
+                                if pull.row.extraLabels > 0
+                                  text `+${pull.row.extraLabels}` font-size=12 line-height="16px" color="muted" flex-shrink=0
+                              if pull.row.checks != ""
+                                image (pull.row.checks == "passing" ? "symbol:sf/checkmark.circle" : pull.row.checks == "failing" ? "symbol:sf/xmark.circle.fill" : "symbol:sf/clock") color=(pull.row.checks == "passing" ? "status-done" : pull.row.checks == "failing" ? "danger" : "status-warning") width=13 height=13 flex-shrink=0
+                              if pull.row.review != ""
+                                image (pull.row.review == "Reviews approved" ? "symbol:sf/person.fill.checkmark" : pull.row.review == "Changes requested" ? "symbol:sf/person.fill.xmark" : "symbol:sf/person.badge.clock") color=(pull.row.review == "Reviews approved" ? "status-done" : pull.row.review == "Changes requested" ? "danger" : pull.row.review == "Your review requested" ? "status-warning" : "muted") width=13 height=13 flex-shrink=0
+                              if pull.row.addedText != "" or pull.row.deletedText != ""
+                                row align-items="center" gap=7 flex-shrink=0
+                                  if pull.row.addedText != ""
+                                    text pull.row.addedText font-size=12 line-height="16px" font-weight=500 font-variant-numeric="tabular-nums" color="status-done"
+                                  if pull.row.deletedText != ""
+                                    text pull.row.deletedText font-size=12 line-height="16px" font-weight=500 font-variant-numeric="tabular-nums" color="danger"
+                      if pullRequests.hasMore
+                        PullPageFooter(error=pullRequests.moreError, busy=pending(pullRequests), load=morePulls)
+              if e.name == "pullFilterSearch"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="75% large" navigationInitialDetent="75%" navigationGrabber="visible" navigationScroll="pr-facet-results" data-workspace-header="editor" data-search-placement=(split ? "integrated" : "toolbar") position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label=(facetKind == "labels" ? "Close label filter" : "Close author filter") testId="pr-facet-close"
+                      image "symbol:close"
+                    text (facetKind == "labels" ? "Filter by label" : facetKind == "authors" ? "Filter by author" : "Unknown filter") role="heading" aria-level=2
+                    input type="search" value=facetDraft input=editFacetQuery placeholder=(facetKind == "labels" ? "Search labels" : "Search authors") aria-label=(facetKind == "labels" ? "Search labels" : "Search authors") testId="pr-facet-query"
+                  scroll id="pr-facet-results" flex=1 min-height=0 padding=(split ? "16px" : "16px 16px calc(env(safe-area-inset-bottom) + 72px)")
+                    if facetRows.length > 0
+                      column border-radius=14 overflow="hidden" background-color="card"
+                        for option, index in facetRows key=option.id
+                          button role=(facetKind == "labels" ? "checkbox" : "radio") aria-checked=option.selected aria-label=option.title press=chooseFacetRow(option.id) appearance="none" display="flex" align-items="center" gap=10.5 min-height=49 padding="10.5px 14px" box-sizing="border-box" color="foreground" text-align="left" border-bottom=(index + 1 < facetRows.length ? "1px solid border-subtle" : "none") testId=`pr-facet-result-${option.id}`
+                            if facetKind == "labels"
+                              box width=8.75 height=8.75 border-radius=5 background-color=(option.color == "" ? "transparent" : option.color) flex-shrink=0
+                            text option.title flex=1 min-width=0 font-size="1rem" line-height="1.4375rem" font-weight=500 line-clamp=1
+                            if option.selected
+                              image "symbol:checkmark" width=16 height=16 font-weight=600 color="icon" flex-shrink=0
+                    else if facetKind != "" and not facetSettled
+                      progress aria-label="Searching" testId="pr-facet-loading"
                     else
-                      section
-                        for pull in pullRequests.items key=`${pull.projectId}:${pull.number}`
-                          row press=openPullRequest(pull.projectId, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.projectId}-${pull.number}`
-                            column flex=1 min-width=0 gap=3
-                              text `#${pull.number} ${pull.title}` font="-exact-body" line-clamp=2
-                              text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
-                              text (pull.author != "" ? `by ${pull.author}` : "") font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
-                            text pull.state font="-exact-footnote" color=(pull.state == "open" ? "status-working" : "muted")
-                            text "View" color="foreground" testId=`pull-open-${pull.projectId}-${pull.number}`
+                      column align-items="center" gap=7 padding="36px 16px"
+                        text (hostedFacets.failed ? "Couldn't search the host" : facetKind == "labels" ? "No matching labels" : "No matching authors") font="-exact-headline" testId="pr-facet-empty"
+                        text (hostedFacets.failed ? "The host didn't answer. Try again in a moment." : facetKind == "labels" ? "Search the labels of the repositories this list covers." : "Search the authors of the repositories this list covers.") font="-exact-footnote" color="muted" text-align="center"
               if e.name == "pullRequest"
                 column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2163,76 +3254,356 @@ component T3Code
                       image "symbol:back"
                     text (match selectedPullRequest { case some(pull) => `#${pull.number} ${pull.title}`, case none => "Pull request" }) role="heading" aria-level=2 line-clamp=1
                   scroll id="pull-request-detail" flex=1 min-height=0 padding=16
-                    if pending(pullRequests)
+                    if pending(pullRequests) or (matchingPulls.length == 0 and pullLink.length > 0 and (pending(catalog) or pending(pullRequestDetail)))
                       row align-items="center" gap=8
                         progress width=16 height=16
                         text "Loading pull requests…" color="muted" testId="pull-request-list-loading"
-                    else if pullRequests.error != ""
+                    else if matchingPulls.length > 1
+                      text "This link matches more than one pull request. Choose one from Pull Requests." color="muted" testId="pull-request-ambiguous"
+                    else if pullLink.length > 0 and matchingPulls.length == 0 and pullRequestDetail.error != ""
+                      text pullRequestDetail.error color="danger" testId="pull-request-direct-error"
+                    else if pullRequests.error != "" and matchingPulls.length == 0 and pullLink.length == 0
                       text pullRequests.error color="danger" testId="pull-request-list-error"
                     else
                       match selectedPullRequest
                         case some(pull)
                           column gap=14
-                            text pull.title font-size=22 font-weight=700
-                            text `#${pull.number} · ${pull.state}${pull.isDraft ? " · Draft" : ""}` color="muted"
-                            text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` color="muted"
-                            if pending(pullRequestDetail)
-                              row align-items="center" gap=8
-                                progress width=16 height=16
-                                text "Loading pull request details…" color="muted" testId="pull-request-detail-loading"
-                            else if pullRequestDetail.error != ""
-                              text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
-                            else
-                              text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
-                              text `${pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles} changed file${(pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles) == 1 ? "" : "s"} · +${pullRequestDetail.additions > 0 ? pullRequestDetail.additions : pull.additions} −${pullRequestDetail.deletions > 0 ? pullRequestDetail.deletions : pull.deletions}` color="muted"
-                              text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
-                              if pullRequestDetail.body != ""
-                                text pullRequestDetail.body line-clamp=12 padding-top=6
-                            if pending(pullRequestActivity)
-                              row align-items="center" gap=8 padding-top=8
-                                progress width=16 height=16
-                                text "Loading activity…" color="muted" testId="pull-request-activity-loading"
-                            else if pullRequestActivity.error != ""
-                              text pullRequestActivity.error color="danger" testId="pull-request-activity-error"
-                            else
-                              if pullRequestActivity.commits.length > 0
-                                column gap=6 padding-top=8
-                                  text "Commits" font-size=17 font-weight=700
-                                  for commit in pullRequestActivity.commits key=commit.id
-                                    row align-items="flex-start" gap=8 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-commit-${commit.id}`
-                                      image "symbol:sf/arrow.triangle.branch" width=15 height=15 color="muted"
-                                      column flex=1 min-width=0 gap=2
-                                        text commit.subject line-clamp=2
-                                        text `${commit.author != "" ? `${commit.author} · ` : ""}${commit.createdAt}` font-size=13 color="muted" line-clamp=1
-                              if pullRequestActivity.comments.length > 0
-                                column gap=6 padding-top=8
-                                  text `Activity${pullRequestActivity.commentsTruncated ? " · Showing recent comments" : ""}` font-size=17 font-weight=700
-                                  for comment in pullRequestActivity.comments key=comment.id
-                                    column gap=3 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-comment-${comment.id}`
-                                      row align-items="center" gap=6
-                                        text (comment.author != "" ? comment.author : "Unknown reviewer") font-weight=700 line-clamp=1
-                                        text comment.kind font-size=12 color="muted"
-                                      if comment.path != ""
-                                        text comment.path font-size=12 color="muted" line-clamp=1
-                                      text comment.body white-space="pre-wrap" line-clamp=8
-                                      text comment.createdAt font-size=12 color="muted"
-                              if pullRequestActivity.commits.length == 0 and pullRequestActivity.comments.length == 0
-                                text "No activity yet." padding-top=8 color="muted" testId="pull-request-activity-empty"
-                            text `Updated ${pull.updatedAt}` font-size=13 color="muted"
-                            button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
-                              text "Open in source control"
+                            PullIdentity(pull=pull, detail=pullRequestDetail, loaded=currentPullDetail, now=time.epochAtZero + threadListClock, copy=copyMessage)
+                            row role="tablist" aria-label="Pull request sections" min-width=0 width="100%" testId="pull-sections"
+                              for section in ["Overview", "Activity"] key=section
+                                button role="tab" aria-selected=(visiblePullSection == section) press=choosePullSection(section) flex=1 min-width=0 testId=`pull-section-${section}`
+                                  text section line-clamp=1
+                            if visiblePullSection == "Overview"
+                              if pending(pullRequestDetail)
+                                row align-items="center" gap=8
+                                  progress width=16 height=16
+                                  text "Loading pull request details…" color="muted" testId="pull-request-detail-loading"
+                              else if pullRequestDetail.error != ""
+                                text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
+                              else
+                                if pullRequestDetail.checksState != ""
+                                  text `Checks: ${pullRequestDetail.checksState}` color="muted"
+                                if currentPullDetail
+                                  PullDescription(blocks=pullRequestDetail.description, expanded=descriptionExpanded, toggle=toggleDescription)
+                            if visiblePullSection == "Activity"
+                              row align-items="center" gap=7 min-width=0 flex-wrap="wrap"
+                                button popovertarget="activity-kind-menu" aria-haspopup="menu" aria-label=`Activity type, ${activityKind}` appearance="none" min-height=44 display="flex" align-items="center" gap=7 testId="pull-activity-kind"
+                                  text activityKind font-size="0.875rem" font-weight=600
+                                  image "symbol:icon.disclose-down" width=11 height=11 color="muted"
+                                box flex=1
+                                button popovertarget="activity-show-menu" aria-haspopup="menu" aria-label=`Filter activity, ${timeline.hidden} hidden` min-height=44 min-width=44 appearance="none" display="flex" align-items="center" gap=5.25 testId="pull-activity-show"
+                                  if timeline.hidden > 0
+                                    text `${timeline.hidden} hidden` color="muted" font-size="0.8125rem"
+                                  image "symbol:filter" width=18 height=18 color="muted"
+                                button press=orderActivity aria-label=(activityNewest ? "Newest first" : "Oldest first") min-height=44 appearance="none" display="flex" align-items="center" gap=3.5 testId="pull-activity-order"
+                                  text (activityNewest ? "↓" : "↑") color="muted"
+                                  text (activityNewest ? "Newest" : "Oldest") font-size="0.8125rem" color="muted"
+                              if pending(pullRequestActivity)
+                                row align-items="center" gap=8 padding-top=8
+                                  progress width=16 height=16
+                                  text "Loading activity…" color="muted" testId="pull-request-activity-loading"
+                              else if pullRequestActivity.error != ""
+                                text pullRequestActivity.error color="danger" testId="pull-request-activity-error"
+                              else
+                                for event in timeline.rows key=event.key
+                                  column gap=3.5 min-width=0 padding="7px 0" border-bottom="1px solid border-subtle" testId=`pull-request-${event.kind}-${event.id}`
+                                    text `${event.author} ${event.summary}` font-size="0.875rem" font-weight=500 line-clamp=2
+                                    if event.path != ""
+                                      text `${event.path}${event.line > 0 ? `:${event.line}` : ""}` color="muted" font-family="ui-monospace" font-size="0.8125rem" line-clamp=2
+                                    if event.kind == "commit"
+                                      button press=openPullCommit(event.id) aria-label=`View commit ${event.id.slice(0, 7)}, ${event.body}` min-height=44 appearance="none" display="flex" align-items="center" gap=7 text-align="left" testId=`pull-open-commit-${event.id}`
+                                        text event.body flex=1 min-width=0 line-clamp=1
+                                        text event.id.slice(0, 7) color="muted" font-family="Menlo" font-size="0.75rem"
+                                    else if event.body != ""
+                                      text event.body user-select="text" white-space="pre-wrap" line-clamp=8 overflow-wrap="break-word"
+                                    if event.kind == "discussion"
+                                      button press=openDiscussion(event.id) aria-label=`Open ${event.resolved ? "resolved" : "unresolved"} discussion in ${event.path == "" ? "the overview" : event.path}` min-height=44 appearance="none" text-align="left" testId=`pull-open-discussion-${event.id}`
+                                        text `${event.resolved ? "Resolved" : "Unresolved"}${event.outdated ? " · Outdated" : ""} · ${event.replyCount} ${event.replyCount == 1 ? "comment" : "comments"}` font-size="0.8125rem" color="muted"
+                                    if event.date != ""
+                                      text event.date font-size="0.75rem" color="muted" line-clamp=1
+                                if timeline.rows.length == 0 and not pending(timeline)
+                                  text "No activity matches these filters." padding="21px 0" color="muted" testId="pull-request-activity-empty"
+                                if correctActivity and pullRequestActivity.truncated and activityKind != "Commits"
+                                  text "More activity is available on the provider." font-size="0.8125rem" color="muted" testId="pull-activity-partial"
+                            if visiblePullSection == "Overview"
+                              row align-items="center" min-height=60 gap=7
+                                column flex=1 min-width=0 gap=3.5
+                                  text "Changed files" role="heading" aria-level=3 font-weight=600 testId="pull-files-heading"
+                                  if pullFiles.files.length > 0
+                                    text `${visiblePullFiles.length} ${hiddenPullFileCount > 0 ? "visible" : "changed"} ${visiblePullFiles.length == 1 ? "file" : "files"}${viewedScope and viewedFiles.complete ? ` · ${visibleViewedCount} viewed` : ""} · ${hidePullTests ? `${hiddenPullFileCount} test ${hiddenPullFileCount == 1 ? "file" : "files"} hidden` : "Test files included"}` font-size="0.8125rem" line-height="1.0625rem" color="muted" testId="pull-files-summary"
+                                if pullFiles.files.length > 0
+                                  button popovertarget="pull-file-filter-menu" aria-label="Filter review files" aria-haspopup="menu" min-height=44 min-width=44 testId="pull-file-filter"
+                                    image "symbol:filter"
+                              if pending(rawPullFiles) and pullFiles.files.length == 0
+                                progress aria-label="Loading changed files" width=18 height=18
+                              else if pullFiles.error != "" and pullFiles.files.length == 0
+                                text pullFiles.error color="danger" testId="pull-files-error"
+                                button press=retryPullFiles testId="pull-files-retry"
+                                  text "Retry loading files"
+                              else
+                                for file in visiblePullFiles key=file.path
+                                  column min-width=0
+                                    button press=openPullFile(pull.routeKey, pull.number, file.path) aria-label=`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions${viewedScope and viewedFiles.paths.includes(file.path) ? ", viewed" : ""}` min-height=49 testId=`pull-file-${file.path}`
+                                      row min-width=0 align-items="center" gap=7
+                                        column flex=1 min-width=0 gap=1.75
+                                          text file.name font-size="0.875rem" font-weight=500 line-clamp=2
+                                          if file.directory != ""
+                                            text file.directory font-size="0.8125rem" color="muted" line-clamp=1
+                                          if file.previousPath != ""
+                                            text `${file.copied ? "Copied" : "Renamed"} from ${file.previousPath}` font-size="0.8125rem" color="muted" line-clamp=1 testId=`pull-file-origin-${file.path}`
+                                        text `+${file.additions}` color="status-done"
+                                        text `−${file.deletions}` color="danger"
+                                        if viewedScope and viewedFiles.paths.includes(file.path)
+                                          image "symbol:select-fill" width=18 height=18 color="status-done" testId=`pull-viewed-${file.path}`
+                                        image "symbol:icon.disclose-forward" width=12 height=12 color="muted"
+                                    if file.omitted
+                                      text "Patch omitted" color="muted"
+                                if pullFiles.files.length == 0
+                                  text "No text changes available." color="muted"
+                                else if visiblePullFiles.length == 0
+                                  text (pullFiles.nextCursor != "" ? "No non-test files loaded yet" : "Only test files changed") role="heading" aria-level=3
+                                  text "Test files are hidden from this review." color="muted"
+                                  button press=togglePullTests testId="pull-show-test-files"
+                                    text "Show test files"
+                                if pullFiles.truncated
+                                  text "Showing a partial diff." color="muted" testId="pull-files-partial"
+                                if pullFiles.nextCursor != ""
+                                  if pullFiles.error != ""
+                                    text pullFiles.error color="danger"
+                                  button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-files-more"
+                                    text (pullFiles.error != "" ? "Retry loading files" : "Load more files")
+                              button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
+                                text "Open in source control"
                         case none
                           text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
+              if e.name == "pullDiscussion"
+                column navigationKey=`${e.id}` navigationScroll="discussion-posts" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Back to activity" testId="pull-discussion-back"
+                      image "symbol:back"
+                    text "Discussion" role="heading" aria-level=2
+                    if resolveAllowed
+                      match first(discussionSeed)
+                        case some(thread)
+                          button press=toggleDiscussionResolution disabled=(discussionBusy or pending(pullRequestActivity)) aria-label=(thread.resolved ? "Unresolve" : "Resolve") min-height=44 min-width=44 testId="discussion-resolution"
+                            image (thread.resolved ? "symbol:sf/arrow.uturn.backward" : "symbol:checkmark")
+                        case none
+                          box width=0
+                  scroll id="discussion-posts" flex=1 min-height=0 padding="7px 14px 28px"
+                    match first(discussionSeed)
+                      case some(thread)
+                        column gap=10.5 min-width=0
+                          text (thread.path == "" ? "Overview" : `${thread.path}${thread.line > 0 ? `:${thread.line}` : ""}`) role="heading" aria-level=3 font="-exact-headline" line-clamp=2 testId="pull-discussion-path"
+                          text `${thread.resolved ? "Resolved" : "Unresolved"}${thread.outdated ? " · Outdated" : ""} · ${thread.count} ${thread.count == 1 ? "comment" : "comments"}` color="muted" font="-exact-footnote"
+                          for post in discussionRows key=post.id
+                            column gap=5.25 min-width=0 padding="10.5px 0" border-bottom="1px solid border-subtle" testId=`pull-discussion-post-${post.id}`
+                              text post.author font="-exact-subheadline" font-weight=600 line-clamp=1
+                              text post.body user-select="text" white-space="pre-wrap" overflow-wrap="anywhere"
+                              text `${post.date}${post.edited != "" ? " · Edited" : ""}` font="-exact-caption1" color="muted"
+                          if discussionCacheKey == discussionKey and discussionHidden > 0
+                            text `${discussionHidden} ${discussionHidden == 1 ? "reply hidden" : "replies hidden"} by the provider.` font="-exact-footnote" color="muted" testId="discussion-hidden"
+                          if discussionCacheKey == discussionKey and discussionError != ""
+                            text discussionError color="danger" testId="discussion-page-error"
+                          if discussionCursor != ""
+                            button press=loadDiscussionPage disabled=discussionBusy min-height=44 testId="discussion-more"
+                              text (pending(moreDiscussion) ? "Loading…" : "Load more replies")
+                      case none
+                        if pending(pullRequestActivity) or pending(catalog)
+                          progress aria-label="Loading discussion"
+                        else
+                          text (pullRequestActivity.error != "" ? pullRequestActivity.error : "This discussion is unavailable.") color="muted" padding=14 testId="pull-discussion-unavailable"
+                  if replyVisit == discussionVisit and writeMessage != ""
+                    text writeMessage role=(writeFailed ? "alert" : "status") color=(writeFailed ? "danger" : "muted") padding="7px 14px" testId="discussion-write-message"
+                  if replyAllowed or shownDraft != ""
+                    row align-items="flex-end" gap=4 padding=4 margin="0 14px max(12px, env(safe-area-inset-bottom))" border-radius=24 backgroundMaterial="glass" background-color="card"
+                      textarea value=shownDraft input=editDiscussionReply readonly=(not replyAllowed or discussionBusy) placeholder="Reply…" aria-label="Discussion reply" rows=1 field-sizing="content" min-width=0 flex=1 min-height=48 max-height=144 box-sizing="border-box" padding="12px 14px" font-size="1rem" border="0" appearance="none" background-color="transparent" testId="discussion-reply"
+                      if replyAllowed
+                        button press=postDiscussionReply disabled=(discussionBusy or shownDraft.trim() == "") min-height=44 min-width=44 testId="discussion-post"
+                          text "Reply"
+              if e.name == "pullFilesSheet" or e.name == "pullCommitPicker"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Close changed files" testId="pull-picker-close"
+                      image "symbol:close"
+                    text "Changed files" role="heading" aria-level=2
+                  row align-items="center" gap=7 padding="0 14px"
+                    text (match first(pullRefs) { case some(ref) => `#${ref.number} · ${ref.repository}`, case none => "Changed files" }) flex=1 min-width=0 line-clamp=1 font="-exact-footnote" color="muted" testId="pull-picker-subtitle"
+                    button popovertarget="pull-file-filter-menu" aria-label="Filter review files" min-height=44 min-width=44 testId="pull-picker-filter"
+                      image "symbol:filter" width=20 height=20
+                  list id="pull-picker-files" virtualized=true estimated-item-height=49 flex=1 min-height=0 appearance="none"
+                    for item in pickerFiles key=item.key
+                      column min-width=0
+                        if item.kind == "directory"
+                          button press=foldFileDirectory(item.path) aria-label=item.label aria-expanded=(not foldedPullDirectories.includes(item.path)) appearance="none" display="flex" align-items="center" text-align="left" gap=7 min-height=44 padding="14px 14px 7px" testId=`pull-picker-${item.key}`
+                            image (foldedPullDirectories.includes(item.path) ? "symbol:icon.disclose-forward" : "symbol:icon.disclose-down") width=11 height=11 color="muted"
+                            image "symbol:icon.directory" width=16 height=16 color="muted"
+                            text item.label flex=1 min-width=0 font="-exact-subheadline" color="muted" line-clamp=2
+                        else
+                          button press=jumpFromFilePicker(item.path) aria-label=`View diff for ${item.path}, ${item.added} additions, ${item.deleted} deletions${viewedScope and viewedFiles.paths.includes(item.path) ? ", viewed" : ""}` appearance="none" display="flex" align-items="center" text-align="left" gap=10.5 min-height=49 padding="10.5px 14px" border-bottom="1px solid border-subtle" testId=`pull-picker-${item.key}`
+                            column flex=1 min-width=0 gap=1.75
+                              text item.label font-size="0.875rem" font-weight=500 line-clamp=2
+                              if item.origin != ""
+                                text item.origin font-size="0.8125rem" color="muted" line-clamp=1
+                            text `+${item.added}` color="status-done" font="-exact-caption1"
+                            text `−${item.deleted}` color="danger" font="-exact-caption1"
+                            if viewedScope and viewedFiles.paths.includes(item.path)
+                              image "symbol:select-fill" color="status-done" width=18 height=18
+                            image "symbol:icon.disclose-forward" color="muted" width=12 height=12
+                  if pending(rawPullFiles) and pullFiles.files.length == 0
+                    progress aria-label="Loading changed files"
+                  else if pullFiles.error != ""
+                    text pullFiles.error color="danger" padding=14
+                    button press=retryPullFiles min-height=44 testId="pull-picker-retry"
+                      text "Retry loading files"
+                  else if visiblePullFiles.length == 0
+                    text (hiddenPullFileCount > 0 ? "Only test files changed" : "No text changes available.") color="muted" padding=14
+                    if hiddenPullFileCount > 0
+                      button press=togglePullTests min-height=44 testId="pull-picker-show-tests"
+                        text "Show test files"
+                  if pullFiles.nextCursor != "" and pullFiles.error == ""
+                    button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-picker-more"
+                      text "Load more files"
+              if e.name == "pullFile" or e.name == "pullCommit" or e.name == "pullCommitFile"
+                column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Back to pull request" testId="pull-diff-back"
+                      image "symbol:back"
+                    text (commitRoute ? "Commit changes" : "Changes") role="heading" aria-level=2
+                    button popovertarget="pull-diff-options-menu" aria-haspopup="menu" aria-label="Diff options" min-width=44 min-height=44 testId="pull-diff-options"
+                      image "symbol:sf/ellipsis"
+                  text `${commitRoute ? commitOid.slice(0, 7) : `#${e.params.number}`} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
+                  if viewedError != ""
+                    text viewedError color="danger" role="alert" padding="7px 14px" testId="pull-viewed-error"
+                  if pullFiles.error != ""
+                    text pullFiles.error color="danger" padding=14
+                    button press=retryPullFiles testId="pull-diff-retry"
+                      text "Retry loading files"
+                  else if not diffFileFound and (pending(rawPullFiles) or pending(catalog) or pullFiles.nextCursor != "")
+                    progress aria-label="Loading changes" testId="pull-diff-loading"
+                  else if not diffFileFound
+                    text "This file is not in the available diff." color="muted" padding=14 testId="pull-diff-missing"
+                  else if diffVisibleFiles.length == 0 and hidePullTests
+                    button press=togglePullTests min-height=44 testId="pull-diff-show-tests"
+                      text "Show test files"
+                  else if commitRoute and diffFileFound and pullFiles.files.length == 0
+                    text "No text changes available." color="muted" padding=14 testId="pull-commit-empty"
+                  list id="pull-diff-lines" appearance="none" virtualized=true flex=1 min-height=0 estimated-item-height=22 background-color="code-surface"
+                    for line in diffRows key=line.key
+                      column min-width=0
+                        if line.kind == "file"
+                          row align-items="center" background-color="card"
+                            button press=foldDiffFile(line.path) aria-expanded=line.expanded aria-label=`${line.text}, ${line.added} additions, ${line.deleted} deletions` display="flex" flex=1 min-width=0 align-items="center" gap=7 padding="7px 14px" min-height=44 text-align="left" testId=`pull-diff-file-${line.path}`
+                              image (line.expanded ? "symbol:icon.disclose-down" : "symbol:icon.disclose-forward") width=11 height=11
+                              text line.text flex=1 min-width=0 line-clamp=2 font="-exact-footnote" font-weight=600
+                              text `+${line.added}` color="status-done" font="-exact-caption1"
+                              text `−${line.deleted}` color="danger" font="-exact-caption1"
+                            if viewedScope
+                              button press=toggleViewedFile(line.path) disabled=(not viewedFiles.writable or pending(changedViewedFile) or pending(viewedFiles)) aria-label=`Mark ${line.path} as ${viewedFiles.paths.includes(line.path) ? "unviewed" : "viewed"}` min-width=44 min-height=44 testId=`pull-toggle-viewed-${line.path}`
+                                if pending(changedViewedFile) and viewedPendingKey == viewedFiles.key and viewedPendingPath == line.path
+                                  progress width=18 height=18 aria-label="Updating viewed state"
+                                else
+                                  image (viewedFiles.paths.includes(line.path) ? "symbol:select-fill" : "symbol:sf/circle") width=18 height=18 color=(viewedFiles.paths.includes(line.path) ? "status-done" : "muted")
+                        else if line.kind == "hunk" or line.kind == "meta"
+                          text line.text user-select="text" font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="muted" padding="0 12px" white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
+                        else
+                          button press=selectDiffLine(line.key) aria-pressed=(selectedDiffVisit == diffVisit and selectedDiffLine == line.key) aria-label=`${line.path}, ${line.kind}, line ${line.newLine != "" ? line.newLine : line.oldLine}: ${line.text}` appearance="none" display="flex" width="100%" box-sizing="border-box" min-width=0 min-height=22 padding=0 border="0" border-left=(selectedDiffVisit == diffVisit and selectedDiffLine == line.key ? "3px solid AccentColor" : "3px solid transparent") align-items="stretch" text-align="left" background-color=(line.kind == "addition" ? "diff-add-fill" : line.kind == "deletion" ? "diff-remove-fill" : "transparent") testId=`pull-select-${line.key}`
+                            text (line.newLine != "" ? line.newLine : line.oldLine) width=39 padding-right=7 box-sizing="border-box" text-align="right" color="muted" font-family="ui-monospace" font-size="0.6875rem" line-height="1.375rem" font-variant-numeric="tabular-nums" flex-shrink=0
+                            text `${line.prefix}${line.text == "" ? " " : line.text}` user-select="text" flex=1 min-width=0 font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="foreground" padding-right=7 white-space=(wrapPullDiff ? "pre-wrap" : "pre") overflow-wrap=(wrapPullDiff ? "anywhere" : "normal") overflow-x=(wrapPullDiff ? "visible" : "auto") testId=`pull-diff-${line.key}`
+                  if pullFiles.nextCursor != "" and diffFileFound
+                    button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-diff-more"
+                      text "Load more files"
+                  button press=openFilePicker aria-label="Changed files" buttonStyle="glass" align-self="end" min-height=44 min-width=44 testId="pull-diff-open-picker"
+                    image "symbol:sf/doc.on.doc" font-size=20
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Usage" role="heading" aria-level=2
-                  list id="usage" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    section
-                      row
-                        column gap=3
-                          text "This month" font="-exact-body"
-                          text "0 agent minutes" font="-exact-footnote" color="-exact-secondary-label"
+                    if catalog.environments.length > 0 and usageView != "Limits"
+                      button press=refreshUsage buttonStyle="glass" aria-label="Refresh usage" testId="usage-refresh" disabled=pending(usageReport)
+                        image "symbol:refresh"
+                  scroll id="usage" resize=measureUsage flex=1 min-height=0 background-color="screen"
+                    column padding="16px 16px 0" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center"
+                      row role="radiogroup" aria-label="Usage view" width="100%" box-sizing="border-box"
+                        for metric in ["Cost", "Tokens", "Limits"] key=metric
+                          button role="radio" aria-checked=(usageView == metric) press=selectUsageView(metric) testId=`usage-view-${metric}` flex=1
+                            text metric
+                    if catalog.environments.length == 0 or failed(environmentState) or failed(catalog)
+                      column padding="64px 21px" align-items="center"
+                        text (failed(environmentState) or failed(catalog) ? "Can’t load environments." : not environmentState.loaded or pending(environmentState) or pending(catalog) ? "Loading environments…" : usageView == "Limits" ? "Select an environment to see limits." : "Connect an environment to see usage.") testId="usage-status" font="-exact-body" text-align="center" color="muted"
+                    else if usageView == "Limits"
+                      column padding="24px 16px 128px" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center" gap=24
+                        if catalog.limitProviders.length == 0
+                          text (catalog.environments.filter(env => env.status == "Connected").length == 0 ? "Waiting for connection…" : "No provider on the selected environments reports subscription limits.") padding="48px 0" color="muted" text-align="center" testId="usage-no-limits"
+                        for provider in catalog.limitProviders key=provider.id
+                          column gap=12
+                            row align-items="center" gap=8 padding="0 4px"
+                              if provider.notice == ""
+                                ProviderIcon(provider=provider.id, size=18)
+                              text provider.provider role="heading" aria-level=3 font-size=16 font-weight=500
+                            if provider.notice != ""
+                              text provider.environment color="muted" font="-exact-footnote"
+                              text provider.notice color="muted"
+                            for window in provider.windows key=window.id
+                              view display="flex" flex-direction=(usageWide ? "row" : "column") align-items=(usageWide ? "center" : "stretch") gap=(usageWide ? 24 : 12) padding=16 border-radius=24 background-color="card" testId=`limit-card-${provider.id}-${window.id}`
+                                column width=(usageWide ? 176 : "100%") gap=4
+                                  text window.label font-size=14 font-weight=500
+                                  row align-items="baseline" gap=6
+                                    text `${window.remaining}%` font-size=30 font-weight=700 font-variant-numeric="tabular-nums" testId=`usage-limit-${provider.id}-${window.id}`
+                                    text "left" font-size=14 color="muted"
+                                column flex=(usageWide ? "1 1 0px" : "0 0 auto") min-width=0 gap=(usageWide ? 4 : 12)
+                                  row gap=4 resize=measureLimitBar
+                                    for member in window.columns key=member.id
+                                      column flex=1 min-width=0 height=(usageWide ? 36 : 28) position="relative" justify-content="center" align-items="center" border-radius=6 overflow="hidden" background-color=(member.reported ? "input-fill" : "transparent") testId=`limit-segment-${provider.id}-${window.id}-${member.number}`
+                                        if member.reported
+                                          view position="absolute" inset="0 auto 0 0" width=`${member.remaining}%` background-color=(member.color != "" ? member.color : providerColor(provider.id == "claudeAgent" ? "claude" : provider.id)) opacity=0.35
+                                          if usageWide and limitBarWidth >= 96 * window.columns.length
+                                            row align-items="center" gap=6 padding="0 8px" align-self="stretch" min-width=0
+                                              text member.name font-size=12 font-weight=500 line-clamp=1 min-width=0
+                                              text `${member.remaining}%` font-size=14 font-weight=700 font-variant-numeric="tabular-nums"
+                                          else
+                                            text `${member.number}` font-size=12 font-weight=500 aria-label=`Segment ${member.number}, ${member.name}, ${member.remaining}% left`
+                                  if not usageWide or limitBarWidth < 96 * window.columns.length
+                                    column testId=`limit-legend-${provider.id}-${window.id}`
+                                      for member in window.columns key=member.id
+                                        if member.reported
+                                          row align-items="center" gap=8 min-height=44
+                                            text `${member.number}` font-size=12 font-weight=500 width=20 text-align="center" background-color="input-fill" border-radius=5
+                                            text member.name font-size=14 font-weight=500 flex=1 min-width=0 line-clamp=1
+                                            text `${member.remaining}%` font-size=14 font-weight=500 font-variant-numeric="tabular-nums"
+                    else
+                      column padding="24px 16px 128px" width="100%" max-width="67.5rem" box-sizing="border-box" align-self="center" gap=16
+                        row role="radiogroup" aria-label="Usage period" width="100%" box-sizing="border-box"
+                          for days in [1, 7, 30, 90] key=days
+                            button role="radio" press=selectUsageDays(days) aria-checked=(usageDays == days) aria-label=(days == 1 ? "Past 24 hours" : `Past ${days} days`) testId=`usage-period-${days}` flex=1
+                              text (days == 1 ? "24h" : `${days}d`)
+                        if pending(usageReport) or failed(usageReport)
+                          text (failed(usageReport) ? "Usage could not be loaded." : "Scanning provider transcripts…") color="muted" text-align="center" testId="usage-loading"
+                        else
+                          for report in usageReport key=report.id
+                            column gap=8 min-width=0 testId=`usage-environment-${report.id}`
+                              text report.label role="heading" aria-level=3 font="-exact-headline"
+                              if report.error != ""
+                                text report.error color="muted"
+                              else
+                                view display="flex" flex-direction=(usageWide ? "row" : "column") gap=(usageWide ? 24 : 16) align-items=(usageWide ? "flex-start" : "stretch") padding=(usageWide ? 0 : 16) border-radius=24 background-color=(usageWide ? "transparent" : "card")
+                                  column width=(usageWide ? "18rem" : "100%") min-width=0 box-sizing="border-box" gap=2 padding=(usageWide ? 16 : 0) border-radius=24 background-color="card" testId=`chart-summary-${report.id}`
+                                    text (usageView == "Cost" ? "Raw token cost" : "Processed tokens") font-size="0.875rem" color="muted"
+                                    if usageView == "Cost"
+                                      row align-items="baseline" gap=0
+                                        text report.cost testId=`usage-cost-${report.id}` font-size="2.25rem" line-height="2.5rem" font-weight=700 font-variant-numeric="tabular-nums"
+                                        if report.cost != "Unpriced"
+                                          text "*" font-size="2.25rem" line-height="2.5rem" font-weight=700
+                                      if report.cost != "Unpriced"
+                                        text "* if billed at full API rate" font-size="0.875rem" color="muted"
+                                    else
+                                      text report.tokens testId=`usage-tokens-${report.id}` font-size="2.25rem" line-height="2.5rem" font-weight=700 font-variant-numeric="tabular-nums"
+                                      text report.sessions font-size="0.875rem" color="muted"
+                                  column flex=(usageWide ? "1 1 0px" : "0 0 auto") min-width=0 padding=(usageWide ? 16 : 0) gap=7 border-radius=24 background-color="card" testId=`chart-card-${report.id}`
+                                    if usageWide
+                                      text `${usageDays == 1 ? "Hourly" : "Daily"} ${usageView == "Cost" ? "cost" : "processed tokens"}` font-size="0.875rem" font-weight=500
+                                    UsageChart(data=report.chart, metric=usageView, environment=report.id, native=(device.kind != "web" and device.kind != ""), wide=usageWide, unpriced=(report.cost == "Unpriced"))
+                                if report.note != ""
+                                  text report.note color="muted"
               if e.name == "settings"
                 column navigationKey=`${e.id}` navigationScroll="settings" data-workspace-header=(split ? "brand" : "page") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
@@ -2245,6 +3616,9 @@ component T3Code
                       button press=openEnvironments testId="environments-button" aria-label="Environments"
                         text "Environments"
                         image "symbol:forward-chevron"
+                      button press=openKeyboardSettings testId="keyboard-button" aria-label="Keyboard"
+                        text "Keyboard"
+                        image "symbol:forward-chevron"
       if device.kind == "web" or device.kind == ""
         column id="environment-filter-menu" popover="auto" role="menu" aria-label="Filter threads by environment"
           button press=filterEnvironment("") role="menuitemradio" aria-checked=(selectedEnvironment == "") popovertarget="environment-filter-menu" popovertargetaction="hide" testId="filter-all"
@@ -2252,6 +3626,27 @@ component T3Code
           for environment in catalog.environments key=environment.id
             button press=filterEnvironment(environment.id) role="menuitemradio" aria-checked=(selectedEnvironment == environment.id) popovertarget="environment-filter-menu" popovertargetaction="hide" testId=`filter-${environment.id}`
               text environment.label
+        column id="pull-environments-menu" popover="auto" role="menu" aria-label="Choose pull request environment"
+          button press=filterPullEnvironment("") role="menuitemradio" aria-checked=(selectedPullEnvironment == "") popovertarget="pull-environments-menu" popovertargetaction="hide" testId="pull-environment-all"
+            text "All environments"
+          for env in catalog.environments key=env.id
+            button press=filterPullEnvironment(env.id) role="menuitemradio" aria-checked=(selectedPullEnvironment == env.id) popovertarget="pull-environments-menu" popovertargetaction="hide" testId=`pull-environment-${env.id}`
+              text env.label
+        column id="pull-controls-menu" popover="auto" role="menu" aria-label="More filters" max-height="70dvh" overflow-y="auto"
+          for group in pullControls.groups key=group.id
+            button role="menuitem" aria-haspopup="menu" popovertarget=`pull-controls-${group.id}` testId=`pull-more-${group.id}`
+              text group.title
+              image "symbol:forward-chevron"
+            column id=`pull-controls-${group.id}` popover="auto" role="menu" aria-label=group.title
+              for option in group.options key=option.id
+                button role="menuitemradio" aria-checked=option.selected press=choosePullControl(option.id) popovertarget="pull-controls-menu" popovertargetaction="hide" testId=`pull-choice-${option.id}`
+                  text option.title
+          button role="menuitem" disabled=(not pullControls.reset) press=choosePullControl("reset") popovertarget="pull-controls-menu" popovertargetaction="hide" testId="pull-more-reset"
+            text "Reset filters"
+        PullFilterMenu(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", choose=filterPullState)
+        PullFilterMenu(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", choose=filterPullInvolvement)
+        PullFacetMenu(field="labels", label="Filter by label", facet=facets.labels, choose=labelMenuAction)
+        PullFacetMenu(field="authors", label="Filter by author", facet=facets.authors, choose=authorMenuAction)
         column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
           button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
             text "All projects"
@@ -2272,6 +3667,109 @@ component T3Code
         button press=confirmDiscardDraft(discardKey, discardKind) destructive=true popovertarget="draft-menu" popovertargetaction="hide" testId="draft-menu-discard"
           image "symbol:delete"
           text (discardKind == "unsent" ? "Delete" : "Discard")
+      column id="thread-row-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Thread actions"
+        for thread in selectedThread(catalog, copyTargetId) key=thread.id
+          button press=copyRowId(thread.serverThreadId) role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" testId="thread-menu-copy-id"
+            image "symbol:sf/doc.on.doc"
+            text "Copy thread ID"
+          if thread.canSettle and thread.wakeAt <= rowMenuOpened and copyTargetId == pinTargetId
+            button press=changeRowSettlementState(thread.id, thread.controls.accessKey, thread.settled ? "unsettle" : "settle", "") role="menuitem" disabled=(pending(settlementChanged) or pending(rowSnoozed) or pending(pinChanged)) testId=(thread.settled ? "thread-menu-unsettle" : "thread-menu-settle")
+              image (thread.settled ? "symbol:sf/arrow.uturn.backward" : "symbol:checkmark")
+              text (thread.settled ? "Un-settle" : "Settle")
+        button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged) or pending(rowSnoozed)) testId="thread-menu-pin"
+          image (pinTargetDesired ? "symbol:pin" : "symbol:sf/pin.slash")
+          text (pinTargetDesired ? "Pin" : "Unpin")
+        if rowSnooze.available
+          if rowSnooze.sleeping
+            button role="menuitem" press=submitRowSnooze("wake") disabled=pending(rowSnoozed) testId="thread-menu-wake"
+              image "symbol:sf/sunrise"
+              text "Unsnooze"
+          else
+            button role="menuitem" popovertarget="row-snooze-menu" disabled=pending(rowSnoozed) testId="thread-menu-snooze"
+              image "symbol:sf/clock"
+              text "Snooze"
+        if device.kind == "web"
+          for thread in selectedThread(catalog, pinTargetId) key=thread.id
+            button role="menuitem" press=beginRename(thread.title) disabled=pending(titleUpdated) testId="thread-menu-rename"
+              image "symbol:sf/square.and.pencil"
+              text "Rename"
+            if thread.canRegenerateTitle
+              button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="thread-menu-regenerate"
+                image "symbol:refresh"
+                text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+            if thread.canSetAutoSettle
+              button role="menuitem" popovertarget="auto-settle-menu" disabled=pending(autoSettleUpdated) testId="thread-menu-auto-settle"
+                image "symbol:sf/timer"
+                text "Auto-settle behavior"
+        else
+          button role="menuitem" popovertarget="thread-more-menu" testId="thread-menu-more"
+            image "symbol:sf/ellipsis.circle"
+            text "More"
+      column id="thread-more-menu" popover="auto" role="menu" aria-label="More thread actions"
+        for thread in selectedThread(catalog, pinTargetId) key=thread.id
+          button role="menuitem" press=beginRename(thread.title) disabled=pending(titleUpdated) testId="more-rename"
+            image "symbol:sf/square.and.pencil"
+            text "Rename"
+          if thread.canRegenerateTitle
+            button role="menuitem" press=regenerateTitle disabled=(thread.regeneratingTitle or pending(titleUpdated)) testId="more-regenerate"
+              image "symbol:refresh"
+              text (thread.regeneratingTitle ? "Regenerating…" : "Regenerate title")
+          if thread.canSetAutoSettle
+            button role="menuitem" popovertarget="auto-settle-menu" disabled=pending(autoSettleUpdated) testId="more-auto-settle"
+              image "symbol:sf/timer"
+              text "Auto-settle behavior"
+      column id="auto-settle-menu" popover="auto" role="menu" aria-label="Auto-settle behavior"
+        for thread in selectedThread(catalog, pinTargetId).filter(row => row.canSetAutoSettle) key=thread.id
+          for choice in ["Follow settings", "Never"] key=choice
+            button role="menuitemradio" aria-checked=(thread.followsAutoSettle == (choice == "Follow settings")) press=selectAutoSettle(choice == "Follow settings") disabled=pending(autoSettleUpdated) testId=(choice == "Never" ? "auto-settle-never" : "auto-settle-follow")
+              text choice
+      dialog id="rename-thread" role="alertdialog" aria-label="Rename thread"
+        input value=renameDraft input=editRename aria-label="Thread title" testId="rename-title"
+        button commandfor="rename-thread" command="close" testId="rename-cancel"
+          text "Cancel"
+        button press=confirmRename commandfor="rename-thread" command="close" testId="rename-confirm"
+          text "Rename"
+      column id="row-snooze-menu" popover="auto" role="menu" min-width="min(176px, 46vw)" aria-label="Snooze thread"
+        for choice in rowSnooze.choices key=choice.id
+          button role="menuitem" press=submitRowSnooze(choice.id) disabled=pending(rowSnoozed) testId=`snooze-${choice.id}`
+            text choice.label
+            text choice.detail
+        button role="menuitem" popovertarget="custom-snooze" press=beginCustomSnooze disabled=pending(customSubmitted) testId="snooze-custom"
+          text "Custom…"
+      column id="custom-snooze" popover="auto" role="dialog" aria-label="Custom snooze" position-area="none" inset=0 margin="auto" width="min(360px, calc(100vw - 32px))" height=(customError == "" ? 324 : 364) max-height="calc(100dvh - 96px)" overflow-y="auto" box-sizing="border-box" padding=16 gap=16
+        row align-items="center" gap=8
+          button popovertarget="custom-snooze" popovertargetaction="hide" aria-label="Cancel custom snooze" min-height=44 testId="custom-cancel"
+            text "Cancel"
+          text "Custom snooze" role="heading" flex=1 text-align="center" font-size=16 line-height="20px" font-weight=600
+          button press=submitCustomSnooze disabled=pending(customSubmitted) min-height=44 testId="custom-submit"
+            text "Snooze"
+        if device.kind == "web"
+          row role="radiogroup" aria-label="Snooze mode" padding=2 border-radius=8 background-color="input-fill"
+            for mode in ["date", "duration"] key=mode
+              button role="radio" aria-checked=(customMode == mode) press=editCustomMode(mode) testId=`custom-${mode}-mode` appearance="none" flex=1 min-height=30 border-radius=6 background-color=(customMode == mode ? "card" : "transparent") font-size=14 font-weight=500
+                text (mode == "date" ? "Date and time" : "Duration")
+        else
+          row role="radiogroup" aria-label="Snooze mode"
+            for mode in ["date", "duration"] key=mode
+              button role="radio" aria-checked=(customMode == mode) press=editCustomMode(mode) testId=`custom-${mode}-mode` flex=1
+                text (mode == "date" ? "Date and time" : "Duration")
+        column justify-content="center" min-height=180
+          if customMode == "date"
+            input type="datetime-local" value=(customEdited ? customField : customStart.field) change=editCustomField aria-label="Snooze until" testId="custom-date" width="100%" box-sizing="border-box"
+          else
+            row align-items="center" gap=8
+              if device.kind == "web"
+                input type="number" value=customAmount input=editCustomAmount step="any" aria-label="Duration amount" testId="custom-amount" flex=1 min-width=0
+              else
+                select value=customAmount change=editCustomAmount aria-label="Duration amount" testId="custom-amount" flex=1 min-width=0
+                  for amount in customStart.amounts key=amount
+                    option amount value=amount
+              select value=customUnit change=editCustomUnit aria-label="Duration unit" testId="custom-unit" flex=1 min-width=0
+                option "Minutes" value="minutes"
+                option "Hours" value="hours"
+                option "Days" value="days"
+        if customError != ""
+          text customError role="alert" testId="custom-error"
       dialog id="discard-draft" role="alertdialog" aria-label="Discard draft?"
         text `“${match first(homeDrafts.filter(row => row.key == discardKey)) { case some(row) => row.title, case none => "New thread" }}” will be removed.`
         button commandfor="discard-draft" command="close" testId="discard-draft-cancel"
@@ -2324,6 +3822,26 @@ component T3Code
           image "symbol:sf/plus"
           text "Open new terminal"
           text `Start another shell in ${terminalMenu.workspaceRoot == "" ? "this workspace" : terminalBasename(terminalMenu.workspaceRoot)}`
+      column id="pull-diff-options-menu" popover="auto" role="menu" aria-label="Diff options"
+        button role="menuitemcheckbox" aria-checked=wrapPullDiff press=toggleDiffWrap popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-wrap"
+          text "Word wrap"
+        button role="menuitemcheckbox" aria-checked=hidePullTests press=togglePullTests popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-hide-tests"
+          text "Hide test files"
+        if selectedDiffRows.length == 1
+          button role="menuitem" press=copyDiffLine popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-copy"
+            text "Copy line"
+      column id="pull-file-filter-menu" popover="auto" role="menu" aria-label="Review files"
+        button role="menuitemcheckbox" aria-checked=hidePullTests press=togglePullTests popovertarget="pull-file-filter-menu" popovertargetaction="hide" testId="pull-hide-test-files"
+          text "Hide test files"
+      column id="activity-kind-menu" popover="auto" role="menu" aria-label="Activity"
+        for kind in ["All activity", "Comments", "Commits"] key=kind
+          button role="menuitemradio" aria-checked=(activityKind == kind) press=filterActivity(kind) popovertarget="activity-kind-menu" popovertargetaction="hide" testId=`pull-activity-kind-${kind}`
+            text kind
+      column id="activity-show-menu" popover="auto" role="menu" aria-label="Show in activity"
+        button role="menuitemcheckbox" aria-checked=activityBots press=toggleActivityBots popovertarget="activity-show-menu" popovertargetaction="hide" testId="pull-activity-bots"
+          text "Bot comments"
+        button role="menuitemcheckbox" aria-checked=activityResolved press=toggleActivityResolved popovertarget="activity-show-menu" popovertargetaction="hide" testId="pull-activity-resolved"
+          text "Resolved or dismissed"
       column id="terminal-options-menu" popover="auto" role="menu" aria-label="Terminal options"
         button role="menuitem" popovertarget="terminal-text-size-menu"
           image "symbol:sf/textformat.size"
@@ -2357,55 +3875,75 @@ component T3Code
           image "symbol:sf/ellipsis"
           text "More"
           text (not activeThreadHasMessage ? "Available after the first message" : "Branches, worktrees, links, and repository details")
-      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail ? "flex" : "none")
-      row role="tablist" aria-label="Workspace" testId="tabs" display=(device.rail ? "flex" : "none")
-        button role="tab" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1
-          image "symbol:sf/text.bubble"
-          text "Chats"
+      workspace-tab-bar selected-tab=visibleTab shows-compose=(visibleTab == "threads" ? "true" : "false") compact="true" message=workspaceAction height=128 position="absolute" bottom="calc(0px - env(safe-area-inset-bottom))" left=8 right=(visibleTab == "threads" ? 12 : 76) display=(atRoot and not device.rail and device.kind != "web" ? "flex" : "none")
+      row role="tablist" aria-label="Workspace" testId="tabs" padding-right=(device.kind == "web" ? 64 : 0) display=(device.rail or (atRoot and device.kind == "web") ? "flex" : "none")
+        button role="tab" aria-label="Chats" aria-controls="panel-threads" aria-selected=(nav.tab == "threads") press=selectTab("threads") testId="tab-threads" flex=1 min-width=0
+          image (device.kind == "web" ? "symbol:messages" : "symbol:sf/text.bubble")
+          text "Chats" max-width="100%" line-clamp=1
         button role="tab" aria-controls="panel-threadDetail" aria-selected=(nav.tab == "threadDetail") press=selectTab("threadDetail") testId="tab-threadDetail" display="none"
           image "symbol:sf/text.bubble"
           text "Thread"
-        button role="tab" aria-controls="panel-pullRequests" aria-selected=(nav.tab == "pullRequests") press=selectTab("pullRequests") testId="tab-pullRequests" flex=1
-          image "symbol:sf/arrow.triangle.branch"
-          text "PRs"
-        button role="tab" aria-controls="panel-usage" aria-selected=(nav.tab == "usage") press=selectTab("usage") testId="tab-usage" flex=1
-          image "symbol:sf/chart.bar.xaxis"
-          text "Usage"
-        button role="tab" aria-controls="panel-settings" aria-selected=(nav.tab == "settings") press=selectTab("settings") testId="tab-settings" flex=1
+        button role="tab" appearance="none" aria-label="PRs" aria-controls="panel-pullRequests" aria-selected=(nav.tab == "pullRequests") press=selectTab("pullRequests") testId="tab-pullRequests" flex=1 min-width=0 display="flex" flex-direction="column" justify-content="center" align-items="center" padding="0 8px" gap=3 border="none" background-color="transparent" color=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted") font-size="0.75rem" font-weight=500
+          if device.kind == "web"
+            svg viewBox="0 0 24 24" width=20 height=20 fill="none" stroke=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted") stroke-width=2 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
+              path d="M6 8v8 M18 16V9a3 3 0 0 0-3-3h-4 M14 3l-3 3 3 3"
+              circle cx=6 cy=6 r=2
+              circle cx=6 cy=18 r=2
+              circle cx=18 cy=18 r=2
+          else
+            image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(nav.tab == "pullRequests" ? "tab-selected" : "tab-muted")
+          text "PRs" max-width="100%" line-clamp=1
+        button role="tab" aria-label="Usage" aria-controls="panel-usage" aria-selected=(nav.tab == "usage") press=selectTab("usage") testId="tab-usage" flex=1 min-width=0
+          image (device.kind == "web" ? "symbol:chart" : "symbol:sf/chart.bar.xaxis")
+          text "Usage" max-width="100%" line-clamp=1
+        button role="tab" aria-label="Settings" aria-controls="panel-settings" aria-selected=(nav.tab == "settings") press=selectTab("settings") testId="tab-settings" flex=1 min-width=0
           image "symbol:settings"
-          text "Settings"
+          text "Settings" max-width="100%" line-clamp=1
         button role="tab" aria-controls="panel-settingsDetail" aria-selected=(nav.tab == "settingsDetail") press=selectTab("settingsDetail") testId="tab-settingsDetail" display="none"
           image "symbol:settings"
           text "Setting"
+      if device.kind == "web" and atRoot and visibleTab == "threads"
+        button press=compose buttonStyle="glass" aria-label="New chat" testId="workspace-compose" position="absolute" right=10 bottom="calc(6px + env(safe-area-inset-bottom))" width=44 height=44
+          image "symbol:compose"
 
 component ThreadList
   props
+    now: number
     catalog: Catalog
     drafts: HomeDraftRow[]
     openDraft: action
     discardDraft: action
     aimDraft: action
+    aimPin: action
     visibleThreads: Thread[]
+    searchHits: SearchHit[]
+    searchPending: bool
+    searchIncomplete: bool
     selectedEnvironment: string
     selectedProject: string
     selectedProjectLabel: string
     nativeMenus: bool
     query: string
     showSettled: bool
+    showSnoozed: bool
     showWorking: bool
     sidebar: bool
     selectedId: string
-    toggleSettled: action
+    toggleShelf: action
     toggleWorking: action
     openThread: action
     filterEnvironment: action
     filterProject: action
     resetFilters: action
   derive searching = query.trim() != ""
-  derive activeThreads = visibleThreads.filter(thread => not thread.settled and (searching or not thread.working))
-  derive workingThreads = visibleThreads.filter(thread => not searching and not thread.settled and thread.working)
+  derive awakeThreads = visibleThreads.filter(thread => thread.wakeAt <= now)
+  derive snoozedThreads = sortBy(visibleThreads.filter(thread => thread.wakeAt > now), thread => thread.wakeAt)
+  derive pinnedThreads = sortBy(awakeThreads.filter(thread => not thread.settled and thread.pinRank >= 0), thread => thread.pinRank)
+  derive ordinaryThreads = awakeThreads.filter(thread => not thread.settled and thread.pinRank < 0 and not thread.working)
+  derive activeThreads = searching ? awakeThreads.filter(thread => not thread.settled) : pinnedThreads.concat(ordinaryThreads)
+  derive workingThreads = awakeThreads.filter(thread => not searching and not thread.settled and thread.pinRank < 0 and thread.working)
   derive displayedWorking = workingThreads.filter(thread => showWorking or selectedId == thread.id)
-  derive settledThreads = visibleThreads.filter(thread => thread.settled)
+  derive settledThreads = awakeThreads.filter(thread => thread.settled)
   derive availableProjects = catalog.projects.filter(project => selectedEnvironment == "" or project.environmentId == selectedEnvironment)
   view
     list id="home" appearance="none" flex=1 min-height=0 background-color=(sidebar ? "transparent" : "screen")
@@ -2418,10 +3956,10 @@ component ThreadList
             else
               button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedEnvironment == "" ? "muted" : "white") background-color=(selectedEnvironment == "" ? "transparent" : "AccentColor") testId="all-environments"
                 text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment)) max-width=180 line-clamp=1
-                image "symbol:sf/chevron.down" width=11 height=11
+                image "symbol:icon.disclose-down" width=11 height=11
               button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedProject == "" ? "muted" : "white") background-color=(selectedProject == "" ? "transparent" : "AccentColor") testId="all-projects"
                 text selectedProjectLabel max-width=180 line-clamp=1
-                image "symbol:sf/chevron.down" width=11 height=11
+                image "symbol:icon.disclose-down" width=11 height=11
             if selectedEnvironment != "" or selectedProject != ""
               button press=resetFilters appearance="none" aria-label="Reset thread filters" testId="reset-filters" width=28 height=28 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                 image "symbol:sf/xmark.circle.fill" width=18 height=18 color="muted"
@@ -2434,10 +3972,15 @@ component ThreadList
             row press=openDraft(draft.key, draft.kind, draft.threadId) swipeleft=discardDraft(draft.key, draft.kind) contextmenu=aimDraft(draft.key, draft.kind) contextPopover="draft-menu" role="button" width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) aria-label=draft.title testId=`home-draft-${draft.key}`
               HomeDraftRowContent(draft=draft, sidebar=sidebar, showEnvironment=(catalog.environments.length > 1), last=(index == drafts.length - 1))
       section
-        if visibleThreads.length == 0 and drafts.length == 0
+        if searching and searchIncomplete
+          text "Some environments could not search messages." font="-exact-footnote" color="muted" text-align="center"
+        if searching and searchPending and visibleThreads.length == 0 and drafts.length == 0
+          text "Searching thread messages…" font="-exact-body" color="muted" text-align="center"
+        else if visibleThreads.length == 0 and drafts.length == 0
           column align-items="center" padding="28px 21px" gap=7
-            text "No threads yet" font-size=21 line-height="28px" font-weight=700 text-align="center" testId="empty-title"
-            text "Start a new thread to begin coding." font-size=16 line-height="24px" color="muted" text-align="center"
+            text (searching ? (sidebar ? "No matching threads" : "No results") : selectedProject != "" ? `No threads in ${selectedProjectLabel}` : selectedEnvironment != "" ? `No threads in ${environmentLabel(catalog, selectedEnvironment)}` : "No threads yet") font="-exact-title3" font-weight=700 text-align="center" testId="empty-title"
+            if not sidebar
+              text (searching ? `No threads matching "${query}".` : selectedProject != "" ? "Choose another project or create a new task." : selectedEnvironment != "" ? "Choose another environment or create a new task." : "Create a task to start a new coding session.") font="-exact-body" color="muted" text-align="center" testId="empty-thread-detail"
       for threads, groupIndex in [activeThreads, displayedWorking] key=groupIndex
         section
           if groupIndex == 1 and workingThreads.length > 0
@@ -2445,24 +3988,33 @@ component ThreadList
               row align-items="center" gap=8.75 width="100%"
                 text (showWorking ? "Working" : `Working (${workingThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
                 view flex=1 height=1 background-color="edge"
-                image (showWorking ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
+                image (showWorking ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") font-size=10 color="muted"
           for thread, index in threads key=thread.id
-            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+            button press=openThread(path("thread", thread.id)) contextmenu=aimPin(thread.id, thread.controls.accessKey, thread.pinRank < 0) contextPopover="thread-row-menu" appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               column flex=1 min-width=0 gap=3.5 opacity=(thread.working and selectedId != thread.id ? 0.55 : 1) padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
                 row align-items="flex-start" gap=7 color=(sidebar ? "sidebar-foreground" : "foreground")
                   if thread.projectIcon != ""
                     image thread.projectIcon width=20 height=20 margin-top=1.5 border-radius=4
                   else
                     text thread.projectInitials width=20 height=20 margin-top=1.5 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center"
-                  text thread.title font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
+                  text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=(thread.working and selectedId != thread.id ? 400 : 500) flex=1 min-width=0 line-clamp=2
+                  if thread.pinRank >= 0
+                    column width=11 height=23 flex-shrink=0 justify-content="center" testId=`pin-${thread.id}` aria-label="Pinned"
+                      if nativeMenus
+                        image "symbol:pin" width=11 height=11 font-size=11 color=(sidebar ? "sidebar-muted" : "muted")
+                      else
+                        svg viewBox="0 0 16 16" width=11 height=11 fill="none" stroke=(sidebar ? "sidebar-muted" : "muted") stroke-width=1.5 stroke-linejoin="round" stroke-linecap="round" aria-hidden=true
+                          path d="m6 1 6 2-1 1-1.5 4 1 2-7-2 .9-1.6L6.5 6 8 2.8ZM6.9 9.2 5 14.5"
                   if thread.status != ""
                     row align-items="center" gap=3.5 min-height=23 color=(sidebar and selectedId == thread.id ? "foreground" : threadStatusColor(thread.status))
                       image threadStatusSymbol(thread.status) width=13 height=13 font-weight=600
                       text thread.status font-size=13 line-height="17px" font-weight=700
                   else
-                    text thread.updatedAt font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                    text compactAge(thread.activityAt, now) testId=`age-${thread.id}` font-size=13 line-height="23px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
                 row align-items="center" gap=7 min-height=14 padding-left=28
-                  if thread.lastError != ""
+                  if searchHits.filter(hit => hit.id == thread.id).length > 0
+                    SearchExcerpt(hits=searchHits, id=thread.id)
+                  else if thread.lastError != ""
                     text thread.lastError font-size=13 line-height="17px" color=(sidebar and selectedId == thread.id ? "muted" : "danger") flex=1 min-width=0 line-clamp=1
                   else if catalog.environments.length > 1
                     image "symbol:sf/laptopcomputer" font-size=12 color="muted"
@@ -2473,23 +4025,209 @@ component ThreadList
                     ProviderIcon(provider=thread.provider, size=14)
             if index < threads.length - 1
               view height=1 background-color="edge" opacity=0.7 margin-left=17.5 display=(sidebar ? "none" : "flex")
-      if settledThreads.length > 0
+      for shelf in ["snoozed", "settled"].filter(key => key == "snoozed" ? snoozedThreads.length > 0 : settledThreads.length > 0) key=shelf
         section
           if not searching
-            button press=toggleSettled appearance="none" padding="14px 17.5px 5.25px" width="100%" box-sizing="border-box" aria-label="Settled threads"
+            button press=toggleShelf(shelf) appearance="none" padding=(sidebar ? "14px 10.5px 5.25px" : "14px 17.5px 5.25px") width="100%" box-sizing="border-box" aria-expanded=(shelf == "snoozed" ? showSnoozed : showSettled) aria-label=(shelf == "snoozed" ? `${snoozedThreads.length} snoozed ${snoozedThreads.length == 1 ? "thread" : "threads"}` : "Settled threads") testId=`${shelf}-threads`
               row align-items="center" gap=8.75 width="100%"
-                text (showSettled ? "Settled" : `Settled (${settledThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
-                view flex=1 height=1 background-color="edge"
-                image (showSettled ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
-          for thread in settledThreads.filter(thread => searching or showSettled or selectedId == thread.id) key=thread.id
-            button press=openThread(path("thread", thread.id)) appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
+                text (shelf == "snoozed" ? (showSnoozed ? "Snoozed" : `Snoozed (${snoozedThreads.length})`) : (showSettled ? "Settled" : `Settled (${settledThreads.length})`)) testId=`${shelf}-title` font-size="0.8125rem" line-height="1.0625rem" font-weight=500 color="muted"
+                view flex=1 height=1 background-color=(shelf == "snoozed" ? "AccentColor" : "edge") opacity=(shelf == "snoozed" ? 0.2 : 1)
+                if nativeMenus
+                  image ((shelf == "snoozed" ? showSnoozed : showSettled) ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") width=10 height=10 font-size=10 color="muted"
+                else
+                  svg viewBox="0 0 10 10" width=10 height=10 fill="none" stroke="muted" stroke-width=1.4 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
+                    path d=((shelf == "snoozed" ? showSnoozed : showSettled) ? "M1.5 6.5 5 3l3.5 3.5" : "M1.5 3.5 5 7l3.5-3.5")
+          for thread in (shelf == "snoozed" ? snoozedThreads : settledThreads).filter(thread => searching or (shelf == "snoozed" ? showSnoozed : showSettled) or selectedId == thread.id) key=thread.id
+            button press=openThread(path("thread", thread.id)) contextmenu=aimPin(thread.id, thread.controls.accessKey, thread.pinRank < 0) contextPopover="thread-row-menu" appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               row flex=1 min-width=0 min-height=44 box-sizing="border-box" align-items="center" gap=7 padding=(sidebar ? "7px 10.5px" : "7px 17.5px")
                 if thread.projectIcon != ""
                   image thread.projectIcon width=20 height=20 border-radius=4 opacity=0.4
                 else
                   text thread.projectInitials width=20 height=20 line-height="20px" border-radius=4 font-size=10 font-weight=700 color=thread.projectIconColor background-color=`${thread.projectIconColor}22` text-align="center" opacity=0.4
-                text thread.title font-size=16 line-height="23px" font-weight=400 flex=1 min-width=0 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
-                text thread.updatedAt font-family="Menlo" font-size=14 line-height="19px" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+                column flex=1 min-width=0
+                  text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
+                  SearchExcerpt(hits=searchHits, id=thread.id)
+                text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+
+component PullDescription
+  props
+    blocks: MarkdownBlock[]
+    expanded: bool
+    toggle: action
+  state naturalHeight = 0
+  derive foldable = naturalHeight > 240
+  derive folded = not expanded and foldable
+  action measured(width: number, height: number)
+    naturalHeight = height
+  view
+    column min-width=0 gap=10.5
+      text "Description" id="pull-description-heading" role="heading" aria-level=3 font="-exact-headline"
+      if blocks.length == 0
+        text "No description provided." color="muted" font="-exact-subheadline" testId="pull-description-empty"
+      else
+        column position="relative" min-width=0
+          column max-height=(expanded ? "none" : "240px") overflow="hidden" testId="pull-description-clip"
+            column resize=measured min-width=0 flex-shrink=0 testId="pull-description-content"
+              for block in blocks key=block.id
+                if block.kind == "thematic-break"
+                  box height=1 background-color="border-subtle" margin="7px 0"
+                else if block.kind == "heading"
+                  text role="heading" aria-level=block.headingLevel font="-exact-headline" user-select="text" overflow-wrap="anywhere" margin-bottom=block.spacingAfter
+                    for run in block.runs key=run.id
+                      text run.text
+                else if block.kind == "code" or block.kind == "table"
+                  text block.body font-family="Menlo" font-size="0.8125rem" white-space="pre-wrap" overflow-wrap="anywhere" background-color="card" padding=7 border-radius=7 user-select="text" margin-bottom=block.spacingAfter
+                else if block.kind == "image"
+                  text (block.imageAlt == "" ? "Image attachment" : block.imageAlt) color="muted" margin-bottom=block.spacingAfter
+                else
+                  row align-items="flex-start" min-width=0 gap=5 margin-left=(block.depth * 7) margin-bottom=block.spacingAfter border-left=(block.quoteDepth > 0 ? "2px solid border-subtle" : "none")
+                    if block.marker != ""
+                      text block.marker font="-exact-subheadline"
+                    text min-width=0 flex=1 user-select="text" font="-exact-subheadline" white-space="pre-wrap" overflow-wrap="anywhere"
+                      for run in block.runs key=run.id
+                        if run.linkKind == "external" and not folded
+                          text run.text href=run.href color="AccentColor"
+                        else
+                          text run.text font-weight=(run.strong ? 700 : 400) font-style=(run.emphasis ? "italic" : "normal") font-family=(run.code ? "Menlo" : "inherit") text-decoration-line=(run.strike ? "line-through" : "none")
+          if folded
+            box position="absolute" left=0 right=0 bottom=0 height=80 pointer-events="none" aria-hidden=true background-image="linear-gradient(180deg, transparent 0%, screen 72%, screen 100%)"
+          if foldable
+            button press=toggle aria-expanded=expanded aria-label=(expanded ? "Collapse description" : "Expand description") position=(folded ? "absolute" : "relative") left=0 right=0 bottom=0 appearance="none" min-height=44 display="flex" align-items="center" justify-content="center" gap=4 testId="pull-description-toggle"
+              text (expanded ? "Show less" : "Show more") font="-exact-footnote" font-weight=500
+              image "symbol:icon.disclose-down" width=10 height=10 transform=(expanded ? "rotate(180deg)" : "none")
+
+component PullIdentity
+  props
+    pull: PullRequest
+    detail: PullRequestDetail
+    loaded: bool
+    now: number
+    copy: action
+  derive author = loaded and detail.author != "" ? detail.author : pull.author
+  derive added = loaded ? detail.counts.added : pull.row.addedText
+  derive deleted = loaded ? detail.counts.deleted : pull.row.deletedText
+  derive ink = pull.row.status == "Merged" ? "status-input" : pull.row.status == "Closed" ? "danger" : pull.row.status == "Draft" ? "muted" : "status-done"
+  view
+    column min-width=0 gap=10.5 testId="pull-identity"
+      row align-items="center" flex-wrap="wrap" gap=7 min-height=28
+        image "assets/pull-request.png" width=14 height=14 -exact-tint-color=ink
+        text pull.row.status color=ink font-size="0.8125rem" font-weight=500 testId="pull-identity-status"
+        if added != ""
+          text added color="status-done" font-size="0.75rem" font-weight=500 font-variant-numeric="tabular-nums"
+        if deleted != ""
+          text deleted color="danger" font-size="0.75rem" font-weight=500 font-variant-numeric="tabular-nums"
+        if loaded and detail.counts.files != ""
+          text detail.counts.files color="muted" font-size="0.75rem" testId="pull-request-change-counts"
+      text pull.title role="heading" aria-level=2 user-select="text" font-size="1.25rem" line-height="1.75rem" font-weight=700 overflow-wrap="break-word" testId="pull-identity-title"
+      row align-items="center" gap=7 min-width=0
+        column width=20 height=20 border-radius=10 background-color="card" align-items="center" justify-content="center" flex-shrink=0 aria-hidden=true
+          text pull.row.initial font-size=9 font-weight=500 color="muted"
+        text (author != "" ? author : "Unknown author") flex=1 min-width=0 font-size="0.8125rem" font-weight=500 line-clamp=1 testId="pull-identity-author"
+        if pull.row.updatedMs > 0
+          text `Updated ${compactAge(pull.row.updatedMs, now)} ago` min-width=0 max-width="55%" text-align="right" color="muted" font-size="0.75rem" line-clamp=1 testId="pull-identity-updated"
+      row align-items="center" gap=5.25 min-width=0
+        if pull.baseBranch != ""
+          button appearance="none" press=copy(pull.baseBranch) aria-label=`Copy base branch ${pull.baseBranch}` min-width=0 min-height=32 testId="pull-copy-base"
+            text pull.baseBranch color="muted" font-family="ui-monospace" font-size="0.75rem" line-clamp=2 overflow-wrap="anywhere"
+        if pull.baseBranch != "" and pull.headBranch != ""
+          text "←" color="muted" font-size=11 aria-hidden=true
+        if pull.headBranch != ""
+          button appearance="none" press=copy(pull.headBranch) aria-label=`Copy head branch ${pull.headBranch}` min-width=0 min-height=32 testId="pull-copy-head"
+            text pull.headBranch color="muted" font-family="ui-monospace" font-size="0.75rem" line-clamp=2 overflow-wrap="anywhere"
+
+component PullPageFooter
+  props
+    error: string
+    busy: bool
+    load: action
+  view
+    column align-items="center" gap=7 padding="14px 28px"
+      if busy
+        progress width=18 height=18 aria-label="Loading more pull requests" testId="pulls-loading-more"
+      else
+        if error != ""
+          text error font-size=13 line-height="17px" color="muted" text-align="center" testId="pulls-more-error"
+        button press=load aria-label=(error == "" ? "Load more pull requests" : "Retry loading more pull requests") buttonStyle="bordered" testId="pulls-more"
+          text (error == "" ? "Load more" : "Try again")
+
+component PullFacetChip
+  props
+    field: string
+    title: string
+    label: string
+    active: bool
+    facet: PullFacet
+    native: bool
+    choose: action
+  view
+    if native
+      workspace-filter-menu chip-label=title flat-options=facet.menu active=(active ? "true" : "false") accessibility-label=label test-id=`pull-filter-${field}` testId=`pull-filter-${field}` message=choose flex-shrink=0
+    else
+      button popovertarget=`pull-facet-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 flex-shrink=0 white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size="0.875rem" font-weight=500 testId=`pull-filter-${field}`
+        text title max-width=180 line-clamp=1
+        image "symbol:icon.disclose-down" width=11 height=11
+
+component PullFacetMenu
+  props
+    field: string
+    label: string
+    facet: PullFacet
+    choose: action
+  view
+    column id=`pull-facet-${field}` popover="auto" role="menu" aria-label=label max-height="70dvh" overflow-y="auto"
+      button role="menuitem" press=choose("search") popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-search-${field}`
+        image "symbol:search"
+        text `Search ${field}…`
+      for option in facet.options key=option.id
+        button role=(field == "labels" ? "menuitemcheckbox" : "menuitemradio") aria-checked=option.selected press=choose(`value:${option.id}`) popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-${field}-${option.id}`
+          if option.color != ""
+            box width=10 height=10 border-radius=5 background-color=option.color flex-shrink=0
+          text option.title
+
+component PullFilterChip
+  props
+    field: string
+    selected: string
+    options: string[]
+    label: string
+    native: bool
+    choose: action
+  derive involvement = field == "involvement"
+  derive active = selected != (involvement ? "all" : "open")
+  view
+    if native
+      workspace-filter-menu chip-label=pullFilterLabel(selected, involvement) options-query=options.map(option => `${option}=${encodeURIComponent(pullFilterLabel(option, involvement))}`).join("&") selected-id=selected active=(active ? "true" : "false") accessibility-label=label test-id=`pull-filter-${field}` testId=`pull-filter-${field}` message=choose flex-shrink=0
+    else
+      button popovertarget=`pull-filter-menu-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size=14 line-height="19px" font-weight=500 testId=`pull-filter-${field}`
+        text pullFilterLabel(selected, involvement)
+        image "symbol:icon.disclose-down" width=11 height=11
+
+component PullFilterMenu
+  props
+    field: string
+    selected: string
+    options: string[]
+    label: string
+    choose: action
+  view
+    column id=`pull-filter-menu-${field}` popover="auto" role="menu" aria-label=label
+      for option in options key=option
+        button press=choose(option) role="menuitemradio" aria-checked=(option == selected) popovertarget=`pull-filter-menu-${field}` popovertargetaction="hide" testId=`pull-${field}-${option}`
+          text pullFilterLabel(option, field == "involvement")
+
+component SearchExcerpt
+  props
+    hits: SearchHit[]
+    id: string
+  view
+    match first(hits.filter(hit => hit.id == id))
+      case some(hit)
+        text testId=`thread-excerpt-${id}` font="-exact-footnote" flex=1 min-width=0 line-clamp=1 color="muted"
+          text (hit.source == "user" ? "You: " : "Agent: ") font-weight=500 color=(hit.source == "user" ? "muted" : "status-done")
+          for run in hit.runs key=run.start
+            text run.text font-weight=(run.highlighted ? 700 : 400) color=(run.highlighted ? "foreground" : "muted")
+      case none
+        view display="none"
 
 component EnvironmentList
   props
@@ -2528,4 +4266,4 @@ component EnvironmentRow
         text environment.status font-size=13 line-height="17px" color="muted"
       input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
       button press=manageEnvironment(environment.id) aria-label=label appearance="none" width=44 height=44 color="muted"
-        image (detail ? (expanded ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") : "symbol:forward-chevron") width=12 height=12
+        image (detail ? (expanded ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") : "symbol:forward-chevron") width=12 height=12

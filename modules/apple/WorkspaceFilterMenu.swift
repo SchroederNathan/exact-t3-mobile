@@ -5,6 +5,23 @@ private struct WorkspaceFilterOption: Equatable {
   let title: String
 }
 
+private struct GroupedFilterMenu: Decodable {
+  struct Group: Decodable {
+    struct Choice: Decodable { let id: String; let title: String; let selected: Bool }
+    let title: String
+    let options: [Choice]
+  }
+  let groups: [Group]
+  let reset: Bool
+}
+
+private struct FlatFilterChoice: Decodable {
+  let id: String
+  let title: String
+  let selected: Bool
+  let color: String
+}
+
 final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   private let button = WorkspaceFilterMenuButton(type: .custom)
 
@@ -18,6 +35,10 @@ final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   override var view: ExactNativeView { button }
 
   override func setProps(_ props: [String: String]) throws {
+    if props["grouped-options"] != nil || props["flat-options"] != nil {
+      button.apply(props, options: [])
+      return
+    }
     guard let query = URLComponents(string: "?" + (props["options-query"] ?? ""))?.queryItems else {
       throw ExactNativeRefusal("filter menu options must be an encoded query")
     }
@@ -31,10 +52,14 @@ private final class WorkspaceFilterMenuButton: UIButton {
   var onSize: ((CGSize) -> Void)?
   private let glass = UIVisualEffectView()
   private let label = UILabel()
-  private let chevron = UIImageView(image: UIImage(systemName: "chevron.down"))
+  private let glyph = UIImageView()
+  private var leadingFilter = false
+  private var glyphSize: CGFloat { leadingFilter ? 15 : 11 }
   private var options: [WorkspaceFilterOption] = []
   private var selectedID = ""
   private var menuTitle = ""
+  private var groupedOptions: String?
+  private var flatOptions: String?
   private var active = false
   private var selectedFromMenu = false
   private var measuredSize = CGSize.zero
@@ -52,10 +77,9 @@ private final class WorkspaceFilterMenuButton: UIButton {
     label.lineBreakMode = .byTruncatingTail
     label.isUserInteractionEnabled = false
     glass.contentView.addSubview(label)
-    chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11)
-    chevron.contentMode = .scaleAspectFit
-    chevron.isUserInteractionEnabled = false
-    glass.contentView.addSubview(chevron)
+    glyph.contentMode = .scaleAspectFit
+    glyph.isUserInteractionEnabled = false
+    glass.contentView.addSubview(glyph)
     registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: WorkspaceFilterMenuButton, _: UITraitCollection) in
       view.updateTypography()
     }
@@ -71,16 +95,43 @@ private final class WorkspaceFilterMenuButton: UIButton {
   func apply(_ props: [String: String], options nextOptions: [WorkspaceFilterOption]) {
     let nextSelectedID = props["selected-id"] ?? ""
     let nextMenuTitle = props["menu-title"] ?? ""
-    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil {
+    let nextGrouped = props["grouped-options"]
+    let nextFlat = props["flat-options"]
+    if glyph.image == nil || leadingFilter != (nextGrouped != nil) {
+      leadingFilter = nextGrouped != nil
+      glyph.image = UIImage(systemName: leadingFilter ? "line.3.horizontal.decrease" : "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: glyphSize))
+    }
+    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil || groupedOptions != nextGrouped || flatOptions != nextFlat {
       options = nextOptions
       selectedID = nextSelectedID
       menuTitle = nextMenuTitle
-      menu = UIMenu(title: menuTitle, children: options.map { option in
-        UIAction(title: option.title, state: option.id == selectedID ? .on : .off) { [weak self] _ in
-          self?.selectedFromMenu = true
-          self?.onSelection?(option.id)
+      groupedOptions = nextGrouped
+      flatOptions = nextFlat
+      if let data = nextGrouped?.data(using: .utf8), let model = try? JSONDecoder().decode(GroupedFilterMenu.self, from: data) {
+        var children: [UIMenuElement] = model.groups.map { group in
+          UIMenu(title: group.title, children: group.options.map { choice in
+            action(choice.id, choice.title, selected: choice.selected)
+          })
         }
-      })
+        let reset = action("reset", "Reset filters", selected: false)
+        if !model.reset { reset.attributes = .disabled }
+        children.append(reset)
+        menu = UIMenu(title: menuTitle, children: children)
+      } else if let data = nextFlat?.data(using: .utf8), let choices = try? JSONDecoder().decode([FlatFilterChoice].self, from: data) {
+        menu = UIMenu(title: menuTitle, children: choices.map { choice -> UIAction in
+          let item = action(choice.id, choice.title, selected: choice.selected)
+          if choice.id == "search" { item.image = UIImage(systemName: "magnifyingglass") }
+          if choice.color.hasPrefix("#"), choice.color.count == 7, let rgb = UInt32(choice.color.dropFirst(), radix: 16) {
+            let tint = UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+            item.image = UIImage(systemName: "circle.fill")?.withTintColor(tint, renderingMode: .alwaysOriginal)
+          }
+          return item
+        })
+      } else {
+        menu = UIMenu(title: menuTitle, children: options.map { option in
+          action(option.id, option.title, selected: option.id == selectedID)
+        })
+      }
     }
     label.text = props["chip-label"] ?? ""
     accessibilityLabel = props["accessibility-label"] ?? label.text
@@ -102,9 +153,16 @@ private final class WorkspaceFilterMenuButton: UIButton {
     updateSize()
   }
 
+  private func action(_ id: String, _ title: String, selected: Bool) -> UIAction {
+    UIAction(title: title, state: selected ? .on : .off) { [weak self] _ in
+      self?.selectedFromMenu = true
+      self?.onSelection?(id)
+    }
+  }
+
   private func updateSize() {
     let textSize = label.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
-    let size = CGSize(width: min(180, ceil(textSize.width)) + 21 + 5.25 + 11,
+    let size = CGSize(width: min(180, ceil(textSize.width)) + 21 + 5.25 + glyphSize,
                       height: max(28, max(lineHeight, textSize.height) + 10.5))
     if size != measuredSize {
       measuredSize = size
@@ -125,7 +183,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
       ? UIColor(white: 131 / 255, alpha: 1)
       : UIColor(red: 111 / 255, green: 111 / 255, blue: 121 / 255, alpha: 1)
     label.textColor = foreground
-    chevron.tintColor = foreground
+    glyph.tintColor = foreground
     if #available(iOS 26.0, *) {
       let effect = UIGlassEffect(style: .regular)
       effect.isInteractive = true
@@ -141,9 +199,10 @@ private final class WorkspaceFilterMenuButton: UIButton {
   override func layoutSubviews() {
     super.layoutSubviews()
     glass.frame = bounds
-    let textWidth = max(0, min(180, bounds.width - 21 - 5.25 - 11))
-    label.frame = CGRect(x: 10.5, y: 5.25, width: textWidth, height: max(0, bounds.height - 10.5))
-    chevron.frame = CGRect(x: label.frame.maxX + 5.25, y: (bounds.height - 11) / 2, width: 11, height: 11)
+    let textWidth = max(0, min(180, bounds.width - 21 - 5.25 - glyphSize))
+    let glyphOnLeft = leadingFilter != (effectiveUserInterfaceLayoutDirection == .rightToLeft)
+    label.frame = CGRect(x: 10.5 + (glyphOnLeft ? glyphSize + 5.25 : 0), y: 5.25, width: textWidth, height: max(0, bounds.height - 10.5))
+    glyph.frame = CGRect(x: glyphOnLeft ? 10.5 : label.frame.maxX + 5.25, y: (bounds.height - glyphSize) / 2, width: glyphSize, height: glyphSize)
   }
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
