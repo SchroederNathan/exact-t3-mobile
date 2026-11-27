@@ -5,6 +5,16 @@ private struct WorkspaceFilterOption: Equatable {
   let title: String
 }
 
+private struct GroupedFilterMenu: Decodable {
+  struct Group: Decodable {
+    struct Choice: Decodable { let id: String; let title: String; let selected: Bool }
+    let title: String
+    let options: [Choice]
+  }
+  let groups: [Group]
+  let reset: Bool
+}
+
 final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   private let button = WorkspaceFilterMenuButton(type: .custom)
 
@@ -18,6 +28,10 @@ final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   override var view: ExactNativeView { button }
 
   override func setProps(_ props: [String: String]) throws {
+    if props["grouped-options"] != nil {
+      button.apply(props, options: [])
+      return
+    }
     guard let query = URLComponents(string: "?" + (props["options-query"] ?? ""))?.queryItems else {
       throw ExactNativeRefusal("filter menu options must be an encoded query")
     }
@@ -35,6 +49,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
   private var options: [WorkspaceFilterOption] = []
   private var selectedID = ""
   private var menuTitle = ""
+  private var groupedOptions: String?
   private var active = false
   private var selectedFromMenu = false
   private var measuredSize = CGSize.zero
@@ -71,16 +86,27 @@ private final class WorkspaceFilterMenuButton: UIButton {
   func apply(_ props: [String: String], options nextOptions: [WorkspaceFilterOption]) {
     let nextSelectedID = props["selected-id"] ?? ""
     let nextMenuTitle = props["menu-title"] ?? ""
-    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil {
+    let nextGrouped = props["grouped-options"]
+    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil || groupedOptions != nextGrouped {
       options = nextOptions
       selectedID = nextSelectedID
       menuTitle = nextMenuTitle
-      menu = UIMenu(title: menuTitle, children: options.map { option in
-        UIAction(title: option.title, state: option.id == selectedID ? .on : .off) { [weak self] _ in
-          self?.selectedFromMenu = true
-          self?.onSelection?(option.id)
+      groupedOptions = nextGrouped
+      if let data = nextGrouped?.data(using: .utf8), let model = try? JSONDecoder().decode(GroupedFilterMenu.self, from: data) {
+        var children: [UIMenuElement] = model.groups.map { group in
+          UIMenu(title: group.title, children: group.options.map { choice in
+            action(choice.id, choice.title, selected: choice.selected)
+          })
         }
-      })
+        let reset = action("reset", "Reset filters", selected: false)
+        if !model.reset { reset.attributes = .disabled }
+        children.append(reset)
+        menu = UIMenu(title: menuTitle, children: children)
+      } else {
+        menu = UIMenu(title: menuTitle, children: options.map { option in
+          action(option.id, option.title, selected: option.id == selectedID)
+        })
+      }
     }
     label.text = props["chip-label"] ?? ""
     accessibilityLabel = props["accessibility-label"] ?? label.text
@@ -100,6 +126,13 @@ private final class WorkspaceFilterMenuButton: UIButton {
     label.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: base, compatibleWith: traitCollection)
     lineHeight = 19 * label.font.pointSize / 14
     updateSize()
+  }
+
+  private func action(_ id: String, _ title: String, selected: Bool) -> UIAction {
+    UIAction(title: title, state: selected ? .on : .off) { [weak self] _ in
+      self?.selectedFromMenu = true
+      self?.onSelection?(id)
+    }
   }
 
   private func updateSize() {

@@ -3,6 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullRow } from "./pull-row";
+import { orderPulls, pullControlMenu } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
 import { ChangedFilePages } from "./pull-files";
 import { pullListPredicate } from "./pull-search";
@@ -570,7 +571,7 @@ function projectPull(value: unknown, environmentId: string, hostOverride?: strin
   const host = hostOverride ?? string(raw.host);
   return [{ row: pullRow(raw), environmentId, host, routeKey:pullRouteKey(environmentId,projectId,host,summary.repository),
     projectId, number:summary.number, title:summary.title, url:summary.url, state:summary.state, isDraft:raw.isDraft === true,
-    repository:summary.repository, baseBranch:summary.baseBranch, headBranch:summary.branch, updatedAt:summary.updatedAt, author:summary.author,
+    repository:summary.repository, baseBranch:summary.baseBranch, headBranch:summary.branch, updatedAt:summary.updatedAt, createdAt:string(raw.createdAt), author:summary.author,
     body:string(raw.body) || string(raw.description), additions:Number(raw.additions ?? raw.addedLines ?? 0),
     deletions:Number(raw.deletions ?? raw.deletedLines ?? 0), changedFiles:Number(raw.changedFiles ?? raw.changedFileCount ?? 0) }];
 }
@@ -595,6 +596,8 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  pullControlMenu: ([state,involvement,draft,review,checks,sort]) => pullControlMenu(state,involvement,draft,review,checks,sort),
+  orderPulls: ([items,sort]) => orderPulls(items,sort),
   decodePairingScan: ([value, route]) => {
     try {
       if (value.length > 8192 || !/^(https?|t3code):\/\//i.test(value.trim())) throw new Error();

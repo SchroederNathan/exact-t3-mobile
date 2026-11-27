@@ -1,5 +1,22 @@
 import {expect, test} from "bun:test";
 import {pullSearch, pullListPredicate} from "../pull-search";
+import {orderPulls, pullControlMenu} from "../pull-controls";
+
+test("advanced menu counts filters but not sort; typed qualifiers override selected filters", () => {
+  const menu = pullControlMenu("open","all","only","approved","all","oldest");
+  expect(menu.count).toBe(2);
+  expect(menu.groups.map(group=>group.title)).toEqual(["Drafts only","Approved","Checks","Oldest updated"]);
+  expect(menu.groups.every(group=>group.options.filter(option=>option.selected).length === 1)).toBe(true);
+  expect(pullControlMenu("open","all","all","all","all","created")).toMatchObject({count:0, reset:true});
+  expect(pullSearch("draft:true review:approved draft:false").filters).toEqual({draft:"hide", review:"approved"});
+});
+
+test("sorts the loaded rows without mutating their default order", () => {
+  const rows = [{updatedAt:"2026-05-04",createdAt:"2026-01-01"},{updatedAt:"2026-03-01",createdAt:"2026-02-10"}];
+  expect(orderPulls(rows,"updated")).toBe(rows);
+  expect(orderPulls(rows,"created")).toEqual([rows[1],rows[0]]);
+  expect(orderPulls(rows,"oldest")).toEqual([rows[1],rows[0]]);
+});
 
 test("PR search separates qualifiers from provider text without splitting quoted labels", () => {
   expect(pullSearch('keyboard label:"Reader, voice",UI -label:later kind:bug,task author:@me -draft:false checks:failure review:required')).toEqual({query:"keyboard",filters:{labels:[["Reader, voice","UI"],["kind:bug","kind:task"]],excludedLabels:["later"],author:"@me",draft:"only",checks:"failing",review:"review-required"}});

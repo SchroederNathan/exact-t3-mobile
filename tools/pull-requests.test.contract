@@ -70,6 +70,24 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree has "pull-request-ambiguous"
   type "root" "/pulls"
   clock settle
+  tap "pull-filter-more"
+  tap "pull-more-draft"
+  tap "pull-choice-draft:only"
+  clock data
+  clock settle
+  expect tree missing "pull-fixture-first.test-fixture/client-shared-9"
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-filter-more"
+  tap "pull-more-sort"
+  tap "pull-choice-sort:created"
+  expect state pullSort == "created"
+  expect state pullControls.count == 1
+  tap "pull-filter-more"
+  tap "pull-more-reset"
+  clock data
+  clock settle
+  expect state pullSort == "updated"
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
   tap "pull-filter-environment"
   tap "pull-environment-secondary"
   clock data

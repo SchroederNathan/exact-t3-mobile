@@ -366,6 +366,22 @@ shape PullRow
   deletedText: string
   accessible: string
 
+shape PullControlOption
+  id: string
+  title: string
+  selected: bool
+
+shape PullControlGroup
+  id: string
+  title: string
+  options: PullControlOption[]
+
+shape PullControlMenu
+  count: number
+  reset: bool
+  groups: PullControlGroup[]
+  menu: string
+
 shape PullRequest
   row: PullRow
   routeKey: string
@@ -382,6 +398,7 @@ shape PullRequest
   updatedAt: string
   projectId: string
   author: string
+  createdAt: string
   body: string
   additions: number
   deletions: number
@@ -719,6 +736,11 @@ component T3Code
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
   state pullState = "open"
   state pullInvolvement = "all"
+  state pullDraftFilter = "all"
+  state pullReviewFilter = "all"
+  state pullChecksFilter = "all"
+  state pullSort = "updated"
+  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort) as shape PullControlMenu else empty()
   state pullPageIndex = 0
   state pullSearchDraft = ""
   state pullQuery = ""
@@ -727,7 +749,29 @@ component T3Code
     after(180, applyPullSearch)
   derive pullTargets = catalog.environments.filter(env => selectedPullEnvironment == "" or env.id == selectedPullEnvironment)
   derive connectedPullTargets = pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id)
-  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, pullQuery, pullPageIndex) as shape PullRequests else empty()
+  derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
+  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex) as shape PullRequests else empty()
+  resource orderedPulls = orderPulls(pullRequests.items, pullSort) as shape PullRequest[] else empty()
+  action choosePullControl(id: string)
+    if id == "reset"
+      pullDraftFilter = "all"
+      pullReviewFilter = "all"
+      pullChecksFilter = "all"
+      pullSort = "updated"
+      pullInvolvement = "all"
+      pullState = "open"
+      pullPageIndex = 0
+    else if ["sort:updated", "sort:created", "sort:oldest"].includes(id)
+      pullSort = id.slice(5)
+    else if ["draft:all", "draft:only", "draft:hide"].includes(id)
+      pullDraftFilter = id.slice(6)
+      pullPageIndex = 0
+    else if ["review:all", "review:approved", "review:changes-requested", "review:review-required", "review:none"].includes(id)
+      pullReviewFilter = id.slice(7)
+      pullPageIndex = 0
+    else if ["checks:all", "checks:passing", "checks:failing"].includes(id)
+      pullChecksFilter = id.slice(7)
+      pullPageIndex = 0
   action filterPullEnvironment(id: string)
     if id == "" or environmentState.items.filter(env => env.id == id).length > 0
       pullEnvironment = id
@@ -2703,6 +2747,12 @@ component T3Code
                     input type="search" value=pullSearchDraft input=editPullSearch placeholder="Search pull requests" aria-label="Search pull requests" testId="pulls-search"
                   scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 background-color="screen" testId="pulls-filters"
                     row gap=8 align-items="center" padding="2px 16px 10px"
+                      if device.kind == "web" or device.kind == ""
+                        button popovertarget="pull-controls-menu" aria-haspopup="menu" aria-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") appearance="none" display="flex" align-items="center" gap=5.25 padding="5.25px 10.5px" min-height=28 border-radius=16 backgroundMaterial="glass" color=(pullControls.count > 0 ? "white" : "muted") background-color=(pullControls.count > 0 ? "AccentColor" : "transparent") testId="pull-filter-more"
+                          image "symbol:filter" width=14 height=14
+                          text (pullControls.count > 0 ? `${pullControls.count}` : "Filters") font-size="0.875rem" font-weight=500
+                      else
+                        workspace-filter-menu chip-label=(pullControls.count > 0 ? `${pullControls.count}` : "Filters") grouped-options=pullControls.menu active=(pullControls.count > 0 ? "true" : "false") accessibility-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") test-id="pull-filter-more" testId="pull-filter-more" message=choosePullControl flex-shrink=0
                       if catalog.environments.length > 1
                         if device.kind != "web" and device.kind != ""
                           workspace-filter-menu chip-label=(selectedPullEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedPullEnvironment)) options-query=("=All%20environments&" + catalog.environments.map(env => `${encodeURIComponent(env.id)}=${encodeURIComponent(env.label)}`).join("&")) selected-id=selectedPullEnvironment active=(selectedPullEnvironment != "" ? "true" : "false") accessibility-label="Choose pull request environment" test-id="pull-filter-environment" testId="pull-filter-environment" message=filterPullEnvironment flex-shrink=0
@@ -2727,7 +2777,7 @@ component T3Code
                     list id="pulls-list" appearance="none" flex=1 min-height=0 background-color="screen"
                       if pullRequests.error != ""
                         text pullRequests.error padding="10.5px 14px" font-size=13 line-height="17px" color="muted" testId="pulls-error"
-                      for pull in pullRequests.items key=`${pull.routeKey}:${pull.number}`
+                      for pull in orderedPulls key=`${pull.routeKey}:${pull.number}`
                         button press=openPullRequest(pull.routeKey, pull.number) appearance="none" aria-label=pull.row.accessible testId=`pull-${pull.environmentId}-${pull.host}-${pull.repository}-${pull.projectId}-${pull.number}` width="100%" box-sizing="border-box" display="flex" flex-direction="row" align-items="flex-start" text-align="left" gap=10.5 padding="0 14px" border="none" background-color="transparent" color="foreground"
                           column position="relative" flex-shrink=0 margin-top=8.75 width=20 height=20 aria-hidden=true
                             if pull.row.status == "Open" or pull.row.status == "Draft"
@@ -3000,6 +3050,17 @@ component T3Code
           for env in catalog.environments key=env.id
             button press=filterPullEnvironment(env.id) role="menuitemradio" aria-checked=(selectedPullEnvironment == env.id) popovertarget="pull-environments-menu" popovertargetaction="hide" testId=`pull-environment-${env.id}`
               text env.label
+        column id="pull-controls-menu" popover="auto" role="menu" aria-label="More filters" max-height="70dvh" overflow-y="auto"
+          for group in pullControls.groups key=group.id
+            button role="menuitem" aria-haspopup="menu" popovertarget=`pull-controls-${group.id}` testId=`pull-more-${group.id}`
+              text group.title
+              image "symbol:forward-chevron"
+            column id=`pull-controls-${group.id}` popover="auto" role="menu" aria-label=group.title
+              for option in group.options key=option.id
+                button role="menuitemradio" aria-checked=option.selected press=choosePullControl(option.id) popovertarget="pull-controls-menu" popovertargetaction="hide" testId=`pull-choice-${option.id}`
+                  text option.title
+          button role="menuitem" disabled=(not pullControls.reset) press=choosePullControl("reset") popovertarget="pull-controls-menu" popovertargetaction="hide" testId="pull-more-reset"
+            text "Reset filters"
         PullFilterMenu(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", choose=filterPullState)
         PullFilterMenu(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", choose=filterPullInvolvement)
         column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
