@@ -3,6 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullRow } from "./pull-row";
+import { pullListPredicate } from "./pull-search";
 import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
@@ -1720,14 +1721,15 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async ([ids, state, involvement], store, _storage, native) => {
+  loadPullRequests: async ([ids, state, involvement, search], store, _storage, native) => {
     const responses = await Promise.all(ids.map(async environmentId => {
       try {
-        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests(state, involvement));
+        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests(state, involvement, search));
+        const matches = pullListPredicate(page, state, involvement, search);
         const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
             const summary = pullRequestSummary(raw);
-            if (!summary.repository || !string(raw.projectId) || summary.number < 1) return [];
+            if (!summary.repository || !string(raw.projectId) || summary.number < 1 || !matches(raw)) return [];
             return [{ row: pullRow(raw), environmentId, host: string(raw.host), routeKey: pullRouteKey(environmentId, string(raw.projectId), string(raw.host), summary.repository),
               number: summary.number,
               title: summary.title,

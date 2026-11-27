@@ -684,7 +684,12 @@ component T3Code
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
   state pullState = "open"
   state pullInvolvement = "all"
-  resource pullRequests = loadPullRequests(current.name == "pullRequests" or current.name == "pullRequest" ? catalog.environments.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : [], pullState, pullInvolvement) as shape PullRequests else empty()
+  state pullSearchDraft = ""
+  state pullQuery = ""
+  derive pullSearchText = pullSearchDraft.trim()
+  task debouncePullSearch when current.name == "pullRequests" and pullSearchText != pullQuery key=pullSearchText
+    after(180, applyPullSearch)
+  resource pullRequests = loadPullRequests(current.name == "pullRequests" or current.name == "pullRequest" ? catalog.environments.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : [], pullState, pullInvolvement, pullQuery) as shape PullRequests else empty()
   derive matchingPulls = pullRequests.items.filter(item => current.name == "pullRequest" and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
   resource pullRequestDetail = loadPullRequestDetail(matchingPulls) as shape PullRequestDetail else empty()
   resource pullRequestActivity = loadPullRequestActivity(matchingPulls) as shape PullRequestActivity else empty()
@@ -1494,6 +1499,12 @@ component T3Code
     let base = split and nav.tab == "threads" ? threadNav : split and nav.tab == "settings" ? settingsNav : nav
     let followed = go(base, url)
     nav = followed.next == base.next ? followed : open(base, url)
+
+  action editPullSearch(value: string)
+    pullSearchDraft = value
+
+  action applyPullSearch
+    pullQuery = pullSearchText
 
   action filterPullState(value: string)
     if value == "open" or value == "closed" or value == "merged" or value == "all"
@@ -2613,9 +2624,10 @@ component T3Code
                     button press=confirmGitAction(true) disabled=gitBusy appearance="none" padding=12 testId="git-confirm-branch"
                       text (gitConfirmIncludesCommit ? "Feature branch & commit" : "Feature branch & continue")
               if e.name == "pullRequests"
-                column navigationKey=`${e.id}` navigationScroll=(pullRequests.items.length == 0 ? "pulls" : "pulls-list") data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll=(pullRequests.items.length == 0 ? "pulls" : "pulls-list") data-workspace-header="brand" data-search-placement=(split ? "integrated" : "button") data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Pull Requests" role="heading" aria-level=2
+                    input type="search" value=pullSearchDraft input=editPullSearch placeholder="Search pull requests" aria-label="Search pull requests" testId="pulls-search"
                   scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 background-color="screen" testId="pulls-filters"
                     row gap=8 align-items="center" padding="2px 16px 10px"
                       PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
@@ -2627,7 +2639,7 @@ component T3Code
                           progress width=18 height=18 aria-label="Loading pull requests" testId="pulls-loading"
                       else
                         column align-items="center" padding="80px 64px" gap=8
-                          text (pullRequests.error != "" ? "Couldn't load pull requests" : catalog.environments.length == 0 ? "Connect an environment" : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Environment offline" : "No matching pull requests") role="heading" aria-level=3 font-size=20 font-weight=700 text-align="center" testId="pulls-empty"
+                          text (pullRequests.error != "" ? "Couldn't load pull requests" : catalog.environments.length == 0 ? "Connect an environment" : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Environment offline" : pullQuery != "" ? "No results" : "No matching pull requests") role="heading" aria-level=3 font-size=20 font-weight=700 text-align="center" testId="pulls-empty"
                           text (pullRequests.error != "" ? pullRequests.error : catalog.environments.length == 0 ? "Add an environment in Settings to browse its pull requests." : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Reconnect to load pull requests that aren't saved on this device." : "Pull requests from the selected environments' projects appear here.") font-size=16 line-height=24 text-align="center" color="muted" testId="pulls-empty-detail"
                   else
                     list id="pulls-list" appearance="none" flex=1 min-height=0 background-color="screen"

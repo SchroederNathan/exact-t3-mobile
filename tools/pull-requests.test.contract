@@ -57,3 +57,15 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree has "pull-fixture-first.test-fixture/client-shared-9"
   expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
   request POST "http://127.0.0.1:0/assert/filters/merged-reviewing"
+  type "pulls-search" "draft:false unmatched"
+  clock +179
+  expect state pullQuery == ""
+  clock +1
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No results"
+  type "pulls-search" "author:@me keyboard"
+  clock +180
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"

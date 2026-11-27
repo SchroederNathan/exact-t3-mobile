@@ -5,6 +5,7 @@ import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
 import { usageChart, usageTotals, type usageWindow } from "./usage";
 import { limitReports } from "./limit-pools";
+import { pullSearch } from "./pull-search";
 import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
@@ -1291,9 +1292,9 @@ export class DirectSession {
     return result;
   }
 
-  async listPullRequests(state = "open", involvement = "all"): Promise<ObjectValue> {
+  async listPullRequests(state = "open", involvement = "all", search = ""): Promise<ObjectValue> {
     if (!["open", "closed", "merged", "all"].includes(state) || !["all", "reviewing", "authored"].includes(involvement)) throw new Error("Unknown pull request filter.");
-    return this.query("pullRequests.list", { state, involvement, limit: 100 });
+    return this.query("pullRequests.list", { state, involvement, limit: 100, ...pullSearch(search) });
   }
 
   async pullRequestDetail(projectId: string, repository: string, number: number, host?: string): Promise<ObjectValue> {
