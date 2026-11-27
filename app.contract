@@ -268,6 +268,7 @@ shape Thread
   modelRevision: string
   activityAt: number
   settled: bool
+  canSettle: bool
   working: bool
   projectIcon: string
   projectInitials: string
@@ -849,6 +850,35 @@ component T3Code
       case none
         undoingPin = false
   mutation pinChanged as shape UndoableReply then afterPinChange
+  state settlementId = ""
+  state settlementKey = ""
+  state settlementMode = ""
+  mutation settlementChanged as shape UndoableReply then afterSettlement
+  action changeRowSettlementState(id: string, key: string, mode: string, receipt: string)
+    hidePopover("thread-row-menu")
+    if key != "" and not pending(settlementChanged) and not pending(pinChanged) and not pending(rowSnoozed)
+      settlementId = id
+      settlementKey = key
+      settlementMode = mode
+      if undoThreadId == id
+        undoReceipt = ""
+      if mode != "undo"
+        haptic("selection")
+      send settlementChanged = changeRowSettlement(id, key, mode == "settle", receipt, time.epochAtZero + performanceNow())
+  action afterSettlement
+    match settlementChanged
+      case some(reply)
+        if not reply.ok
+          taskAlertTitle = settlementMode == "undo" ? "Could not undo settle" : settlementMode == "settle" ? "Could not settle thread" : "Could not un-settle thread"
+          taskAlertBody = reply.error
+          showModal("task-alert")
+        else if reply.undo != ""
+          if settlementMode == "undo"
+            send snoozeRestored = finishPinUndo(settlementId, reply.undo, time.epochAtZero + performanceNow())
+          else
+            offerUndo("settle", settlementId, settlementKey, reply.undo)
+      case none
+        settlementMode = ""
   mutation snoozeUndone as shape Reply then afterUndoSnooze
   action afterUndoSnooze
     match snoozeUndone
@@ -869,12 +899,14 @@ component T3Code
   task pinUndoExpiry when undoReceipt != "" key=undoReceipt
     after(5000, dismissPinUndo)
   action restoreThreadAction
-    if undoReceipt != "" and not pending(pinChanged) and not pending(snoozeUndone)
+    if undoReceipt != "" and not pending(pinChanged) and not pending(snoozeUndone) and not pending(settlementChanged) and not pending(rowSnoozed)
       let receipt = undoReceipt
       haptic("selection")
       undoReceipt = ""
       if undoKind == "snooze"
         send snoozeUndone = undoRowSnooze(undoThreadId, undoAccessKey, receipt, time.epochAtZero + performanceNow())
+      else if undoKind == "settle"
+        changeRowSettlementState(undoThreadId, undoAccessKey, "undo", receipt)
       else
         undoingPin = true
         send pinChanged = setThreadPin(undoThreadId, undoAccessKey, true, receipt)
@@ -1726,7 +1758,7 @@ component T3Code
                       animation=(undoViewport.prefersReducedMotion ? "none" : "undoArrival 200ms cubic-bezier(0.33,1,0.68,1) both")
                       -exact-exit-animation=(undoViewport.prefersReducedMotion ? "none" : "undoDeparture 150ms ease-out both")
                       image "symbol:sf/checkmark.circle" width=20 height=20 color="icon"
-                      text (undoKind == "snooze" ? "Snoozed thread" : "Unpinned thread") font-size="0.8125rem" font-weight=600 flex=1 min-width=0 testId="thread-undo-label"
+                      text (undoKind == "snooze" ? "Snoozed thread" : undoKind == "settle" ? "Settled thread" : "Unpinned thread") font-size="0.8125rem" font-weight=600 flex=1 min-width=0 testId="thread-undo-label"
                       if device.kind == "web"
                         button press=restoreThreadAction appearance="none" aria-label=`Undo ${undoKind}` testId=`undo-${undoKind}` min-height=36 padding="0 14px" border-radius=18 background-color="input-fill" color="foreground" font-weight=600
                           text "Undo"
@@ -2778,6 +2810,10 @@ component T3Code
           button press=copyRowId(thread.serverThreadId) role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" testId="thread-menu-copy-id"
             image "symbol:sf/doc.on.doc"
             text "Copy thread ID"
+          if thread.canSettle and thread.wakeAt <= rowMenuOpened and copyTargetId == pinTargetId
+            button press=changeRowSettlementState(thread.id, thread.controls.accessKey, thread.settled ? "unsettle" : "settle", "") role="menuitem" disabled=(pending(settlementChanged) or pending(rowSnoozed) or pending(pinChanged)) testId=(thread.settled ? "thread-menu-unsettle" : "thread-menu-settle")
+              image (thread.settled ? "symbol:sf/arrow.uturn.backward" : "symbol:checkmark")
+              text (thread.settled ? "Un-settle" : "Settle")
         button press=changePin role="menuitem" popovertarget="thread-row-menu" popovertargetaction="hide" disabled=(pinTargetKey == "" or pending(pinChanged) or pending(rowSnoozed)) testId="thread-menu-pin"
           image (pinTargetDesired ? "symbol:pin" : "symbol:sf/pin.slash")
           text (pinTargetDesired ? "Pin" : "Unpin")

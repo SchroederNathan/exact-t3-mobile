@@ -1225,6 +1225,13 @@ const sources: Sources = {
       return { ok: false, error: error instanceof Error ? error.message : "Could not restore snooze." };
     }
   },
+  changeRowSettlement: async ([id, key, settle, receipt, now], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      const undo = await awaitReply(session.changeSettlement(threadId, key, settle, receipt, now, auth), native);
+      return { ok: true, error: "", undo };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not change thread settlement.", undo: "" }; }
+  },
   updateRowTitle: async ([id, key, original, value, regenerate], store, _storage, native) => {
     try {
       const { session, threadId, auth } = await authorizeRow(id, key, store);

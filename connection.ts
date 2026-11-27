@@ -945,6 +945,8 @@ export class DirectSession {
   private titleWrites = new Set<string>();
   private autoSettleWrites = new Set<string>();
   private snoozeUndo?: { receipt: string; id: string; key: string; wake: number; observedAt?: string };
+  private settleWrites = new Set<string>();
+  private settleUndo?: { receipt: string; id: string; key: string; pinned: boolean; orderKey: string; snoozedUntil: string; observedAt?: string };
   private pinUndo?: { receipt: string; id: string; key: string; orderKey: string; snoozedUntil: string };
   private snoozeRestore?: { receipt: string; id: string; key: string; snoozedUntil: string };
   private tools = new Map<string, ExpandedTool>();
@@ -1782,6 +1784,7 @@ export class DirectSession {
   open(socket: StreamSocket) {
     this.pinUndo = undefined;
     this.snoozeUndo = undefined;
+    this.settleUndo = undefined;
     this.snoozeRestore = undefined;
     this.controlEpoch++;
     this.controlGrant = false;
@@ -3028,6 +3031,53 @@ export class DirectSession {
     return { available, sleeping, choices: available && !sleeping ? snoozeChoices(object(this.config.settings).snoozePresets, now) : [] };
   }
 
+  async changeSettlement(id: string, key: string, settle: boolean, receipt: string, now: number, auth: unknown) {
+    const liveRow = () => {
+      if (!key || key !== this.controlAccessKey() || !this.shellLive || !this.configReady) throw new Error("Reconnect before changing settlement.");
+      if (!controlAccess(auth)) throw new Error("This connection does not have permission to change settlement.");
+      const row = this.shells.get(id);
+      if (!row || !listedThread(row)) throw new Error("This thread is no longer available.");
+      return row;
+    };
+    const row = liveRow(), operation = JSON.stringify([key, id]);
+    if (!receipt && listWakeTime(row) > now) throw new Error("Wake this thread before changing settlement.");
+    if (this.settleWrites.has(operation)) throw new Error("A settlement change is already pending.");
+    const restore = receipt ? this.settleUndo : undefined;
+    if (receipt && (!restore || settle || restore.receipt !== receipt || restore.key !== key || restore.id !== id || row.settledOverride !== "settled" || restore.observedAt !== string(row.settledAt))) throw new Error("This settle undo is no longer available.");
+    if ((row.settledOverride === "settled" && row.status !== "queued") === settle) throw new Error("The thread's settlement has changed.");
+    if (this.settleUndo?.id === id) this.settleUndo = undefined;
+    if (this.pinUndo?.id === id) this.pinUndo = undefined;
+    if (this.snoozeUndo?.id === id) this.snoozeUndo = undefined;
+    const commandId = crypto.randomUUID();
+    this.settleWrites.add(operation);
+    try {
+      await this.query("orchestration.dispatchCommand", { commandId, threadId: id, ...(settle ? { type: "thread.settle" } : { type: "thread.unsettle", reason: "user" }) });
+      liveRow();
+      if (settle) {
+        this.settleUndo = { receipt: commandId, id, key, pinned: row.pinnedAt != null, orderKey: string(row.pinOrderKey), snoozedUntil: string(row.snoozedUntil) };
+        this.reconcileSettlement();
+        return commandId;
+      }
+      if (restore?.pinned) {
+        await this.query("orchestration.dispatchCommand", { type: "thread.pin", commandId: crypto.randomUUID(), threadId: id, ...(restore.orderKey ? { orderKey: restore.orderKey } : {}) });
+        liveRow();
+      }
+      if (restore?.snoozedUntil) {
+        this.snoozeRestore = restore;
+        return receipt;
+      }
+      return "";
+    } finally { this.settleWrites.delete(operation); }
+  }
+
+  private reconcileSettlement() {
+    const undo = this.settleUndo;
+    if (!undo) return;
+    const row = this.shells.get(undo.id);
+    if (row?.settledOverride === "settled" && row.status !== "queued" && (undo.observedAt === undefined || undo.observedAt === string(row.settledAt))) undo.observedAt = string(row.settledAt);
+    else if (!row || undo.observedAt !== undefined) this.settleUndo = undefined;
+  }
+
   async changeSnooze(id: string, key: string, choiceId: string, opened: number, now: number, auth: unknown, customWake = 0) {
     if (!controlAccess(auth)) throw new Error("This connection does not have permission to change thread snoozes.");
     const menu = this.snoozeMenu(id, key, now);
@@ -3513,6 +3563,7 @@ export class DirectSession {
       this.pruneTools();
     }
     this.reconcileSnoozeUndo();
+    this.reconcileSettlement();
   }
 
   private requestFavicon(project: ObjectValue) {
@@ -3742,6 +3793,7 @@ export class DirectSession {
           lastError: error.message,
           lastErrorTime: error.time,
           settled,
+          canSettle: this.configReady && this.shellLive,
           working: working(thread),
           wakeAt: supportsSnooze ? listWakeTime(thread) : 0,
           pinRank: thread.pinnedAt != null ? 0 : -1,

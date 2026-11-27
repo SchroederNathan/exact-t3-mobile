@@ -22,6 +22,29 @@ test "choose per-thread auto-settle without leaving the list"
   clock data
   expect state activeThreadId == ""
 
+test "settle a pinned thread and undo the settlement without navigation"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:build" contextmenu
+  clock data
+  tap "thread-menu-settle"
+  clock data
+  clock settle
+  expect text "settled-title" == "Settled (2)"
+  expect text "thread-undo-label" == "Settled thread"
+  tap "undo-settle"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:build"
+  expect text "settled-title" == "Settled (1)"
+  expect state activeThreadId == ""
+
 test "rename uses the current row title and only the server updates its label"
   clock data
   tap "empty-add-environment"

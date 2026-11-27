@@ -429,7 +429,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               ],
             },
           });
-        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin", "thread.snooze", "thread.unsnooze", "thread.metadata.update", "thread.auto-settle.set"].includes(frame.payload.type)) {
+        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin", "thread.snooze", "thread.unsnooze", "thread.metadata.update", "thread.auto-settle.set", "thread.settle", "thread.unsettle"].includes(frame.payload.type)) {
           const row = threads.find(thread => thread.id === frame.payload.threadId);
           if (!row || !frame.payload.commandId) throw new Error("List command missing thread or command identifier");
           if (frame.payload.type === "thread.metadata.update") Object.assign(row, frame.payload.regenerateTitle === true ? { titleRegeneration: { requestId: frame.payload.commandId, startedAt: timestamp } } : { title: frame.payload.title });
@@ -439,6 +439,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           } else if (frame.payload.type === "thread.pin") Object.assign(row, { pinnedAt: timestamp, pinOrderKey: frame.payload.orderKey, snoozedAt: null, snoozedUntil: null });
           else if (frame.payload.type === "thread.snooze") Object.assign(row, { snoozedAt: timestamp, snoozedUntil: frame.payload.snoozedUntil });
           else if (frame.payload.type === "thread.unsnooze") Object.assign(row, { snoozedAt: null, snoozedUntil: null });
+          else if (frame.payload.type === "thread.settle") Object.assign(row, { settledOverride: "settled", settledAt: timestamp, pinnedAt: null, pinOrderKey: null, snoozedAt: null, snoozedUntil: null });
+          else if (frame.payload.type === "thread.unsettle") {
+            if (frame.payload.reason !== "user") throw new Error("Missing explicit un-settle reason");
+            Object.assign(row, { settledOverride: "active", settledAt: null });
+          }
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });

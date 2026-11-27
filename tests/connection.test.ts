@@ -168,6 +168,38 @@ test("title edits trim without clobbering external edits or regenerating twice",
   expect(commands()).toHaveLength(2);
 });
 
+test("settlement Undo restores the original pin only after un-settle succeeds", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] }, now = Date.parse("2026-11-10T12:59:00Z");
+  const change = (settle: boolean, receipt = "") => session.changeSettlement("thread", key, settle, receipt, now, auth);
+  await expect(session.changeSettlement("thread", "stale", true, "", now, auth)).rejects.toThrow("Reconnect");
+  await expect(session.changeSettlement("thread", key, true, "", now, {})).rejects.toThrow("permission");
+  updateThread({ pinnedAt: "first", pinOrderKey: "prior" });
+  const settle = change(true);
+  await expect(change(true)).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({ type: "thread.settle", threadId: "thread", commandId: expect.any(String) });
+  accept(commands()[0]!); const receipt = await settle;
+  updateThread({ settledOverride: "settled", settledAt: "2026-11-10T12:59:01Z" });
+  const undo = change(false, receipt);
+  expect(commands()[1]?.payload).toMatchObject({ type: "thread.unsettle", reason: "user" });
+  expect(commands()).toHaveLength(2);
+  accept(commands()[1]!); await Promise.resolve(); await Promise.resolve();
+  expect(commands()[2]?.payload).toMatchObject({ type: "thread.pin", orderKey: "prior" });
+  accept(commands()[2]!); expect(await undo).toBe("");
+  await expect(change(false, receipt)).rejects.toThrow("no longer available");
+});
+
+test("settlement Undo cannot act on a replacement settlement", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const pending = session.changeSettlement("thread", key, true, "", 0, auth);
+  updateThread({ settledOverride: "settled", settledAt: "first" }); accept(commands()[0]!);
+  const receipt = await pending;
+  updateThread({ settledOverride: "settled", settledAt: "replacement" });
+  await expect(session.changeSettlement("thread", key, false, receipt, 0, auth)).rejects.toThrow("no longer available");
+  expect(commands()).toHaveLength(1);
+});
+
 test("Undo restores the original pin position before the unexpired snooze, once", async () => {
   for (const expired of [false, true]) {
     const {session, updateThread, commands, accept} = settingsSession();
@@ -1768,6 +1800,7 @@ describe("direct T3 connection", () => {
         modelRevision: '{"instanceId":"provider-instance","model":"model-slug"}',
         activityAt: Date.parse("2026-11-08T11:59:00Z"),
         settled: true,
+        canSettle: true,
         working: false,
         status: "",
         visit: {
