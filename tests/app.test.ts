@@ -253,6 +253,17 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     });
   }
   const catalog = await load();
+  const usageDate = Date.parse("2026-11-10T12:05:00Z");
+  const usageFrames = () => sent.filter(({ frame }) => frame.tag === "server.getUsageSummary");
+  expect(await answer("loadUsage", [[], 30, 0, usageDate], store, storage, idleNative)).toEqual([]);
+  _fetch.mockImplementationOnce(async (url, init) => {
+    expect(String(url)).toBe("http://b.example/api/auth/session");
+    expect(init?.headers).toEqual({ Authorization: "Bearer token-b" });
+    return new Response(JSON.stringify({ authenticated: true, permissions: ["orchestration:operate"] }));
+  });
+  const deniedUsage = await answer("loadUsage", [catalog.environments.filter(({id}) => id === "b"), 30, 1, usageDate], store, storage, idleNative);
+  expect(deniedUsage[0]?.error).toBe("This connection does not have permission to read usage.");
+  expect(usageFrames()).toHaveLength(0);
   const initialSubscriptions = sent.filter(
     ({ frame }) => frame.tag === "orchestration.subscribeThread",
   );

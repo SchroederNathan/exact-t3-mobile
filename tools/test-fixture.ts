@@ -11,11 +11,13 @@ import { ComposerFixture } from "./composer-fixture";
 
 const app = NodePath.resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
+const conversation = "This is a deterministic test conversation.";
 const activityMode = process.argv.includes("--activities");
 const attachmentMode = process.argv.includes("--attachments");
 const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
 const composerMode = process.argv.includes("--composer");
+const usageMode = process.argv.includes("--usage");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
@@ -28,6 +30,7 @@ for (let index = 2; index < process.argv.length; index++) {
       "--markdown",
       "--controls",
       "--composer",
+      "--usage",
       "--attachments",
       "--third-environment",
     ].includes(argument)
@@ -297,7 +300,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       if (path === "/api/auth/session" && !controls && !attachments) {
         return json({
           authenticated: true,
-          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read"],
+          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read", ...(usageMode ? ["diagnostics:read"] : [])],
         });
       }
       if (path === "/.well-known/t3/environment") {
@@ -397,6 +400,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               ],
             },
           });
+        } else if (frame.tag === "server.getUsageSummary" && usageMode) {
+          const count = frame.payload.resolution === "hour" ? 2 : 10;
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: {
+            contractVersion: 6, buckets: [{ totals: { uncachedInputTokens: count, cachedInputTokens: 1, cacheCreationTokens: 0, outputTokens: 4, reasoningTokens: 1 },
+              records: 1, unpricedRecords: 0, costUsd: frame.payload.awaitRefresh ? 1.5 : 1 }], sources: [{status: "ok", distinctSessions: 1}],
+          } } }));
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;
           socket.data.configRequest = frame.id;
@@ -416,6 +425,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               exit: { _tag: "Success", value: { favorites: modelFavorites } },
             }),
           );
+        } else if (frame.tag === "orchestration.searchThreads") {
+          const query = String(frame.payload.query).trim().toLowerCase();
+          const matches = conversation.toLowerCase().includes(query) ? threads
+            .filter(thread => !frame.payload.projectIds || frame.payload.projectIds.includes(thread.projectId))
+            .map(thread => ({ threadId: thread.id, projectId: thread.projectId, source: "assistant", snippet: conversation, messageCreatedAt: timestamp })) : [];
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: { matches } } }));
         } else if (frame.tag === "orchestration.subscribeThread") {
           chunk(socket, frame.id, {
             kind: "snapshot",
@@ -424,7 +439,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
                 {
                   id: `${frame.payload.threadId}-message`,
                   role: "assistant",
-                  text: "This is a deterministic test conversation.",
+                  text: conversation,
                   createdAt: timestamp,
                 },
               ],
@@ -568,7 +583,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

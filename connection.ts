@@ -3,6 +3,7 @@ import { captureApprovalSend, type ApprovalSend, type ControlOptions } from "./a
 import { FILE_LIMIT, validateAttachments, type StoredAttachment } from "./attachments";
 import type { Result, StreamSocket } from "./app.contract.d.ts";
 import { visitMetadata } from "./visit-metadata";
+import { usageTotals, type usageWindow } from "./usage";
 import { parseProjectClones, PROJECT_CLONES_SUBSCRIPTION, type CloneSnapshot, type RpcSession } from "./project-rpc";
 import { defaultModelSelection, isDraftKey, launchWorkspaceStrategy, type LaunchPlan } from "./new-task";
 import { resolveMediaTarget, viewedImageBlock, type MediaRef } from "./media-preview";
@@ -998,6 +999,27 @@ export class DirectSession {
     return cwd;
   }
 
+  async searchThreadMessages(raw: string, projectId: string) {
+    const query = raw.trim().slice(0, 200).trim();
+    const words = query.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "").split(/\s+/);
+    if (!words.some(word => Array.from(word).length >= 3 || (Array.from(word).length === 2 && /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(word)))) return [];
+    const result = await this.query("orchestration.searchThreads", {
+      query, limit: 50, environmentLabel: this.environment.label,
+      ...(projectId ? { projectIds: [projectId] } : {}),
+    });
+    const seen = new Set<string>();
+    return records(result.matches).slice(0, 50).flatMap(match => {
+      const id = string(match.threadId);
+      const shell = this.shells.get(id);
+      const snippet = string(match.snippet).trim().slice(0, 240);
+      if (!shell || shell.archivedAt || shell.deletedAt || seen.has(id) || !snippet ||
+          match.projectId !== shell.projectId || (projectId && shell.projectId !== projectId) ||
+          (match.source !== "user" && match.source !== "assistant")) return [];
+      seen.add(id);
+      return [{ id: scopedThreadId(this.environment.id, id), snippet, source: match.source }];
+    });
+  }
+
   private composerCatalogProvider(value: unknown, cwd: string): ComposerProviderCatalog {
     const raw = object(value);
     const instanceId = string(raw.instanceId);
@@ -1123,6 +1145,12 @@ export class DirectSession {
 
   gitOperationState(threadId: string): GitOperationState {
     return this.gitOperationStateByThread.get(threadId) ?? { status: "idle" };
+  }
+
+  async readUsage(window: ReturnType<typeof usageWindow>, refresh: boolean) {
+    return usageTotals(await this.query("server.getUsageSummary", {
+      ...window, ...(refresh ? { awaitRefresh: true } : {}),
+    }));
   }
 
   async refreshStatusAt(cwd: string, localOnly = false): Promise<GitStatus> {
