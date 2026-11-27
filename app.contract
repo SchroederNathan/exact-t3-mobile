@@ -55,6 +55,7 @@ routes nav
   tab pullRequests "/pulls"
     pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
+      pullFile "/pulls/:project/:number/file/:file"
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
@@ -480,6 +481,18 @@ shape PullFileList
   nextCursor: string
   error: string
 
+shape PullDiffRow
+  key: string
+  path: string
+  kind: string
+  text: string
+  oldLine: string
+  newLine: string
+  prefix: string
+  expanded: bool
+  added: number
+  deleted: number
+
 shape PullRef
   environmentId: string
   projectId: string
@@ -742,9 +755,10 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = "" persist
-  derive pullWorkspace = current.name == "pullRequests" or current.name == "pullRequest" or current.name == "pullFilterSearch"
+  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile"
+  derive pullWorkspace = current.name == "pullRequests" or pullDetailRoute or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
-  resource pullLink = parsePullLink(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRef[] else empty()
+  resource pullLink = parsePullLink(pullDetailRoute ? current.params.project : "", pullDetailRoute ? current.params.number : "") as shape PullRef[] else empty()
   derive pullLinkEnvironment = match first(pullLink) { case some(ref) => ref.environmentId, case none => "" }
   derive wantedPullEnvironment = pullLinkEnvironment != "" ? pullLinkEnvironment : selectedPullEnvironment
   derive defaultEnvironmentId = match first(environmentState.items.filter(env => env.enabled)) { case some(env) => env.id, case none => "" }
@@ -882,18 +896,20 @@ component T3Code
       pullPageIndex = 0
   task resetHiddenPullPages when not pullWorkspace key=current.name
     change(resetPullPages)
-  derive matchingPulls = pullRequests.items.filter(item => current.name == "pullRequest" and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
+  derive matchingPulls = pullRequests.items.filter(item => pullDetailRoute and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
   derive listedRefs = matchingPulls.map(item => PullRef(environmentId=item.environmentId, projectId=item.projectId, host=item.host, repository=item.repository, number=item.number, routeKey=item.routeKey))
   derive pullRefs = pullLink.length > 0 ? pullLink.filter(ref => catalog.environments.filter(env => env.id == ref.environmentId and env.enabled and env.status == "Connected").length > 0) : listedRefs
   resource pullRequestDetail = loadPullRequestDetail(pullRefs) as shape PullRequestDetail else empty()
   resource pullRequestActivity = loadPullRequestActivity(pullRefs) as shape PullRequestActivity else empty()
   state pullFileRevision = 0
-  state expandedPullFile = ""
-  task clearHiddenPullFiles when current.name != "pullRequest" key=current.name
+  state collapsedDiffFiles: string[] = []
+  state diffJumped = ""
+  task clearHiddenPullFiles when not pullDetailRoute key=current.name
     change(resetPullFiles)
   action resetPullFiles
     pullFileRevision = 0
-    expandedPullFile = ""
+    collapsedDiffFiles = []
+    diffJumped = ""
   resource pullFiles = loadPullFiles(pullRefs, pullFileRevision) as shape PullFileList else empty()
   state hidePullTests = false persist
   derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
@@ -902,8 +918,23 @@ component T3Code
     hidePullTests = not hidePullTests
   action retryPullFiles
     pullFileRevision = pullFileRevision + 1
-  action togglePullFile(id: string)
-    expandedPullFile = expandedPullFile == id ? "" : id
+  derive diffPath = current.name == "pullFile" ? current.params.file : ""
+  derive diffVisit = current.name == "pullFile" ? `${current.id}:${diffPath}` : ""
+  derive diffFileFound = pullFiles.files.filter(file => file.path == diffPath).length > 0
+  derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or file.path == diffPath)
+  resource diffRows = pullDiffRows(current.name == "pullFile" ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
+  task fetchDiffTarget when current.name == "pullFile" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(pullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
+    after(1, retryPullFiles)
+  task jumpToPullFile when current.name == "pullFile" and diffVisit != diffJumped and diffRows.filter(row => row.key == `file:${diffPath}`).length > 0 key=diffVisit
+    after(1, revealPullFile)
+  action revealPullFile
+    scrollIntoView("pull-diff-lines", `file:${diffPath}`, block="start", behavior="instant")
+    diffJumped = diffVisit
+  action openPullFile(project: string, number: number, file: string)
+    collapsedDiffFiles = []
+    nav = push(nav, path("pullFile", project, `${number}`, file))
+  action foldDiffFile(file: string)
+    collapsedDiffFiles = collapsedDiffFiles.includes(file) ? collapsedDiffFiles.filter(path => path != file) : collapsedDiffFiles.concat([file])
   resource terminalAccess = loadTerminalAccess(activeThreadId) as shape TerminalAccess else empty()
   resource terminalMenu = loadTerminalMenu(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalMenu else empty()
   resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
@@ -3031,7 +3062,7 @@ component T3Code
                             else
                               for file in visiblePullFiles key=file.path
                                 column min-width=0
-                                  button press=togglePullFile(`${pull.routeKey}:${pull.number}:${file.path}`) disabled=file.omitted aria-label=`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions` min-height=49 testId=`pull-file-${file.path}`
+                                  button press=openPullFile(pull.routeKey, pull.number, file.path) aria-label=`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions` min-height=49 testId=`pull-file-${file.path}`
                                     row min-width=0 align-items="center" gap=7
                                       column flex=1 min-width=0 gap=1.75
                                         text file.name font-size="0.875rem" font-weight=500 line-clamp=2
@@ -3041,9 +3072,6 @@ component T3Code
                                       text `−${file.deletions}` color="danger"
                                   if file.omitted
                                     text "Patch omitted" color="muted"
-                                  else if expandedPullFile == `${pull.routeKey}:${pull.number}:${file.path}`
-                                    for line in file.rows key=line.id
-                                      text `${line.kind == "addition" ? "+" : line.kind == "deletion" ? "−" : " "}${line.text}` font-family="ui-monospace" font-size="0.8125rem" line-height="1.1875rem" white-space="pre-wrap" overflow-wrap="break-word" color=(line.kind == "addition" ? "status-done" : line.kind == "deletion" ? "danger" : "foreground") testId=`pull-file-line-${line.id}`
                               if pullFiles.files.length == 0
                                 text "No text changes available." color="muted"
                               else if visiblePullFiles.length == 0
@@ -3063,6 +3091,39 @@ component T3Code
                               text "Open in source control"
                         case none
                           text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
+              if e.name == "pullFile"
+                column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Back to pull request" testId="pull-diff-back"
+                      image "symbol:back"
+                    text "Changes" role="heading" aria-level=2
+                  text `#${e.params.number} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
+                  if pullFiles.error != ""
+                    text pullFiles.error color="danger" padding=14
+                    button press=retryPullFiles testId="pull-diff-retry"
+                      text "Retry loading files"
+                  else if not diffFileFound and (pending(pullFiles) or pending(catalog) or pullFiles.nextCursor != "")
+                    progress aria-label="Loading changes" testId="pull-diff-loading"
+                  else if not diffFileFound
+                    text "This file is not in the available diff." color="muted" padding=14 testId="pull-diff-missing"
+                  list id="pull-diff-lines" appearance="none" virtualized=true flex=1 min-height=0 estimated-item-height=22 background-color="code-surface"
+                    for line in diffRows key=line.key
+                      column min-width=0
+                        if line.kind == "file"
+                          button press=foldDiffFile(line.path) aria-expanded=line.expanded aria-label=`${line.text}, ${line.added} additions, ${line.deleted} deletions` display="flex" align-items="center" gap=7 padding="7px 14px" min-height=44 text-align="left" background-color="card" testId=`pull-diff-file-${line.path}`
+                            image (line.expanded ? "symbol:sf/chevron.down" : "symbol:forward-chevron") width=11 height=11
+                            text line.text flex=1 min-width=0 line-clamp=2 font="-exact-footnote" font-weight=600
+                            text `+${line.added}` color="status-done" font="-exact-caption1"
+                            text `−${line.deleted}` color="danger" font="-exact-caption1"
+                        else if line.kind == "hunk" or line.kind == "meta"
+                          text line.text user-select="text" font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="muted" padding="0 12px" white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
+                        else
+                          row min-height=22 align-items="stretch" background-color=(line.kind == "addition" ? "diff-add-fill" : line.kind == "deletion" ? "diff-remove-fill" : "transparent")
+                            text (line.newLine != "" ? line.newLine : line.oldLine) width=42 padding-right=7 box-sizing="border-box" text-align="right" color="muted" font-family="ui-monospace" font-size="0.6875rem" line-height="1.375rem" font-variant-numeric="tabular-nums" flex-shrink=0
+                            text `${line.prefix}${line.text == "" ? " " : line.text}` user-select="text" flex=1 min-width=0 font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="foreground" padding-right=7 white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
+                  if pullFiles.nextCursor != "" and diffFileFound
+                    button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-diff-more"
+                      text "Load more files"
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header

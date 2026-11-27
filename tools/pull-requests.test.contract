@@ -33,9 +33,16 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree has "pull-file-omitted"
   expect tree has "pull-files-partial"
   tap "pull-file-example"
-  expect text "pull-file-line-5" == "+second.test"
-  tap "pull-file-example"
-  expect tree missing "pull-file-line-5"
+  clock data
+  clock settle
+  expect state current.name == "pullFile"
+  expect text "pull-diff-line:5:example" == "+second.test"
+  tap "pull-diff-file-example"
+  expect tree missing "pull-diff-line:5:example"
+  tap "pull-diff-file-example"
+  expect text "pull-diff-line:5:example" == "+second.test"
+  tap "pull-diff-back"
+  clock settle
   request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,list"
   tap "pull-files-more"
   clock data
@@ -52,6 +59,17 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect tree has "pull-file-src/panel.test.ts"
+  tap "pull-file-src/panel.test.ts"
+  clock data
+  clock settle
+  expect state current.params.file == "src/panel.test.ts"
+  reload
+  clock data
+  clock settle
+  expect tree has "pull-diff-file-src/panel.test.ts"
+  expect text "pull-diff-line:2:src/panel.test.ts" == "+ok"
+  tap "pull-diff-back"
+  clock settle
   tap "pull-file-filter"
   tap "pull-hide-test-files"
   expect tree missing "pull-file-src/panel.test.ts"

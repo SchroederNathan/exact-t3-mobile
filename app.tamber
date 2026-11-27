@@ -3,6 +3,8 @@ tamber t3
 theme
   AccentColor = light-dark(#1b4ed8, #346bf1)
   screen = light-dark(#fcfcfc, #0a0a0a)
+  diff-add-fill = light-dark(#e5f8f5, #0d2f28)
+  diff-remove-fill = light-dark(#ffe6e7, #391415)
   card = light-dark(#f4f4f5, #1a1b1b)
   chart-codex = light-dark(#3c3c43, #e6e6e6)
   chart-grok = light-dark(#52525b, #a1a1aa)
