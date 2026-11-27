@@ -2160,7 +2160,11 @@ const sources: Sources = {
       };
     }
   },
-  loadThreadStatus: ([id, _catalog, stopping, _revision, now]) => {
+  loadThreadStatus: ([id, _catalog, stopping, _revision, now], _store, _storage, native) => {
+    if (!native?.available && current) {
+      const active = catalogThreadIdentity(id);
+      current.select(active?.environmentId === current.environment.id ? active.threadId : "");
+    }
     if (!id) return [];
     try {
       const identity = threadIdentity(id);

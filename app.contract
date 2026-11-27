@@ -849,7 +849,10 @@ component T3Code
   derive wantedPullEnvironment = pullLinkEnvironment != "" ? pullLinkEnvironment : selectedPullEnvironment
   derive defaultEnvironmentId = match first(environmentState.items.filter(env => env.enabled)) { case some(env) => env.id, case none => "" }
   derive pullCatalogEnvironment = wantedPullEnvironment == defaultEnvironmentId and selectedEnvironment == "" ? "" : wantedPullEnvironment
-  resource catalog = loadCatalog(pullWorkspace and device.kind == "web" and wantedPullEnvironment != "" ? pullCatalogEnvironment : selectedEnvironment, activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
+  derive threadEnvironment = match first(environmentState.items.filter(env => activeThreadId.startsWith(`${encodeURIComponent(env.id)}:`))) { case some(env) => env.id, case none => "" }
+  derive browseEnvironment = pullWorkspace and device.kind == "web" and wantedPullEnvironment != "" ? pullCatalogEnvironment : selectedEnvironment
+  derive webEnvironment = threadEnvironment != "" ? threadEnvironment : browseEnvironment != "" ? browseEnvironment : defaultEnvironmentId
+  resource catalog = loadCatalog(device.kind == "web" ? webEnvironment : browseEnvironment, device.kind == "web" ? "" : activeThreadId, environmentState.items) with time.epochAtZero as shape Catalog else empty()
   state usageDays = 30
   state usageView = "Limits"
   state usageRefresh = 0
