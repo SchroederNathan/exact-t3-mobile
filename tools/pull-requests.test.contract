@@ -121,6 +121,36 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect state pullControls.count == 1
   expect tree has "pull-secondary-second.test-secondary/client-shared-9"
   request POST "http://127.0.0.2:0/assert/project/shared"
+  tap "pull-filter-labels"
+  tap "pull-search-labels"
+  clock data
+  clock settle
+  expect tree has "pr-facet-result-host-only"
+  request POST "http://127.0.0.2:0/assert/options/labels/shared/empty"
+  type "pr-facet-query" "host-only"
+  clock +249
+  expect state facetSent == ""
+  clock +1
+  clock data
+  clock settle
+  request POST "http://127.0.0.2:0/assert/options/labels/shared/host-only"
+  tap "pr-facet-result-host-only"
+  expect tree has "pr-facet-close"
+  tap "pr-facet-result-host-only"
+  tap "pr-facet-close"
+  clock settle
+  request POST "http://127.0.0.1:0/assert/options/none"
+  tap "pull-filter-authors"
+  tap "pull-search-authors"
+  clock data
+  clock settle
+  tap "pr-facet-result-offpage-author"
+  clock data
+  clock settle
+  expect tree missing "pr-facet-close"
+  expect text "pull-filter-authors" == "offpage-author"
+  tap "pull-filter-authors"
+  tap "pull-authors-"
   tap "pull-filter-more"
   tap "pull-more-project"
   tap "pull-choice-project:secondary:remote"

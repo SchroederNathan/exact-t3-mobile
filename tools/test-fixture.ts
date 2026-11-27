@@ -218,6 +218,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
   const pullReads: string[] = [];
   const pullFilters: string[] = [];
   let lastPullProject = "";
+  const optionReads: {kind:string;query?:string;projectId?:string}[] = [];
   const serverConfig = () => ({
     settings: { favorites: modelFavorites, ...(threadTimeMode ? { snoozePresets: [{kind:"after", minutes:90}, {kind:"at", day:"tomorrow", time:"09:00"}] } : {}) },
     environment: {
@@ -330,6 +331,10 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           return ref.cursor ? json({patch:"diff --git a/final.txt b/final.txt\n@@ -0,0 +1 @@\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
         }
         if (pullsMode && path.startsWith("/assert/project/")) return json({lastPullProject}, lastPullProject === path.slice("/assert/project/".length) ? 200 : 409);
+        if (pullsMode && path.startsWith("/assert/options/")) {
+          const last = optionReads.at(-1);
+          return json({optionReads}, (last ? [last.kind,last.projectId ?? "all",last.query ?? "empty"].join("/") : "none") === path.slice("/assert/options/".length) ? 200 : 409);
+        }
         if (pullsMode && path.startsWith("/assert/filters/")) return json({pullFilters}, pullFilters.at(-1) === path.slice("/assert/filters/".length) ? 200 : 409);
         if (pullsMode && path.startsWith("/assert/pulls/")) {
           const expected = path.slice("/assert/pulls/".length);
@@ -466,6 +471,16 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
+        } else if (pullsMode && frame.tag === "pullRequests.filterOptions") {
+          const input = frame.payload;
+          if (!["authors","labels"].includes(input.kind) || (input.query && input.query.length > 100)) throw new Error("Invalid facet request");
+          optionReads.push(input);
+          const matches = (name:string)=>!input.query || name.includes(input.query.toLowerCase());
+          const labels = input.kind === "labels" ? ["host-only","host-slow"].filter(matches).map(name=>({name,color:"00aabb"})) : [];
+          const authors = input.kind === "authors" ? ["offpage-author"].filter(matches).map(login=>({login})) : [];
+          const respond = ()=>socket.send(JSON.stringify({_tag:"Exit",requestId:frame.id,exit:{_tag:"Success",value:{labels,authors,truncated:false}}}));
+          if (input.query === "slow") setTimeout(respond,550);
+          else respond();
         } else if (pullsMode && frame.tag.startsWith("pullRequests.")) {
           const method = frame.tag.slice("pullRequests.".length);
           pullReads.push(method);

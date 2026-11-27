@@ -120,6 +120,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
       } else if let data = nextFlat?.data(using: .utf8), let choices = try? JSONDecoder().decode([FlatFilterChoice].self, from: data) {
         menu = UIMenu(title: menuTitle, children: choices.map { choice -> UIAction in
           let item = action(choice.id, choice.title, selected: choice.selected)
+          if choice.id == "search" { item.image = UIImage(systemName: "magnifyingglass") }
           if choice.color.hasPrefix("#"), choice.color.count == 7, let rgb = UInt32(choice.color.dropFirst(), radix: 16) {
             let tint = UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
             item.image = UIImage(systemName: "circle.fill")?.withTintColor(tint, renderingMode: .alwaysOriginal)

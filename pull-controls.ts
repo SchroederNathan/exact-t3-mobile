@@ -56,7 +56,7 @@ export function pullFacets(items: {author:string;row:{allLabels:{name:string;col
       const me = options.findIndex(option=>option.id.toLowerCase()==="me");
       options.splice(1,0,me < 0 ? {id:"me",title:"Me",color:"",selected:false} : options.splice(me,1)[0]!);
     }
-    return {options,menu:JSON.stringify(options)};
+    return {options,menu:JSON.stringify([{id:"search",title:`Search ${field}…`,color:"",selected:false},...options.map(option=>({...option,id:`value:${option.id}`}))])};
   };
   return {labels:build("labels",labels,items.flatMap(item=>item.row.allLabels.map(label=>({title:label.name,color:label.color})))),authors:build("authors",author?[author]:[],items.map(item=>({title:item.author,color:""})))};
 }

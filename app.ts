@@ -3,6 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullRow } from "./pull-row";
+import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
 import { ChangedFilePages } from "./pull-files";
@@ -598,6 +599,17 @@ const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 const sources: Sources = {
   pullControlMenu: ([state,involvement,draft,review,checks,sort,projects,environments,scope,project,count]) => pullControlMenu(state,involvement,draft,review,checks,sort,projects,environments,scope,project,count),
   pullFacets: ([items,labels,author]) => pullFacets(items,labels,author),
+  facetSearchRows: ([selected,loaded,hosted,query]) => facetSearchRows(selected,loaded,hosted,query),
+  loadFacetOptions: async ([ids,kind,query,project],store,_storage,native) => {
+    const scope = project ? threadIdentity(project) : null;
+    const replies = await Promise.all(ids.filter(id=>!scope || id===scope.environmentId).map(async id=>{
+      try {
+        const page = await readPullRequestData(id,store,native,session=>session.pullFilterOptions(kind,query,scope?.threadId));
+        return {rows:hostFacetChoices(kind,page),failed:false};
+      } catch { return {rows:[],failed:true}; }
+    }));
+    return {kind,query,rows:replies.flatMap(reply=>reply.rows),failed:replies.some(reply=>reply.failed)};
+  },
   orderPulls: ([items,sort]) => orderPulls(items,sort),
   decodePairingScan: ([value, route]) => {
     try {

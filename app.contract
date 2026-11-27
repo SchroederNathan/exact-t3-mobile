@@ -53,6 +53,7 @@ routes nav
       draftEnvironment "/threads/:id/environment"
       draftBranch "/threads/:id/branch"
   tab pullRequests "/pulls"
+    pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
   tab usage "/usage"
   tab settings "/settings"
@@ -391,6 +392,12 @@ shape PullFacets
   labels: PullFacet
   authors: PullFacet
 
+shape HostedFacets
+  kind: string
+  query: string
+  rows: PullFacetOption[]
+  failed: bool
+
 shape PullControlMenu
   count: number
   reset: bool
@@ -718,7 +725,7 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = ""
-  derive pullWorkspace = current.name == "pullRequests" or current.name == "pullRequest"
+  derive pullWorkspace = current.name == "pullRequests" or current.name == "pullRequest" or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
   resource pullLink = parsePullLink(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRef[] else empty()
   derive pullLinkEnvironment = match first(pullLink) { case some(ref) => ref.environmentId, case none => "" }
@@ -771,6 +778,47 @@ component T3Code
   derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
   resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject, pullLabels, pullAuthor) as shape PullRequests else empty()
   resource facets = pullFacets(pullRequests.items, pullLabels, pullAuthor) as shape PullFacets else empty()
+  state facetDraft = ""
+  state facetSent = ""
+  state facetSuggestions: PullFacetOption[] = []
+  derive facetKind = current.name == "pullFilterSearch" and ["labels", "authors"].includes(current.params.kind) ? current.params.kind : ""
+  derive facetTyped = facetDraft.trim().slice(0, 100)
+  task debounceFacet when facetKind != "" and facetTyped != facetSent key=facetTyped
+    after(250, applyFacetQuery)
+  resource hostedFacets = loadFacetOptions(facetKind != "" ? connectedPullTargets : [], facetKind, facetSent, scopedPullProject) as shape HostedFacets else empty()
+  derive facetSelected = facetKind == "labels" ? pullLabels : (pullAuthor != "" ? [pullAuthor] : [])
+  derive facetSettled = facetTyped == facetSent and hostedFacets.query == facetSent and hostedFacets.kind == facetKind and not pending(hostedFacets)
+  resource facetRows = facetSearchRows(facetSelected, facetSuggestions, facetSettled ? hostedFacets.rows : [], facetTyped) as shape PullFacetOption[] else empty()
+  action editFacetQuery(value: string)
+    facetDraft = value
+  action applyFacetQuery
+    facetSent = facetTyped
+  action openFacetPicker(kind: string)
+    facetDraft = ""
+    facetSent = ""
+    facetSuggestions = (kind == "labels" ? facets.labels.options : facets.authors.options).filter(option => option.id != "")
+    nav = push(nav, path("pullFilterSearch", kind))
+  action chooseFacetRow(value: string)
+    if facetKind == "labels"
+      let held = pullLabels.filter(label => label.toLowerCase() == value.toLowerCase())
+      if held.length > 0
+        pullLabels = pullLabels.filter(label => label.toLowerCase() != value.toLowerCase())
+      else if pullLabels.length < 10
+        pullLabels = pullLabels.concat([value])
+    else if facetKind == "authors"
+      pullAuthor = pullAuthor.toLowerCase() == value.toLowerCase() ? "" : value
+      nav = back(nav)
+    pullPageIndex = 0
+  action labelMenuAction(id: string)
+    if id == "search"
+      openFacetPicker("labels")
+    else if id.startsWith("value:")
+      pickPullLabel(id.slice(6))
+  action authorMenuAction(id: string)
+    if id == "search"
+      openFacetPicker("authors")
+    else if id.startsWith("value:")
+      pickPullAuthor(id.slice(6))
   action pickPullLabel(id: string)
     if id == ""
       pullLabels = []
@@ -816,7 +864,7 @@ component T3Code
       pullAuthor = ""
       pullProject = ""
       pullPageIndex = 0
-  task resetHiddenPullPages when current.name != "pullRequests" and current.name != "pullRequest" key=current.name
+  task resetHiddenPullPages when not pullWorkspace key=current.name
     change(resetPullPages)
   derive matchingPulls = pullRequests.items.filter(item => current.name == "pullRequest" and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
   derive listedRefs = matchingPulls.map(item => PullRef(environmentId=item.environmentId, projectId=item.projectId, host=item.host, repository=item.repository, number=item.number, routeKey=item.routeKey))
@@ -2802,8 +2850,8 @@ component T3Code
                             image "symbol:sf/chevron.down" width=11 height=11
                       PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
                       PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
-                      PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=pickPullLabel)
-                      PullFacetChip(field="authors", title=(pullAuthor == "me" ? "By you" : pullAuthor != "" ? pullAuthor : "Author"), label="Filter by author", active=(pullAuthor != ""), facet=facets.authors, native=(device.kind != "web" and device.kind != ""), choose=pickPullAuthor)
+                      PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=labelMenuAction)
+                      PullFacetChip(field="authors", title=(pullAuthor == "me" ? "By you" : pullAuthor != "" ? pullAuthor : "Author"), label="Filter by author", active=(pullAuthor != ""), facet=facets.authors, native=(device.kind != "web" and device.kind != ""), choose=authorMenuAction)
                   if pullRequests.items.length == 0
                     scroll id="pulls" flex=1 min-height=0 background-color="screen"
                       if pending(pullRequests) or not environmentState.loaded or pending(catalog)
@@ -2859,6 +2907,31 @@ component T3Code
                                     text pull.row.deletedText font-size=12 line-height="16px" font-weight=500 font-variant-numeric="tabular-nums" color="danger"
                       if pullRequests.hasMore
                         PullPageFooter(error=pullRequests.moreError, busy=pending(pullRequests), load=morePulls)
+              if e.name == "pullFilterSearch"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="pr-facet-results" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label=(facetKind == "labels" ? "Close label filter" : "Close author filter") testId="pr-facet-close"
+                      image "symbol:close"
+                    text (facetKind == "labels" ? "Filter by label" : facetKind == "authors" ? "Filter by author" : "Unknown filter") role="heading" aria-level=2
+                    input type="search" value=facetDraft input=editFacetQuery placeholder=(facetKind == "labels" ? "Search labels" : "Search authors") aria-label=(facetKind == "labels" ? "Search labels" : "Search authors") testId="pr-facet-query"
+                  scroll id="pr-facet-results" flex=1 min-height=0 padding="16px 16px calc(env(safe-area-inset-bottom) + 64px)"
+                    if facetRows.length > 0
+                      column border-radius=14 overflow="hidden" background-color="card"
+                        for option, index in facetRows key=option.id
+                          button role=(facetKind == "labels" ? "checkbox" : "radio") aria-checked=option.selected aria-label=option.title press=chooseFacetRow(option.id) appearance="none" display="flex" align-items="center" gap=10 min-height=44 padding="10px 14px" text-align="left" testId=`pr-facet-result-${option.id}`
+                            if facetKind == "labels"
+                              box width=10 height=10 border-radius=5 background-color=(option.color == "" ? "muted" : option.color) flex-shrink=0
+                            text option.title flex=1 min-width=0 font="-exact-body"
+                            if option.selected
+                              image "symbol:select" width=16 height=16
+                          if index + 1 < facetRows.length
+                            view height=1 margin-left=14 background-color="edge"
+                    else if facetKind != "" and not facetSettled
+                      progress aria-label="Searching" testId="pr-facet-loading"
+                    else
+                      column align-items="center" gap=7 padding="36px 16px"
+                        text (hostedFacets.failed ? "Couldn't search the host" : facetKind == "labels" ? "No matching labels" : "No matching authors") font="-exact-headline" testId="pr-facet-empty"
+                        text (hostedFacets.failed ? "The host didn't answer. Try again in a moment." : facetKind == "labels" ? "Search the labels of the repositories this list covers." : "Search the authors of the repositories this list covers.") font="-exact-footnote" color="muted" text-align="center"
               if e.name == "pullRequest"
                 column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -3105,8 +3178,8 @@ component T3Code
             text "Reset filters"
         PullFilterMenu(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", choose=filterPullState)
         PullFilterMenu(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", choose=filterPullInvolvement)
-        PullFacetMenu(field="labels", label="Filter by label", facet=facets.labels, choose=pickPullLabel)
-        PullFacetMenu(field="authors", label="Filter by author", facet=facets.authors, choose=pickPullAuthor)
+        PullFacetMenu(field="labels", label="Filter by label", facet=facets.labels, choose=labelMenuAction)
+        PullFacetMenu(field="authors", label="Filter by author", facet=facets.authors, choose=authorMenuAction)
         column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
           button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
             text "All projects"
@@ -3532,8 +3605,11 @@ component PullFacetMenu
     choose: action
   view
     column id=`pull-facet-${field}` popover="auto" role="menu" aria-label=label max-height="70dvh" overflow-y="auto"
+      button role="menuitem" press=choose("search") popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-search-${field}`
+        image "symbol:search"
+        text `Search ${field}…`
       for option in facet.options key=option.id
-        button role=(field == "labels" ? "menuitemcheckbox" : "menuitemradio") aria-checked=option.selected press=choose(option.id) popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-${field}-${option.id}`
+        button role=(field == "labels" ? "menuitemcheckbox" : "menuitemradio") aria-checked=option.selected press=choose(`value:${option.id}`) popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-${field}-${option.id}`
           if option.color != ""
             box width=10 height=10 border-radius=5 background-color=option.color flex-shrink=0
           text option.title

@@ -1317,6 +1317,12 @@ export class DirectSession {
     });
   }
 
+  async pullFilterOptions(kind:string, query:string, projectId?:string): Promise<ObjectValue> {
+    if (kind !== "labels" && kind !== "authors") throw new Error("Unknown pull request option kind.");
+    const text = query.trim().slice(0,100);
+    return this.query("pullRequests.filterOptions",{kind,...(text ? {query:text} : {}),...(projectId ? {projectId} : {})});
+  }
+
   async pullRequestActivity(
     projectId: string,
     repository: string,
