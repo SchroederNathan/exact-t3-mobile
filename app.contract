@@ -2749,7 +2749,7 @@ component T3Code
                     row gap=8 align-items="center" padding="2px 16px 10px"
                       if device.kind == "web" or device.kind == ""
                         button popovertarget="pull-controls-menu" aria-haspopup="menu" aria-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") appearance="none" display="flex" align-items="center" gap=5.25 padding="5.25px 10.5px" min-height=28 border-radius=16 backgroundMaterial="glass" color=(pullControls.count > 0 ? "white" : "muted") background-color=(pullControls.count > 0 ? "AccentColor" : "transparent") testId="pull-filter-more"
-                          image "symbol:filter" width=14 height=14
+                          image "symbol:filter" width=15 height=15 flex-shrink=0
                           text (pullControls.count > 0 ? `${pullControls.count}` : "Filters") font-size="0.875rem" font-weight=500
                       else
                         workspace-filter-menu chip-label=(pullControls.count > 0 ? `${pullControls.count}` : "Filters") grouped-options=pullControls.menu active=(pullControls.count > 0 ? "true" : "false") accessibility-label=(pullControls.count > 0 ? `Filters, ${pullControls.count} active` : "More filters") test-id="pull-filter-more" testId="pull-filter-more" message=choosePullControl flex-shrink=0

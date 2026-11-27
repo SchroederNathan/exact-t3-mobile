@@ -45,7 +45,9 @@ private final class WorkspaceFilterMenuButton: UIButton {
   var onSize: ((CGSize) -> Void)?
   private let glass = UIVisualEffectView()
   private let label = UILabel()
-  private let chevron = UIImageView(image: UIImage(systemName: "chevron.down"))
+  private let glyph = UIImageView()
+  private var leadingFilter = false
+  private var glyphSize: CGFloat { leadingFilter ? 15 : 11 }
   private var options: [WorkspaceFilterOption] = []
   private var selectedID = ""
   private var menuTitle = ""
@@ -67,10 +69,9 @@ private final class WorkspaceFilterMenuButton: UIButton {
     label.lineBreakMode = .byTruncatingTail
     label.isUserInteractionEnabled = false
     glass.contentView.addSubview(label)
-    chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11)
-    chevron.contentMode = .scaleAspectFit
-    chevron.isUserInteractionEnabled = false
-    glass.contentView.addSubview(chevron)
+    glyph.contentMode = .scaleAspectFit
+    glyph.isUserInteractionEnabled = false
+    glass.contentView.addSubview(glyph)
     registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: WorkspaceFilterMenuButton, _: UITraitCollection) in
       view.updateTypography()
     }
@@ -87,6 +88,10 @@ private final class WorkspaceFilterMenuButton: UIButton {
     let nextSelectedID = props["selected-id"] ?? ""
     let nextMenuTitle = props["menu-title"] ?? ""
     let nextGrouped = props["grouped-options"]
+    if glyph.image == nil || leadingFilter != (nextGrouped != nil) {
+      leadingFilter = nextGrouped != nil
+      glyph.image = UIImage(systemName: leadingFilter ? "line.3.horizontal.decrease" : "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: glyphSize))
+    }
     if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil || groupedOptions != nextGrouped {
       options = nextOptions
       selectedID = nextSelectedID
@@ -137,7 +142,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
 
   private func updateSize() {
     let textSize = label.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
-    let size = CGSize(width: min(180, ceil(textSize.width)) + 21 + 5.25 + 11,
+    let size = CGSize(width: min(180, ceil(textSize.width)) + 21 + 5.25 + glyphSize,
                       height: max(28, max(lineHeight, textSize.height) + 10.5))
     if size != measuredSize {
       measuredSize = size
@@ -158,7 +163,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
       ? UIColor(white: 131 / 255, alpha: 1)
       : UIColor(red: 111 / 255, green: 111 / 255, blue: 121 / 255, alpha: 1)
     label.textColor = foreground
-    chevron.tintColor = foreground
+    glyph.tintColor = foreground
     if #available(iOS 26.0, *) {
       let effect = UIGlassEffect(style: .regular)
       effect.isInteractive = true
@@ -174,9 +179,10 @@ private final class WorkspaceFilterMenuButton: UIButton {
   override func layoutSubviews() {
     super.layoutSubviews()
     glass.frame = bounds
-    let textWidth = max(0, min(180, bounds.width - 21 - 5.25 - 11))
-    label.frame = CGRect(x: 10.5, y: 5.25, width: textWidth, height: max(0, bounds.height - 10.5))
-    chevron.frame = CGRect(x: label.frame.maxX + 5.25, y: (bounds.height - 11) / 2, width: 11, height: 11)
+    let textWidth = max(0, min(180, bounds.width - 21 - 5.25 - glyphSize))
+    let glyphOnLeft = leadingFilter != (effectiveUserInterfaceLayoutDirection == .rightToLeft)
+    label.frame = CGRect(x: 10.5 + (glyphOnLeft ? glyphSize + 5.25 : 0), y: 5.25, width: textWidth, height: max(0, bounds.height - 10.5))
+    glyph.frame = CGRect(x: glyphOnLeft ? 10.5 : label.frame.maxX + 5.25, y: (bounds.height - glyphSize) / 2, width: glyphSize, height: glyphSize)
   }
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
