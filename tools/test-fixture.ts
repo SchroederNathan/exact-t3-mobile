@@ -18,6 +18,7 @@ const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
 const composerMode = process.argv.includes("--composer");
 const usageMode = process.argv.includes("--usage");
+const pullsMode = process.argv.includes("--pulls");
 const threadTimeMode = process.argv.includes("--thread-time");
 const threadSearchMode = process.argv.includes("--thread-search");
 const thirdEnvironment = process.argv.includes("--third-environment");
@@ -33,6 +34,7 @@ for (let index = 2; index < process.argv.length; index++) {
       "--controls",
       "--composer",
       "--usage",
+      "--pulls",
       "--thread-time",
       "--thread-search",
       "--attachments",
@@ -213,6 +215,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       })
     : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
+  const pullReads: string[] = [];
   const serverConfig = () => ({
     settings: { favorites: modelFavorites, ...(threadTimeMode ? { snoozePresets: [{kind:"after", minutes:90}, {kind:"at", day:"tomorrow", time:"09:00"}] } : {}) },
     environment: {
@@ -316,6 +319,10 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (pullsMode && path.startsWith("/assert/pulls/")) {
+          const expected = path.slice("/assert/pulls/".length);
+          return json({reads: pullReads}, (pullReads.slice().sort().join(",") || "none") === expected ? 200 : 409);
+        }
         if (threadTimeMode && (path === "/clock/start" || path === "/clock/check")) {
           const socket = readySocket(sockets);
           if (!socket || sockets.size !== 1) return refused("Expected one connected clock fixture");
@@ -447,6 +454,14 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
+        } else if (pullsMode && frame.tag.startsWith("pullRequests.")) {
+          const method = frame.tag.slice("pullRequests.".length);
+          pullReads.push(method);
+          const repository = `${id}/client`;
+          if (method !== "list" && (frame.payload.projectId !== "shared" || frame.payload.repository !== repository || frame.payload.number !== 9 || !["first.test", "second.test"].includes(frame.payload.host))) throw new Error("Incorrect pull request coordinates");
+          const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: `${id} ${host} change`, headBranch: "fix", baseBranch: "main", additions: 18, updatedAt: timestamp}));
+          const value = method === "list" ? {entries, errors: secondary ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body: "Fixture review", kind: "comment"}], commits: []} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value } }));
         } else if (frame.tag === "server.getUsageSummary" && usageMode) {
           const count = frame.payload.resolution === "hour" ? 2 : 10;
           const periods = [
@@ -635,7 +650,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, threadSearchMode ? "thread-search.test.contract" : threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, pullsMode ? "pull-requests.test.contract" : threadSearchMode ? "thread-search.test.contract" : threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

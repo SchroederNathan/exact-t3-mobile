@@ -347,6 +347,9 @@ shape GitActionReply
   result: GitActionResult
 
 shape PullRequest
+  routeKey: string
+  environmentId: string
+  host: string
   number: number
   title: string
   url: string
@@ -658,9 +661,10 @@ component T3Code
   resource gitStatus = loadGitStatus(activeThreadId != "" ? activeThreadId : activeDraftKey, gitStatusRevision, newTask.environmentId, newTask.cwd) as shape GitStatus else empty()
   resource gitRefs = loadGitRefs(activeThreadId) as shape GitRefs else empty()
   resource gitOperation = loadGitOperation(activeThreadId) as shape GitOperation else empty()
-  resource pullRequests = loadPullRequests() as shape PullRequests else empty()
-  resource pullRequestDetail = loadPullRequestDetail(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestDetail else empty()
-  resource pullRequestActivity = loadPullRequestActivity(current.name == "pullRequest" ? current.params.project : "", current.name == "pullRequest" ? current.params.number : "") as shape PullRequestActivity else empty()
+  resource pullRequests = loadPullRequests(current.name == "pullRequests" or current.name == "pullRequest" ? catalog.environments.filter(env => env.enabled and env.status == "Connected").map(env => env.id) : []) as shape PullRequests else empty()
+  derive matchingPulls = pullRequests.items.filter(item => current.name == "pullRequest" and (item.routeKey == current.params.project or item.projectId == current.params.project) and `${item.number}` == current.params.number)
+  resource pullRequestDetail = loadPullRequestDetail(matchingPulls) as shape PullRequestDetail else empty()
+  resource pullRequestActivity = loadPullRequestActivity(matchingPulls) as shape PullRequestActivity else empty()
   resource terminalAccess = loadTerminalAccess(activeThreadId) as shape TerminalAccess else empty()
   resource terminalMenu = loadTerminalMenu(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalMenu else empty()
   resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
@@ -960,7 +964,7 @@ component T3Code
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
-  derive selectedPullRequest = match first(pullRequests.items.filter(item => item.projectId == current.params.project and `${item.number}` == current.params.number)) { case some(item) => some(item), case none => none }
+  derive selectedPullRequest = first(matchingPulls.filter(item => matchingPulls.length == 1))
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
   derive split = device.split
@@ -2577,35 +2581,33 @@ component T3Code
                     button press=confirmGitAction(true) disabled=gitBusy appearance="none" padding=12 testId="git-confirm-branch"
                       text (gitConfirmIncludesCommit ? "Feature branch & commit" : "Feature branch & continue")
               if e.name == "pullRequests"
-                column navigationKey=`${e.id}` navigationScroll="pulls" data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationScroll=(pullRequests.items.length == 0 ? "pulls" : "pulls-list") data-workspace-header="brand" data-brand-stage="DEV" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
                     text "Pull Requests" role="heading" aria-level=2
-                  list id="pulls" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
-                    if pending(pullRequests)
+                  if pullRequests.items.length == 0
+                    scroll id="pulls" flex=1 min-height=0 background-color="screen"
+                      if pending(pullRequests) or not environmentState.loaded or pending(catalog)
+                        column align-items="center" padding="48px 0"
+                          progress width=18 height=18 aria-label="Loading pull requests" testId="pulls-loading"
+                      else
+                        column align-items="center" padding="80px 64px" gap=8
+                          text (pullRequests.error != "" ? "Couldn't load pull requests" : catalog.environments.length == 0 ? "Connect an environment" : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Environment offline" : "No matching pull requests") role="heading" aria-level=3 font-size=20 font-weight=700 text-align="center" testId="pulls-empty"
+                          text (pullRequests.error != "" ? pullRequests.error : catalog.environments.length == 0 ? "Add an environment in Settings to browse its pull requests." : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Reconnect to load pull requests that aren't saved on this device." : "Pull requests from the selected environments' projects appear here.") font-size=16 line-height=24 text-align="center" color="muted" testId="pulls-empty-detail"
+                  else
+                    list id="pulls-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                      if pullRequests.error != ""
+                        section
+                          row
+                            text pullRequests.error color="muted" testId="pulls-error"
                       section
-                        row
-                          progress width=18 height=18
-                          text "Loading pull requests…" font="-exact-body" testId="pulls-loading"
-                    else if pullRequests.error != ""
-                      section
-                        row
-                          text pullRequests.error color="danger" testId="pulls-error"
-                    else if pullRequests.items.length == 0
-                      section
-                        row
-                          text "No pull requests yet" font="-exact-body" testId="pulls-empty"
-                        footer
-                          text "Pull requests linked to your threads will appear here." font="-exact-footnote" color="-exact-secondary-label"
-                    else
-                      section
-                        for pull in pullRequests.items key=`${pull.projectId}:${pull.number}`
-                          row press=openPullRequest(pull.projectId, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.projectId}-${pull.number}`
+                        for pull in pullRequests.items key=`${pull.routeKey}:${pull.number}`
+                          row press=openPullRequest(pull.routeKey, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.environmentId}-${pull.host}-${pull.repository}-${pull.projectId}-${pull.number}`
                             column flex=1 min-width=0 gap=3
                               text `#${pull.number} ${pull.title}` font="-exact-body" line-clamp=2
                               text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                               text (pull.author != "" ? `by ${pull.author}` : "") font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
                             text pull.state font="-exact-footnote" color=(pull.state == "open" ? "status-working" : "muted")
-                            text "View" color="foreground" testId=`pull-open-${pull.projectId}-${pull.number}`
+                            text "View" color="foreground" testId=`pull-open-${pull.routeKey}-${pull.number}`
               if e.name == "pullRequest"
                 column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header
@@ -2617,7 +2619,9 @@ component T3Code
                       row align-items="center" gap=8
                         progress width=16 height=16
                         text "Loading pull requests…" color="muted" testId="pull-request-list-loading"
-                    else if pullRequests.error != ""
+                    else if matchingPulls.length > 1
+                      text "This link matches more than one pull request. Choose one from Pull Requests." color="muted" testId="pull-request-ambiguous"
+                    else if pullRequests.error != "" and matchingPulls.length == 0
                       text pullRequests.error color="danger" testId="pull-request-list-error"
                     else
                       match selectedPullRequest
@@ -2634,7 +2638,7 @@ component T3Code
                               text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
                             else
                               text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
-                              text `${pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles} changed file${(pullRequestDetail.changedFiles > 0 ? pullRequestDetail.changedFiles : pull.changedFiles) == 1 ? "" : "s"} · +${pullRequestDetail.additions > 0 ? pullRequestDetail.additions : pull.additions} −${pullRequestDetail.deletions > 0 ? pullRequestDetail.deletions : pull.deletions}` color="muted"
+                              text `${pullRequestDetail.changedFiles} changed file${pullRequestDetail.changedFiles == 1 ? "" : "s"} · +${pullRequestDetail.additions} −${pullRequestDetail.deletions}` color="muted" testId="pull-request-change-counts"
                               text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
                               if pullRequestDetail.body != ""
                                 text pullRequestDetail.body line-clamp=12 padding-top=6

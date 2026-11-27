@@ -554,6 +554,27 @@ const addProject = addProjectSources({
   },
 });
 
+function pullRouteKey(environmentId: string, projectId: string, host: string, repository: string) {
+  return `pr-${Array.from(new TextEncoder().encode(JSON.stringify([environmentId, projectId, host, repository])), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession) => Promise<T>): Promise<T> {
+  const session = sessionFor(id);
+  const key = session.controlAccessKey();
+  const token = credentials(store)[id];
+  const assertCurrent = () => {
+    if (!key || !token || key !== session.controlAccessKey() || session !== sessionFor(id) || token !== credentials(store)[id])
+      throw new Error("The environment connection changed. Reopen pull requests.");
+  };
+  assertCurrent();
+  const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+  assertCurrent();
+  if (!sessionScope(auth, "orchestration:read")) throw new Error("This connection cannot read pull requests.");
+  const result = await awaitReply(read(session), native);
+  assertCurrent();
+  return result;
+}
+
 const sources: Sources = {
   decodePairingScan: ([value, route]) => {
     try {
@@ -1698,19 +1719,15 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async (_args, _store, _storage, native) => {
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    if (!sessions.length) return { ready: true, error: "", items: [] };
-    const responses = await Promise.allSettled(
-      sessions.map((session) => session.listPullRequests()),
-    );
-    const items = responses.flatMap((response) =>
-      response.status === "fulfilled"
-        ? (Array.isArray(response.value.entries) ? response.value.entries : []).map((entry: unknown) => {
+  loadPullRequests: async ([ids], store, _storage, native) => {
+    const responses = await Promise.all(ids.map(async environmentId => {
+      try {
+        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests());
+        const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
             const summary = pullRequestSummary(raw);
-            return {
+            if (!summary.repository || !string(raw.projectId) || summary.number < 1) return [];
+            return [{ environmentId, host: string(raw.host), routeKey: pullRouteKey(environmentId, string(raw.projectId), string(raw.host), summary.repository),
               number: summary.number,
               title: summary.title,
               url: summary.url,
@@ -1726,130 +1743,88 @@ const sources: Sources = {
               additions: Number(raw.additions ?? raw.addedLines ?? 0),
               deletions: Number(raw.deletions ?? raw.deletedLines ?? 0),
               changedFiles: Number(raw.changedFiles ?? raw.changedFileCount ?? 0),
-            };
-          })
-        : [],
-    );
-    const failures = responses
-      .filter((response): response is PromiseRejectedResult => response.status === "rejected")
-      .map((response) => (response.reason instanceof Error ? response.reason.message : "Pull requests could not be loaded."));
-    return { ready: true, error: failures.join("\n"), items };
+            }];
+        });
+        const errors = (Array.isArray(page.errors) ? page.errors : []).map((failure: unknown) => {
+          const raw = object(failure);
+          return [string(raw.projectTitle), string(raw.message) || "Pull requests could not be loaded."].filter(Boolean).join(": ");
+        });
+        return {items, errors};
+      } catch (error) {
+        return {items: [], errors: [error instanceof Error ? error.message : "Pull requests could not be loaded."]};
+      }
+    }));
+    const items = responses.flatMap(result => result.items).sort((left, right) =>
+      (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0) || left.routeKey.localeCompare(right.routeKey) || right.number - left.number);
+    return {ready: true, error: responses.flatMap(result => result.errors).join("\n"), items};
   },
-  loadPullRequestDetail: async ([projectId, numberText], _store, _storage, native) => {
+  loadPullRequestDetail: async ([matches], store, _storage, native) => {
     const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "" };
-    if (!projectId || !numberText) return empty;
-    const number = Number(numberText);
-    if (!Number.isSafeInteger(number) || number < 1) return { ...empty, error: "This pull request number is invalid." };
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    for (const session of sessions) {
-      try {
-        const listed = await session.listPullRequests();
-        const entries = Array.isArray(listed.entries) ? listed.entries : [];
-        const entry = entries.find((candidate: unknown) => {
-          const raw = object(candidate);
-          return string(raw.projectId) === projectId && Number(raw.number) === number;
-        });
-        if (!entry) continue;
-        const raw = object(entry);
-        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
-        if (!repository) continue;
-        const detail = await awaitReply(session.pullRequestDetail(projectId, repository, number), native);
-        const value = object(detail);
-        const authorValue = object(value.author);
-        const checks = object(value.checks);
-        return {
-          ready: true,
-          error: "",
-          body: string(value.body) || string(value.description),
-          author: string(authorValue.login) || string(authorValue.name) || string(value.author),
-          additions: Number(value.additions ?? raw.additions ?? 0),
-          deletions: Number(value.deletions ?? raw.deletions ?? 0),
-          changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
-          checksState: string(value.checksState) || string(checks.state),
-        };
-      } catch (error) {
-        return { ...empty, error: error instanceof Error ? error.message : "Pull request details could not be loaded." };
-      }
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      const value = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestDetail(row.projectId, row.repository, row.number, row.host));
+      const authorValue = object(value.author);
+      const checks = object(value.checks);
+      return {
+        ready: true,
+        error: "",
+        body: string(value.body) || string(value.description),
+        author: string(authorValue.login) || string(authorValue.name) || string(value.author),
+        additions: Number(value.additions ?? row.additions ?? 0),
+        deletions: Number(value.deletions ?? row.deletions ?? 0),
+        changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
+        checksState: string(value.checksState) || string(checks.state),
+      };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Pull request detail could not be loaded." };
     }
-    return { ...empty, error: "Pull request details are unavailable." };
   },
-  loadPullRequestActivity: async ([projectId, numberText], _store, _storage, native) => {
-    const empty = {
-      ready: true,
-      error: "",
-      comments: [],
-      commits: [],
-      commentCount: 0,
-      commentsTruncated: false,
-    };
-    if (!projectId || !numberText) return empty;
-    const number = Number(numberText);
-    if (!Number.isSafeInteger(number) || number < 1)
-      return { ...empty, error: "This pull request number is invalid." };
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    for (const session of sessions) {
-      try {
-        const listed = await session.listPullRequests();
-        const entries = Array.isArray(listed.entries) ? listed.entries : [];
-        const entry = entries.find((candidate: unknown) => {
-          const raw = object(candidate);
-          return string(raw.projectId) === projectId && Number(raw.number) === number;
-        });
-        if (!entry) continue;
-        const raw = object(entry);
-        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
-        if (!repository) continue;
-        const activity = object(
-          await awaitReply(session.pullRequestActivity(projectId, repository, number), native),
-        );
-        const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
-          (candidate: unknown) => {
-            const value = object(candidate);
-            const author = object(value.author);
-            return {
-              id: string(value.id),
-              author: string(author.login) || string(author.name) || string(value.author),
-              body: string(value.body),
-              createdAt: string(value.createdAt),
-              kind: string(value.kind),
-              path: string(value.path),
-              reviewState: string(value.reviewState),
-            };
-          },
-        );
-        const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
-          (candidate: unknown) => {
-            const value = object(candidate);
-            const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
-            return {
-              id: string(value.oid) || string(value.id),
-              subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
-              author: string(author.login) || string(author.name),
-              createdAt: string(value.committedDate) || string(value.createdAt),
-            };
-          },
-        );
-        return {
-          ready: true,
-          error: "",
-          comments,
-          commits,
-          commentCount: Number(activity.commentCount ?? comments.length),
-          commentsTruncated: activity.commentsTruncated === true,
-        };
-      } catch (error) {
-        return {
-          ...empty,
-          error: error instanceof Error ? error.message : "Pull request activity could not be loaded.",
-        };
-      }
+  loadPullRequestActivity: async ([matches], store, _storage, native) => {
+    const empty = { ready: true, error: "", comments: [], commits: [], commentCount: 0, commentsTruncated: false };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      const activity = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestActivity(row.projectId, row.repository, row.number, row.host));
+      const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
+        (candidate: unknown) => {
+          const value = object(candidate);
+          const author = object(value.author);
+          return {
+            id: string(value.id),
+            author: string(author.login) || string(author.name) || string(value.author),
+            body: string(value.body),
+            createdAt: string(value.createdAt),
+            kind: string(value.kind),
+            path: string(value.path),
+            reviewState: string(value.reviewState),
+          };
+        },
+      );
+      const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
+        (candidate: unknown) => {
+          const value = object(candidate);
+          const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
+          return {
+            id: string(value.oid) || string(value.id),
+            subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
+            author: string(author.login) || string(author.name),
+            createdAt: string(value.committedDate) || string(value.createdAt),
+          };
+        },
+      );
+      return {
+        ready: true,
+        error: "",
+        comments,
+        commits,
+        commentCount: Number(activity.commentCount ?? comments.length),
+        commentsTruncated: activity.commentsTruncated === true,
+      };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Pull request activity could not be loaded." };
     }
-    return { ...empty, error: "Pull request activity is unavailable." };
   },
-
-
   loadTerminalAccess: async ([threadId], store) => {
     if (!threadId) return { canRead: false, canOperate: false, error: "" };
     try {

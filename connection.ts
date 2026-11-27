@@ -1295,8 +1295,9 @@ export class DirectSession {
     return this.query("pullRequests.list", { state: "open", involvement: "all", limit: 100 });
   }
 
-  async pullRequestDetail(projectId: string, repository: string, number: number): Promise<ObjectValue> {
+  async pullRequestDetail(projectId: string, repository: string, number: number, host?: string): Promise<ObjectValue> {
     return this.query("pullRequests.detail", {
+      ...(host ? { host } : {}),
       projectId,
       repository,
       number,
@@ -1308,8 +1309,10 @@ export class DirectSession {
     projectId: string,
     repository: string,
     number: number,
+    host?: string,
   ): Promise<ObjectValue> {
     return this.query("pullRequests.activity", {
+      ...(host ? { host } : {}),
       projectId,
       repository,
       number,

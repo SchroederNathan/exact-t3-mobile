@@ -1,0 +1,40 @@
+test "PRs load on demand and resolve duplicate repository and PR numbers on the selected source control host" on web
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/settings"
+  tap "environments-button"
+  clock settle
+  tap "environment-add-environments"
+  clock settle
+  type "address" "http://127.0.0.2:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/pulls/none"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  type "root" "/pulls"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect text "pulls-error" == "Unavailable project: Offline"
+  tap "pull-fixture-second.test-fixture/client-shared-9"
+  clock data
+  clock settle
+  expect tree has "pull-request-comment-fixture-second.test"
+  expect text "pull-request-change-counts" == "0 changed files · +0 −0"
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,list"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  tap "pull-request-back"
+  clock settle
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  type "root" "/pulls/shared/9"
+  clock data
+  clock settle
+  expect tree has "pull-request-ambiguous"
