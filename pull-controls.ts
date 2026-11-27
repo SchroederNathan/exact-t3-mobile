@@ -23,11 +23,11 @@ export function pullProjectOptions(projects: MenuProject[], environments: {id:st
   return rows.sort((left,right)=>left.title.localeCompare(right.title)).map(row=>({id:`project:${row.id}`,title:row.title,selected:row.id===selected}));
 }
 
-export function pullControlMenu(state: string, involvement: string, draft: string, review: string, checks: string, sort: string, projects: MenuProject[] = [], environments: {id:string; label:string}[] = [], scope = "", project = "") {
+export function pullControlMenu(state: string, involvement: string, draft: string, review: string, checks: string, sort: string, projects: MenuProject[] = [], environments: {id:string; label:string}[] = [], scope = "", project = "", facetCount = 0) {
   const selected = {draft, review, checks, sort};
   const projectOptions = pullProjectOptions(projects,environments,scope,project);
   const chosenProject = projectOptions.find(option=>option.selected);
-  const count = [state !== "open", involvement !== "all", draft !== "all", review !== "all", checks !== "all", chosenProject].filter(Boolean).length;
+  const count = facetCount + [state !== "open", involvement !== "all", draft !== "all", review !== "all", checks !== "all", chosenProject].filter(Boolean).length;
   const groups: {id:string;title:string;options:{id:string; title:string; selected:boolean}[]}[] = (Object.keys(choices) as (keyof typeof choices)[]).map(field => {
     const options = Object.entries(choices[field]).map(([value,title]) => ({id:`${field}:${value}`,title,selected:selected[field] === value}));
     const chosen = options.find(option => option.selected)?.title ?? "";
@@ -42,4 +42,21 @@ export function pullControlMenu(state: string, involvement: string, draft: strin
 export function orderPulls<T extends {updatedAt:string; createdAt:string}>(items: T[], sort: string) {
   if (sort === "updated") return items;
   return [...items].sort((left,right) => sort === "created" ? (right.createdAt || right.updatedAt).localeCompare(left.createdAt || left.updatedAt) : left.updatedAt.localeCompare(right.updatedAt));
+}
+
+export function pullFacets(items: {author:string;row:{allLabels:{name:string;color:string}[]}}[], labels:string[], author:string) {
+  const build = (field:string, selected:string[], suggestions:{title:string;color:string}[]) => {
+    const colors = new Map(suggestions.filter(entry=>entry.color).map(entry=>[entry.title.toLowerCase(),entry.color]));
+    const values = new Map<string,string>();
+    for (const name of [...selected,...suggestions.map(entry=>entry.title).sort((left,right)=>left.localeCompare(right))]) {
+      if (name && !values.has(name.toLowerCase()) && values.size < 60) values.set(name.toLowerCase(),name);
+    }
+    const options = [{id:"",title:`All ${field}`,color:"",selected:!selected.length},...Array.from(values,([key,value])=>({id:value,title:field==="authors" && key==="me" ? "Me" : value,color:colors.get(key) ?? "",selected:selected.some(name=>name.toLowerCase()===key)}))];
+    if (field==="authors") {
+      const me = options.findIndex(option=>option.id.toLowerCase()==="me");
+      options.splice(1,0,me < 0 ? {id:"me",title:"Me",color:"",selected:false} : options.splice(me,1)[0]!);
+    }
+    return {options,menu:JSON.stringify(options)};
+  };
+  return {labels:build("labels",labels,items.flatMap(item=>item.row.allLabels.map(label=>({title:label.name,color:label.color})))),authors:build("authors",author?[author]:[],items.map(item=>({title:item.author,color:""})))};
 }

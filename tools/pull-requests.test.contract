@@ -88,6 +88,22 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect state pullSort == "updated"
   expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  tap "pull-filter-labels"
+  tap "pull-labels-triage"
+  clock data
+  clock settle
+  expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-filter-authors"
+  tap "pull-authors-me"
+  clock data
+  clock settle
+  expect state pullControls.count == 2
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  tap "pull-filter-more"
+  tap "pull-more-reset"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
   tap "pull-filter-environment"
   tap "pull-environment-secondary"
   clock data

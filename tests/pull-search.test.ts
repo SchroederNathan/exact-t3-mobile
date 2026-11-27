@@ -1,6 +1,6 @@
 import {expect, test} from "bun:test";
 import {pullSearch, pullListPredicate} from "../pull-search";
-import {orderPulls, pullControlMenu, pullProjectOptions} from "../pull-controls";
+import {orderPulls, pullControlMenu, pullProjectOptions, pullFacets} from "../pull-controls";
 
 test("advanced menu counts filters but not sort; typed qualifiers override selected filters", () => {
   const menu = pullControlMenu("open","all","only","approved","all","oldest");
@@ -24,6 +24,18 @@ test("sorts the loaded rows without mutating their default order", () => {
   expect(orderPulls(rows,"updated")).toBe(rows);
   expect(orderPulls(rows,"created")).toEqual([rows[1],rows[0]]);
   expect(orderPulls(rows,"oldest")).toEqual([rows[1],rows[0]]);
+});
+
+test("facet selections preserve literal punctuation and survive an empty filtered list", () => {
+  const label = 'voice, "keyboard": UI';
+  const rows = [{author:"juno",row:{allLabels:[{name:label,color:"#abcdef"},{name:"Docs",color:""}]}}];
+  const facets = pullFacets(rows,[label],"me");
+  expect(facets.labels.options[1]).toEqual({id:label,title:label,color:"#abcdef",selected:true});
+  expect(facets.authors.options.map(option=>option.title)).toEqual(["All authors","Me","juno"]);
+  expect(pullFacets([],[label],"juno").authors.options.at(-1)?.selected).toBe(true);
+  expect(pullSearch("",[label,"Docs"],"me")).toEqual({filters:{labels:[[label],["Docs"]],author:"me"}});
+  expect(pullSearch("label:other author:you",[label],"me")).toEqual({filters:{labels:[["other"]],author:"you"}});
+  expect(pullControlMenu("open","all","all","all","all","updated",[],[],"","",3)).toMatchObject({count:3,reset:true});
 });
 
 test("PR search separates qualifiers from provider text without splitting quoted labels", () => {

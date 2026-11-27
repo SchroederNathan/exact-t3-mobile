@@ -359,6 +359,7 @@ shape PullRow
   review: string
   stackText: string
   labels: PullLabel[]
+  allLabels: PullLabel[]
   extraLabels: number
   initial: string
   updatedMs: number
@@ -375,6 +376,20 @@ shape PullControlGroup
   id: string
   title: string
   options: PullControlOption[]
+
+shape PullFacetOption
+  id: string
+  title: string
+  color: string
+  selected: bool
+
+shape PullFacet
+  options: PullFacetOption[]
+  menu: string
+
+shape PullFacets
+  labels: PullFacet
+  authors: PullFacet
 
 shape PullControlMenu
   count: number
@@ -741,8 +756,10 @@ component T3Code
   state pullChecksFilter = "all"
   state pullSort = "updated"
   state pullProject = ""
+  state pullLabels: string[] = []
+  state pullAuthor = ""
   derive scopedPullProject = catalog.projects.filter(project => project.id == pullProject and not project.isScratch and (selectedPullEnvironment == "" or selectedPullEnvironment == project.environmentId)).length > 0 ? pullProject : ""
-  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort, catalog.projects, catalog.environments, selectedPullEnvironment, scopedPullProject) as shape PullControlMenu else empty()
+  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort, catalog.projects, catalog.environments, selectedPullEnvironment, scopedPullProject, pullLabels.length + (pullAuthor != "" ? 1 : 0)) as shape PullControlMenu else empty()
   state pullPageIndex = 0
   state pullSearchDraft = ""
   state pullQuery = ""
@@ -752,10 +769,24 @@ component T3Code
   derive pullTargets = catalog.environments.filter(env => selectedPullEnvironment == "" or env.id == selectedPullEnvironment)
   derive connectedPullTargets = pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id)
   derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
-  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject) as shape PullRequests else empty()
+  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject, pullLabels, pullAuthor) as shape PullRequests else empty()
+  resource facets = pullFacets(pullRequests.items, pullLabels, pullAuthor) as shape PullFacets else empty()
+  action pickPullLabel(id: string)
+    if id == ""
+      pullLabels = []
+    else if pullLabels.includes(id)
+      pullLabels = pullLabels.filter(label => label != id)
+    else if pullLabels.length < 10
+      pullLabels = pullLabels.concat([id])
+    pullPageIndex = 0
+  action pickPullAuthor(id: string)
+    pullAuthor = id
+    pullPageIndex = 0
   resource orderedPulls = orderPulls(pullRequests.items, pullSort) as shape PullRequest[] else empty()
   action choosePullControl(id: string)
     if id == "reset"
+      pullLabels = []
+      pullAuthor = ""
       pullProject = ""
       pullDraftFilter = "all"
       pullReviewFilter = "all"
@@ -781,6 +812,8 @@ component T3Code
   action filterPullEnvironment(id: string)
     if id == "" or environmentState.items.filter(env => env.id == id).length > 0
       pullEnvironment = id
+      pullLabels = []
+      pullAuthor = ""
       pullProject = ""
       pullPageIndex = 0
   task resetHiddenPullPages when current.name != "pullRequests" and current.name != "pullRequest" key=current.name
@@ -2769,6 +2802,8 @@ component T3Code
                             image "symbol:sf/chevron.down" width=11 height=11
                       PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
                       PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
+                      PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=pickPullLabel)
+                      PullFacetChip(field="authors", title=(pullAuthor == "me" ? "By you" : pullAuthor != "" ? pullAuthor : "Author"), label="Filter by author", active=(pullAuthor != ""), facet=facets.authors, native=(device.kind != "web" and device.kind != ""), choose=pickPullAuthor)
                   if pullRequests.items.length == 0
                     scroll id="pulls" flex=1 min-height=0 background-color="screen"
                       if pending(pullRequests) or not environmentState.loaded or pending(catalog)
@@ -3070,6 +3105,8 @@ component T3Code
             text "Reset filters"
         PullFilterMenu(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", choose=filterPullState)
         PullFilterMenu(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", choose=filterPullInvolvement)
+        PullFacetMenu(field="labels", label="Filter by label", facet=facets.labels, choose=pickPullLabel)
+        PullFacetMenu(field="authors", label="Filter by author", facet=facets.authors, choose=pickPullAuthor)
         column id="project-filter-menu" popover="auto" role="menu" aria-label="Filter threads by project"
           button press=filterProject("") role="menuitemradio" aria-checked=(selectedProject == "") popovertarget="project-filter-menu" popovertargetaction="hide" testId="project-all"
             text "All projects"
@@ -3469,6 +3506,37 @@ component PullPageFooter
           text error font-size=13 line-height="17px" color="muted" text-align="center" testId="pulls-more-error"
         button press=load aria-label=(error == "" ? "Load more pull requests" : "Retry loading more pull requests") buttonStyle="bordered" testId="pulls-more"
           text (error == "" ? "Load more" : "Try again")
+
+component PullFacetChip
+  props
+    field: string
+    title: string
+    label: string
+    active: bool
+    facet: PullFacet
+    native: bool
+    choose: action
+  view
+    if native
+      workspace-filter-menu chip-label=title flat-options=facet.menu active=(active ? "true" : "false") accessibility-label=label test-id=`pull-filter-${field}` testId=`pull-filter-${field}` message=choose flex-shrink=0
+    else
+      button popovertarget=`pull-facet-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 flex-shrink=0 white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size="0.875rem" font-weight=500 testId=`pull-filter-${field}`
+        text title max-width=180 line-clamp=1
+        image "symbol:sf/chevron.down" width=11 height=11
+
+component PullFacetMenu
+  props
+    field: string
+    label: string
+    facet: PullFacet
+    choose: action
+  view
+    column id=`pull-facet-${field}` popover="auto" role="menu" aria-label=label max-height="70dvh" overflow-y="auto"
+      for option in facet.options key=option.id
+        button role=(field == "labels" ? "menuitemcheckbox" : "menuitemradio") aria-checked=option.selected press=choose(option.id) popovertarget=`pull-facet-${field}` popovertargetaction="hide" testId=`pull-${field}-${option.id}`
+          if option.color != ""
+            box width=10 height=10 border-radius=5 background-color=option.color flex-shrink=0
+          text option.title
 
 component PullFilterChip
   props

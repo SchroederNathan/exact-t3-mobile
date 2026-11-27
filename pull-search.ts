@@ -18,7 +18,7 @@ function splitOutsideQuotes(input: string, delimiter: (character: string) => boo
 const reviewNames: Record<string, string> = { approved: "approved", changes_requested: "changes-requested", "changes-requested": "changes-requested", required: "review-required", "review-required": "review-required", none: "none" };
 const checkNames: Record<string, string> = { passing: "passing", success: "passing", failing: "failing", failure: "failing" };
 
-export function pullSearch(input: string) {
+export function pullSearch(input: string, selectedLabels: string[] = [], selectedAuthor = "") {
   const text: string[] = [];
   const filters: PullSearchFilters = {};
   const authors = new Map<string, string>();
@@ -44,14 +44,15 @@ export function pullSearch(input: string) {
   }
   if (authors.size === 1) filters.author = [...authors.values()][0];
   const query = text.join(" ").slice(0, 200).trim();
-  return { ...(query ? {query} : {}), ...(Object.keys(filters).length ? {filters} : {}) };
+  const selections = {...(selectedLabels.length ? {labels:selectedLabels.slice(0,10).map(label=>[label])} : {}), ...(selectedAuthor ? {author:selectedAuthor} : {}), ...filters};
+  return { ...(query ? {query} : {}), ...(Object.keys(selections).length ? {filters:selections} : {}) };
 }
 
 const record = (value: unknown): Record<string, unknown> => typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
 const lower = (value: unknown) => typeof value === "string" ? value.toLowerCase() : "";
 
-export function pullListPredicate(page: Record<string, unknown>, state: string, involvement: string, search: string) {
-  const {query, filters = {}} = pullSearch(search);
+export function pullListPredicate(page: Record<string, unknown>, state: string, involvement: string, search: string, labels: string[] = [], author = "") {
+  const {query, filters = {}} = pullSearch(search,labels,author);
   const local = new Set((Array.isArray(page.providers) ? page.providers : []).filter(provider => record(provider).searchesOnHost === false).map(provider => record(provider).host));
   const viewers = record(page.viewers);
   const words = lower(query).split(/\s+/).filter(Boolean);

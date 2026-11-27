@@ -1302,9 +1302,9 @@ export class DirectSession {
     return result;
   }
 
-  async listPullRequests(state = "open", involvement = "all", search = "", page: PullPageRequest = {limit:30}, projectId?: string): Promise<ObjectValue> {
+  async listPullRequests(state = "open", involvement = "all", search = "", page: PullPageRequest = {limit:30}, projectId?: string, labels: string[] = [], author = ""): Promise<ObjectValue> {
     if (!["open", "closed", "merged", "all"].includes(state) || !["all", "reviewing", "authored"].includes(involvement)) throw new Error("Unknown pull request filter.");
-    return this.query("pullRequests.list", { state, involvement, ...page, ...pullSearch(search), ...(projectId ? {projectId} : {}) });
+    return this.query("pullRequests.list", { state, involvement, ...page, ...pullSearch(search,labels,author), ...(projectId ? {projectId} : {}) });
   }
 
   async pullRequestDetail(projectId: string, repository: string, number: number, host?: string): Promise<ObjectValue> {

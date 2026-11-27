@@ -18,7 +18,7 @@ export function pullRow(value: unknown) {
   const additions = Number(raw.additions ?? 0);
   const deletions = Number(raw.deletions ?? 0);
   return {
-    status, conflict, checks, review, stackText, labels: labels.slice(0, 2), extraLabels: Math.max(0, labels.length - 2),
+    status, conflict, checks, review, stackText, labels: labels.slice(0, 2), allLabels:labels, extraLabels: Math.max(0, labels.length - 2),
     initial: Array.from(author)[0]?.toUpperCase() || "?", updatedMs: Date.parse(string(raw.updatedAt)) || 0,
     addedText: additions > 0 ? `+${additions.toLocaleString()}` : "", deletedText: deletions > 0 ? `−${deletions.toLocaleString()}` : "",
     accessible: [ `${raw.provider === "gitlab" ? "Merge request" : "Pull request"} ${raw.number}`, string(raw.title), status,

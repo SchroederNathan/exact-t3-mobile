@@ -15,6 +15,13 @@ private struct GroupedFilterMenu: Decodable {
   let reset: Bool
 }
 
+private struct FlatFilterChoice: Decodable {
+  let id: String
+  let title: String
+  let selected: Bool
+  let color: String
+}
+
 final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   private let button = WorkspaceFilterMenuButton(type: .custom)
 
@@ -28,7 +35,7 @@ final class WorkspaceFilterMenuInstance: ExactNativeInstance {
   override var view: ExactNativeView { button }
 
   override func setProps(_ props: [String: String]) throws {
-    if props["grouped-options"] != nil {
+    if props["grouped-options"] != nil || props["flat-options"] != nil {
       button.apply(props, options: [])
       return
     }
@@ -52,6 +59,7 @@ private final class WorkspaceFilterMenuButton: UIButton {
   private var selectedID = ""
   private var menuTitle = ""
   private var groupedOptions: String?
+  private var flatOptions: String?
   private var active = false
   private var selectedFromMenu = false
   private var measuredSize = CGSize.zero
@@ -88,15 +96,17 @@ private final class WorkspaceFilterMenuButton: UIButton {
     let nextSelectedID = props["selected-id"] ?? ""
     let nextMenuTitle = props["menu-title"] ?? ""
     let nextGrouped = props["grouped-options"]
+    let nextFlat = props["flat-options"]
     if glyph.image == nil || leadingFilter != (nextGrouped != nil) {
       leadingFilter = nextGrouped != nil
       glyph.image = UIImage(systemName: leadingFilter ? "line.3.horizontal.decrease" : "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: glyphSize))
     }
-    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil || groupedOptions != nextGrouped {
+    if options != nextOptions || selectedID != nextSelectedID || menuTitle != nextMenuTitle || menu == nil || groupedOptions != nextGrouped || flatOptions != nextFlat {
       options = nextOptions
       selectedID = nextSelectedID
       menuTitle = nextMenuTitle
       groupedOptions = nextGrouped
+      flatOptions = nextFlat
       if let data = nextGrouped?.data(using: .utf8), let model = try? JSONDecoder().decode(GroupedFilterMenu.self, from: data) {
         var children: [UIMenuElement] = model.groups.map { group in
           UIMenu(title: group.title, children: group.options.map { choice in
@@ -107,6 +117,15 @@ private final class WorkspaceFilterMenuButton: UIButton {
         if !model.reset { reset.attributes = .disabled }
         children.append(reset)
         menu = UIMenu(title: menuTitle, children: children)
+      } else if let data = nextFlat?.data(using: .utf8), let choices = try? JSONDecoder().decode([FlatFilterChoice].self, from: data) {
+        menu = UIMenu(title: menuTitle, children: choices.map { choice -> UIAction in
+          let item = action(choice.id, choice.title, selected: choice.selected)
+          if choice.color.hasPrefix("#"), choice.color.count == 7, let rgb = UInt32(choice.color.dropFirst(), radix: 16) {
+            let tint = UIColor(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+            item.image = UIImage(systemName: "circle.fill")?.withTintColor(tint, renderingMode: .alwaysOriginal)
+          }
+          return item
+        })
       } else {
         menu = UIMenu(title: menuTitle, children: options.map { option in
           action(option.id, option.title, selected: option.id == selectedID)
