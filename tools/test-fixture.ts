@@ -91,6 +91,7 @@ let nextSocket = 0;
 let secondaryAccepted = 0;
 const settingsCommands: Record<string, unknown>[] = [];
 let checkpoint: { primary: number; secondary: number } | undefined;
+let homeSocket: number | undefined;
 
 function barrier(signal: AbortSignal, inspect: () => Response | undefined) {
   const response = inspect();
@@ -678,6 +679,16 @@ const topology = () => ({
 const refused = (error: string) => json({ error, ...topology() }, 409);
 
 function assertions(path: string, signal: AbortSignal): Promise<Response> | Response | undefined {
+  if (path === "/capture/home-socket") {
+    const socket = readySocket(primary.sockets);
+    homeSocket = socket?.data.serial;
+    return socket ? json({ serial: homeSocket }) : refused("Expected one subscribed home socket");
+  }
+  if (path === "/assert/home-socket") {
+    return homeSocket !== undefined && readySocket(primary.sockets)?.data.serial === homeSocket
+      ? json({ serial: homeSocket })
+      : refused("Thread navigation replaced the home connection");
+  }
   if (path === "/checkpoint")
     return barrier(signal, () => {
       if (primary.sockets.size > 1 || secondary.sockets.size > 1)

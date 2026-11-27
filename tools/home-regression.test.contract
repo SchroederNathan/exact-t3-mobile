@@ -123,6 +123,7 @@ test "accepted sends preserve other drafts and newer edits across relaunch"
   tap "connect"
   clock data
   clock settle
+  request POST "http://127.0.0.1:0/capture/home-socket"
   tap "thread-fixture:alpha"
   clock settle
   type "composer" "Accept after release"
@@ -130,6 +131,7 @@ test "accepted sends preserve other drafts and newer edits across relaunch"
   back
   tap "thread-fixture:beta"
   type "composer" "Beta draft during Alpha send"
+  request POST "http://127.0.0.1:0/assert/home-socket"
   request POST "http://127.0.0.1:0/release"
   clock data
   expect text "composer" == "Beta draft during Alpha send"
