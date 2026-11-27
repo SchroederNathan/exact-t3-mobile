@@ -2908,24 +2908,22 @@ component T3Code
                       if pullRequests.hasMore
                         PullPageFooter(error=pullRequests.moreError, busy=pending(pullRequests), load=morePulls)
               if e.name == "pullFilterSearch"
-                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="large" navigationGrabber="visible" navigationScroll="pr-facet-results" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="75% large" navigationInitialDetent="75%" navigationGrabber="visible" navigationScroll="pr-facet-results" data-workspace-header="editor" data-search-placement=(split ? "integrated" : "toolbar") position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header
                     button id="back" press=backPullRequest aria-label=(facetKind == "labels" ? "Close label filter" : "Close author filter") testId="pr-facet-close"
                       image "symbol:close"
                     text (facetKind == "labels" ? "Filter by label" : facetKind == "authors" ? "Filter by author" : "Unknown filter") role="heading" aria-level=2
                     input type="search" value=facetDraft input=editFacetQuery placeholder=(facetKind == "labels" ? "Search labels" : "Search authors") aria-label=(facetKind == "labels" ? "Search labels" : "Search authors") testId="pr-facet-query"
-                  scroll id="pr-facet-results" flex=1 min-height=0 padding="16px 16px calc(env(safe-area-inset-bottom) + 64px)"
+                  scroll id="pr-facet-results" flex=1 min-height=0 padding=(split ? "16px" : "16px 16px calc(env(safe-area-inset-bottom) + 72px)")
                     if facetRows.length > 0
                       column border-radius=14 overflow="hidden" background-color="card"
                         for option, index in facetRows key=option.id
-                          button role=(facetKind == "labels" ? "checkbox" : "radio") aria-checked=option.selected aria-label=option.title press=chooseFacetRow(option.id) appearance="none" display="flex" align-items="center" gap=10 min-height=44 padding="10px 14px" text-align="left" testId=`pr-facet-result-${option.id}`
+                          button role=(facetKind == "labels" ? "checkbox" : "radio") aria-checked=option.selected aria-label=option.title press=chooseFacetRow(option.id) appearance="none" display="flex" align-items="center" gap=10.5 min-height=49 padding="10.5px 14px" box-sizing="border-box" color="foreground" text-align="left" border-bottom=(index + 1 < facetRows.length ? "1px solid border-subtle" : "none") testId=`pr-facet-result-${option.id}`
                             if facetKind == "labels"
-                              box width=10 height=10 border-radius=5 background-color=(option.color == "" ? "muted" : option.color) flex-shrink=0
-                            text option.title flex=1 min-width=0 font="-exact-body"
+                              box width=8.75 height=8.75 border-radius=5 background-color=(option.color == "" ? "transparent" : option.color) flex-shrink=0
+                            text option.title flex=1 min-width=0 font-size="1rem" line-height="1.4375rem" font-weight=500 line-clamp=1
                             if option.selected
-                              image "symbol:select" width=16 height=16
-                          if index + 1 < facetRows.length
-                            view height=1 margin-left=14 background-color="edge"
+                              image "symbol:checkmark" width=16 height=16 font-weight=600 color="icon" flex-shrink=0
                     else if facetKind != "" and not facetSettled
                       progress aria-label="Searching" testId="pr-facet-loading"
                     else
