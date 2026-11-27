@@ -3,6 +3,21 @@ import { expect, test, spyOn } from "bun:test";
 import { answer as sourceAnswer } from "../app";
 import type { Answer, NativeModule, Storage, Store } from "../app.contract.d.ts";
 
+test("a scanned pairing link only returns reviewable fields and never contacts the host", async () => {
+  const inaccessible = new Proxy({}, { get() { throw new Error("scan must not read or persist credentials"); } });
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => { throw new Error("scan must not connect"); });
+  const decode = (text: string) => sourceAnswer("decodePairingScan", [text, "route-a"], inaccessible as Store, inaccessible as Storage);
+  try {
+    expect(await decode("t3code://pair?pairingUrl=http%3A%2F%2Flocalhost%3A8181%2F%23token%3Dfixture")).toEqual({
+      route: "route-a", address: "http://localhost:8181", code: "fixture", error: "",
+    });
+    for (const text of ["", "https://example.test", "unrelated QR code", "file:///tmp/test#token=fixture", "x".repeat(8193)]) {
+      expect(await decode(text)).toMatchObject({ route: "route-a", address: "", code: "", error: expect.stringContaining("Invalid pairing QR code") });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  } finally { fetchSpy.mockRestore(); }
+});
+
 test("native environments aggregate colliding IDs and keep commands and connection lifetimes scoped", async () => {
   let saved = JSON.stringify(
     ["a", "b"].map((id) => ({
@@ -253,6 +268,17 @@ test("native environments aggregate colliding IDs and keep commands and connecti
     });
   }
   const catalog = await load();
+  const usageDate = Date.parse("2026-11-10T12:05:00Z");
+  const usageFrames = () => sent.filter(({ frame }) => frame.tag === "server.getUsageSummary");
+  expect(await answer("loadUsage", [[], 30, 0, usageDate], store, storage, idleNative)).toEqual([]);
+  _fetch.mockImplementationOnce(async (url, init) => {
+    expect(String(url)).toBe("http://b.example/api/auth/session");
+    expect(init?.headers).toEqual({ Authorization: "Bearer token-b" });
+    return new Response(JSON.stringify({ authenticated: true, permissions: ["orchestration:operate"] }));
+  });
+  const deniedUsage = await answer("loadUsage", [catalog.environments.filter(({id}) => id === "b"), 30, 1, usageDate], store, storage, idleNative);
+  expect(deniedUsage[0]?.error).toBe("This connection does not have permission to read usage.");
+  expect(usageFrames()).toHaveLength(0);
   const initialSubscriptions = sent.filter(
     ({ frame }) => frame.tag === "orchestration.subscribeThread",
   );

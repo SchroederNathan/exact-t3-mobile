@@ -8,6 +8,8 @@ import {
   pair,
   parsePairingAddress,
   scopedThreadId,
+  rankThreadPins,
+  newPinKey,
   threadIdFromUrl,
   threadIdentity,
 } from "../connection";
@@ -18,6 +20,257 @@ type SettingsRequest = {
   tag: string;
   payload: Record<string, unknown>;
 };
+
+test("pins sort by case-sensitive keys then creation time without reordering search input", () => {
+  const { session, updateThread } = settingsSession();
+  updateThread({ pinnedAt: "2026-11-01T12:00:00Z", pinOrderKey: "B" });
+  const sample = session.threads()[0]!;
+  expect(sample.pinRank).toBe(0);
+  expect(sample.pinKey).toBe("B");
+  const row = (environmentId: string, id: string, pinKey: string | null, createdAtMillis: number) => ({ ...sample, id: scopedThreadId(environmentId, id), environmentId, pinKey, createdAtMillis });
+  const rows = [row("a", "z", "B", 1), row("a", "none", null, 4), row("z", "x", "B", 2), row("a", "x", "B", 3), row("a", "lower", "a", 1), row("a", "new", null, 8)];
+  expect(rankThreadPins(rows).map(row => row.pinRank)).toEqual([2,5,1,0,3,4]);
+  updateThread({ pinnedAt: null, pinOrderKey: "B" });
+  expect(session.threads()[0]!.pinRank).toBe(-1);
+});
+
+test("new pins precede existing lowercase fractional keys without rewriting another host", () => {
+  expect(newPinKey([])).toBe("n");
+  expect(newPinKey(["z", "d", "n"])).toBe("c");
+  expect(newPinKey(["aab"])).toBe("aaan");
+  expect(newPinKey(["abz"])).toBe("ab");
+  expect(newPinKey(["bad-key"])).toBeUndefined();
+  expect(newPinKey(["aa"])).toBeUndefined();
+});
+
+test("pin actions require a live row, current connection, and fresh operate scope", async () => {
+  const {session, commands, updateThread, accept} = settingsSession();
+  const key = session.controlAccessKey();
+  const auth = { authenticated: true, permissions: ["orchestration:operate"] };
+  await expect(session.setThreadPinned("thread", key, true, { authenticated: true, scopes: ["orchestration:read"] })).rejects.toThrow("permission");
+  await expect(session.setThreadPinned("thread", "old", true, auth)).rejects.toThrow("Reconnect");
+  await expect(session.setThreadPinned("missing", key, true, auth)).rejects.toThrow("available");
+  updateThread({ archivedAt: "2026-11-01" });
+  await expect(session.setThreadPinned("thread", key, true, auth)).rejects.toThrow("available");
+  updateThread({});
+  expect(commands()).toHaveLength(0);
+  const pin = session.setThreadPinned("thread", key, true, auth, "n");
+  await expect(session.setThreadPinned("thread", key, true, auth, "n")).rejects.toThrow("pending");
+  expect(commands()).toHaveLength(1);
+  expect(commands()[0]?.payload).toEqual({type:"thread.pin", commandId:expect.any(String), threadId:"thread", orderKey:"n"});
+  accept(commands()[0]!); await pin;
+  expect(session.threads()[0]!.pinRank).toBe(-1);
+  updateThread({ pinnedAt: "2026-11-26", pinOrderKey: "n" });
+  await session.setThreadPinned("thread", key, true, auth, "g");
+  expect(commands()).toHaveLength(1);
+  const unpin = session.setThreadPinned("thread", key, false, auth, "n");
+  expect(commands()[1]?.payload).toEqual({type:"thread.unpin", commandId:expect.any(String), threadId:"thread"});
+  accept(commands()[1]!); await unpin;
+});
+
+test("snooze rechecks the grant, capability, row state and offered preset before dispatch", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), now = Date.UTC(2026, 10, 26, 12);
+  const auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const change = (choice = "after:90", access = key, grant = auth) => session.changeSnooze("thread", access, choice, now, now + 60_000, grant);
+  await expect(change()).rejects.toThrow("no longer available");
+  session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadSnooze: true } }, settings: { snoozePresets: [{ kind: "after", minutes: 90 }] } } }] }));
+  await expect(change("after:90", key, { authenticated: true, scopes: [] })).rejects.toThrow("permission");
+  await expect(change("after:90", "old-session")).rejects.toThrow("no longer available");
+  await expect(change("after:60")).rejects.toThrow("future snooze");
+  await expect(change("wake")).rejects.toThrow("no longer available");
+  updateThread({ status: "queued" });
+  await expect(change()).rejects.toThrow("no longer available");
+  expect(commands()).toHaveLength(0);
+  updateThread({ status: "completed" });
+  const snoozed = change();
+  expect(commands()[0]!.payload).toMatchObject({ type: "thread.snooze", threadId: "thread", snoozedUntil: new Date(now + 91 * 60_000).toISOString() });
+  accept(commands()[0]!); await snoozed;
+  expect(session.snoozeMenu("thread", key, now).sleeping).toBe(false);
+});
+
+test("snooze undo names the original connection and wakes only its still-current deadline once", async () => {
+  for (const mode of ["unchanged", "different deadline", "same deadline again"]) {
+    const { session, commands, accept, updateThread } = settingsSession();
+    const now = Date.UTC(2026, 10, 26), key = session.controlAccessKey();
+    const auth = { authenticated: true, scopes: ["orchestration:operate"] };
+    session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadSnooze: true } } } }] }));
+    const pending = session.changeSnooze("thread", key, "after:60", now, now, auth);
+    accept(commands()[0]!); const receipt = await pending;
+    const snoozedUntil = new Date(now + 3600_000 + Number(mode === "different deadline")).toISOString();
+    updateThread({ snoozedUntil, snoozedAt: new Date(now).toISOString() });
+    for (const [target, access, token] of [["other", key, receipt], ["thread", "stale", receipt], ["thread", key, "wrong"]]) {
+      expect(() => session.undoThreadSnooze(target!, access!, token!, now, auth)).toThrow("no longer available");
+    }
+    const undo = () => session.undoThreadSnooze("thread", key, receipt, now, auth);
+    if (mode === "same deadline again") {
+      updateThread({ snoozedUntil, snoozedAt: new Date(now + 1000).toISOString() });
+      expect(undo).toThrow("no longer available");
+    } else if (mode === "different deadline") expect(undo).toThrow("has changed");
+    else {
+      const finished = undo();
+      expect(commands()[1]!.payload).toMatchObject({ type: "thread.unsnooze", threadId: "thread", reason: "user" });
+      accept(commands()[1]!); await finished;
+    }
+    expect(undo).toThrow("no longer available");
+    expect(commands()).toHaveLength(mode === "unchanged" ? 2 : 1);
+  }
+});
+
+test("auto-settle follows live capability and shell, and cannot write through stale menus", async () => {
+  const { session, commands, accept, updateThread } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const set = (enabled: boolean) => session.setRowAutoSettle("thread", key, enabled, auth);
+  await expect(set(false)).rejects.toThrow("does not support");
+  session.receive(JSON.stringify({ _tag: "Chunk", requestId: "2", values: [{ type: "snapshot", config: { environment: { capabilities: { threadAutoSettleOptOut: true } } } }] }));
+  await expect(session.setRowAutoSettle("thread", "old", false, auth)).rejects.toThrow("Reconnect");
+  await expect(session.setRowAutoSettle("thread", key, false, {})).rejects.toThrow("permission");
+  await expect(session.setRowAutoSettle("missing", key, false, auth)).rejects.toThrow("available");
+  await set(true);
+  expect(commands()).toHaveLength(0);
+  const disable = set(false);
+  await expect(set(false)).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({ type: "thread.auto-settle.set", threadId: "thread", commandId: expect.any(String), enabled: false });
+  accept(commands()[0]!); await disable;
+  expect(session.threads()[0]?.followsAutoSettle).toBe(true);
+  updateThread({ autoSettleDisabledAt: "2026-11-10T12:00:00Z" });
+  expect(session.threads()[0]).toMatchObject({ canSetAutoSettle: true, followsAutoSettle: false });
+  await set(false);
+  const enable = set(true);
+  expect(commands()[1]?.payload.enabled).toBe(true);
+  accept(commands()[1]!); await enable;
+  expect(commands()).toHaveLength(2);
+});
+
+test("title edits trim without clobbering external edits or regenerating twice", async () => {
+  const { session, commands, accept, updateThread } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const edit = (value: string, original = "Original") => session.updateRowTitle("thread", key, original, value, false, auth);
+  const regenerate = () => session.updateRowTitle("thread", key, "", "", true, auth);
+  updateThread({ title: "Original" });
+  await edit("  Original ");
+  await expect(edit(" \t  ")).rejects.toThrow("empty");
+  await expect(edit("Replacement", "Earlier")).rejects.toThrow("changed");
+  await expect(session.updateRowTitle("thread", key, "Original", "New", false, {})).rejects.toThrow("permission");
+  await expect(regenerate()).rejects.toThrow("does not support");
+  expect(commands()).toHaveLength(0);
+  const result = edit("   My new title  ");
+  await expect(edit("Other")).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({type:"thread.metadata.update", commandId:expect.any(String), threadId:"thread", title:"My new title"});
+  accept(commands()[0]!); await result;
+  expect(session.threads()[0]?.title).toBe("Original");
+  session.receive(JSON.stringify({ _tag:"Chunk", requestId:"2", values:[{type:"snapshot",config:{environment:{capabilities:{threadTitleRegeneration:true}}}}] }));
+  const regen = regenerate();
+  expect(commands()[1]?.payload).toEqual({type:"thread.metadata.update", commandId:expect.any(String), threadId:"thread", regenerateTitle:true});
+  accept(commands()[1]!); await regen;
+  updateThread({titleRegeneration:{requestId:"in-progress"}});
+  await expect(regenerate()).rejects.toThrow("already regenerating");
+  expect(commands()).toHaveLength(2);
+});
+
+test("settlement Undo restores the original pin only after un-settle succeeds", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] }, now = Date.parse("2026-11-10T12:59:00Z");
+  const change = (settle: boolean, receipt = "") => session.changeSettlement("thread", key, settle, receipt, now, auth);
+  await expect(session.changeSettlement("thread", "stale", true, "", now, auth)).rejects.toThrow("Reconnect");
+  await expect(session.changeSettlement("thread", key, true, "", now, {})).rejects.toThrow("permission");
+  updateThread({ pinnedAt: "first", pinOrderKey: "prior" });
+  const settle = change(true);
+  await expect(change(true)).rejects.toThrow("pending");
+  expect(commands()[0]?.payload).toEqual({ type: "thread.settle", threadId: "thread", commandId: expect.any(String) });
+  accept(commands()[0]!); const receipt = await settle;
+  updateThread({ settledOverride: "settled", settledAt: "2026-11-10T12:59:01Z" });
+  const undo = change(false, receipt);
+  expect(commands()[1]?.payload).toMatchObject({ type: "thread.unsettle", reason: "user" });
+  expect(commands()).toHaveLength(2);
+  accept(commands()[1]!); await Promise.resolve(); await Promise.resolve();
+  expect(commands()[2]?.payload).toMatchObject({ type: "thread.pin", orderKey: "prior" });
+  accept(commands()[2]!); expect(await undo).toBe("");
+  await expect(change(false, receipt)).rejects.toThrow("no longer available");
+});
+
+test("settlement Undo cannot act on a replacement settlement", async () => {
+  const { session, updateThread, commands, accept } = settingsSession();
+  const key = session.controlAccessKey(), auth = { authenticated: true, scopes: ["orchestration:operate"] };
+  const pending = session.changeSettlement("thread", key, true, "", 0, auth);
+  updateThread({ settledOverride: "settled", settledAt: "first" }); accept(commands()[0]!);
+  const receipt = await pending;
+  updateThread({ settledOverride: "settled", settledAt: "replacement" });
+  await expect(session.changeSettlement("thread", key, false, receipt, 0, auth)).rejects.toThrow("no longer available");
+  expect(commands()).toHaveLength(1);
+});
+
+test("Undo restores the original pin position before the unexpired snooze, once", async () => {
+  for (const expired of [false, true]) {
+    const {session, updateThread, commands, accept} = settingsSession();
+    const auth = {authenticated:true, scopes:["orchestration:operate"]};
+    const key = session.controlAccessKey(), until = "2026-11-26T17:00:00Z";
+    updateThread({pinnedAt: "2026-11-24", pinOrderKey:"q", snoozedUntil:until});
+    const unpin = session.setThreadPinned("thread", key, false, auth);
+    updateThread({snoozedUntil:until}); accept(commands()[0]!);
+    const receipt = await unpin;
+    await expect(session.setThreadPinned("thread", key, true, auth, "g", "wrong")).rejects.toThrow("no longer available");
+    const restore = session.setThreadPinned("thread", key, true, auth, "g", receipt);
+    expect(commands()[1]!.payload).toMatchObject({type:"thread.pin", orderKey:"q"});
+    expect(commands()).toHaveLength(2);
+    accept(commands()[1]!); expect(await restore).toBe(receipt);
+    const finish = session.finishPinUndo("thread", receipt, Date.parse(until) - (expired ? 0 : 100));
+    if (!expired) {
+      expect(commands()[2]!.payload).toMatchObject({type:"thread.snooze", threadId:"thread", snoozedUntil:until});
+      accept(commands()[2]!);
+    }
+    await finish; expect(commands()).toHaveLength(expired ? 2 : 3);
+    await expect(session.finishPinUndo("thread", receipt, 0)).rejects.toThrow("no longer available");
+    await expect(session.setThreadPinned("thread", key, true, auth, "g", receipt)).rejects.toThrow("no longer available");
+  }
+});
+
+test("usage refresh sends the selected window to its environment", async () => {
+  const { session, requests } = settingsSession();
+  const window = { resolution: "day" as const, sinceDay: "2026-10-01", untilDay: "2026-10-30", timeZone: "America/Toronto" };
+  const result = session.readUsage(window, true);
+  const request = requests.at(-1)!;
+  expect(request.tag).toBe("server.getUsageSummary");
+  expect(request.payload).toEqual({ ...window, awaitRefresh: true });
+  session.receive(JSON.stringify({ _tag: "Exit", requestId: request.id, exit: {
+    _tag: "Success", value: { contractVersion: 6, buckets: [], sources: [] },
+  } }));
+  expect((await result).tokens).toBe(0);
+});
+
+test("message search uses the base wire contract and scopes each excerpt to a live project shell", async () => {
+  const { session, requests } = settingsSession();
+  const before = requests.length;
+  expect(await session.searchThreadMessages("a to", "project")).toEqual([]);
+  expect(requests.length).toBe(before);
+  const query = "needle".repeat(40);
+  const pending = session.searchThreadMessages(`  ${query}  `, "project");
+  const request = requests.at(-1)!;
+  expect(request.tag).toBe("orchestration.searchThreads");
+  expect(request.payload).toEqual({ query: query.slice(0, 200), limit: 50 });
+  const match = { threadId: "thread", projectId: "project", source: "user", snippet: "needle" };
+  session.receive(JSON.stringify({_tag: "Exit", requestId: request.id, exit: {_tag: "Success", value: {matches: [
+    {...match, threadId: "absent"}, {...match, projectId: "wrong"}, {...match, source: "tool"}, match, match,
+  ]}}}));
+  expect(await pending).toEqual([{id: "env:thread", source: "user", snippet: "needle"}]);
+});
+
+test("thread search keeps older PR references but excludes dismissed links and stale titles", () => {
+  const { session, updateThread } = settingsSession();
+  const link = (number: number) => ({ repository: "Fixture/UI", number, linkedAt: `2026-11-0${number}T10:00:00Z`, snapshot: { title: `Title ${number}` } });
+  updateThread({
+    branch: "Design/Keyboard", linkedPullRequest: link(6), branchPullRequest: link(7),
+    pullRequests: [...[1, 3, 2, 4].map(link), { ...link(5), source: "stack-dismissed" }],
+  });
+  const row = session.threads()[0]!;
+  expect(row.searchTerms).toEqual(["design/keyboard", "title 4", "title 3", "title 2"]);
+  expect(row.searchReferences).toContain("fixture/ui#1");
+  expect(row.searchReferences).toContain("#7");
+  expect(row.searchReferences).not.toContain("#5");
+  expect(row.searchReferences).not.toContain("#6");
+  updateThread({ linkedPullRequest: link(6) });
+  expect(session.threads()[0]!.searchReferences).toContain("#6");
+});
 
 function settingsSession(initializeShell = true) {
   const requests: SettingsRequest[] = [];
@@ -1529,10 +1782,15 @@ describe("direct T3 connection", () => {
           stop: { runId: "", state: "", error: "" },
         },
         id: scopedThreadId("env", "t"),
+        serverThreadId: "t",
         listed: true,
         environmentId: "env",
         title: "Fix startup",
         project: "T3 Code",
+        canRegenerateTitle: false,
+        canSetAutoSettle: false,
+        followsAutoSettle: true,
+        regeneratingTitle: false,
         projectId: "env:p",
         projectIcon: "",
         projectInitials: "T3",
@@ -1542,6 +1800,7 @@ describe("direct T3 connection", () => {
         modelRevision: '{"instanceId":"provider-instance","model":"model-slug"}',
         activityAt: Date.parse("2026-11-08T11:59:00Z"),
         settled: true,
+        canSettle: true,
         working: false,
         status: "",
         visit: {
@@ -1555,6 +1814,12 @@ describe("direct T3 connection", () => {
         updatedAt: "1m",
         lastError: "",
         lastErrorTime: expect.any(String),
+        searchReferences: [],
+        wakeAt: 0,
+        pinRank: -1,
+        pinKey: null,
+        createdAtMillis: expect.any(Number),
+        searchTerms: [],
         rows: [],
         toolViewKey: expect.any(String),
         markdownRevision: 0,

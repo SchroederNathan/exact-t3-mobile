@@ -1,3 +1,49 @@
+test "usage without an environment does not report measured activity"
+  at "/usage"
+  clock data
+  clock settle
+  expect text "usage-status" == "Select an environment to see limits."
+  tap "usage-view-Cost"
+  expect text "usage-status" == "Connect an environment to see usage."
+
+test "a web visitor can switch workspace tabs without editing the address" on web
+  clock data
+  tap "tab-usage"
+  clock settle
+  expect state current.name == "usage"
+  tap "tab-settings"
+  clock settle
+  expect state current.name == "settings"
+  tap "tab-threads"
+  clock settle
+  expect state current.name == "threads"
+
+test "a web visitor can start a draft from the Chats workspace" on web
+  clock data
+  tap "workspace-compose"
+  clock data
+  clock settle
+  expect state current.name == "chooseProject"
+
+test "keyboard return choice survives a reload and can be reversed"
+  at "/settings"
+  clock data
+  tap "keyboard-button"
+  clock settle
+  expect state current.name == "keyboardSettings"
+  expect state composerReturnBehavior == "send"
+  tap "keyboard-newline"
+  clock settle
+  reload
+  clock data
+  expect state composerReturnBehavior == "newline"
+  tap "keyboard-send"
+  clock settle
+  expect state composerReturnBehavior == "send"
+  back
+  clock settle
+  expect state current.name == "settings"
+
 test "fresh install has no fabricated environments or threads"
   clock data
   expect state catalog.environments == []
