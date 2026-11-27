@@ -1040,6 +1040,21 @@ component T3Code
         discussionError = "More replies could not be loaded."
   state pullFileRevision = 0
   state collapsedDiffFiles: string[] = []
+  state wrapPullDiff = false persist
+  state selectedDiffVisit = ""
+  state selectedDiffLine = ""
+  action toggleDiffWrap
+    wrapPullDiff = not wrapPullDiff
+  action selectDiffLine(key: string)
+    selectedDiffVisit = diffVisit
+    selectedDiffLine = key
+  derive selectedDiffRows = diffRows.filter(line => current.name == "pullFile" and selectedDiffVisit == diffVisit and line.key == selectedDiffLine and (line.kind == "addition" or line.kind == "deletion" or line.kind == "context"))
+  action copyDiffLine
+    match first(selectedDiffRows)
+      case some(line)
+        copyText(line.text)
+      case none
+        selectedDiffLine = ""
   state diffJumped = ""
   task clearHiddenPullFiles when not pullDetailRoute key=current.name
     change(resetPullFiles)
@@ -1049,6 +1064,7 @@ component T3Code
     diffJumped = ""
   resource pullFiles = loadPullFiles(pullRefs, pullFileRevision) as shape PullFileList else empty()
   state hidePullTests = false persist
+  state filteredDiffVisit = ""
   derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
   derive hiddenPullFileCount = pullFiles.files.length - visiblePullFiles.length
   state foldedPullDirectories: string[] = []
@@ -1067,13 +1083,16 @@ component T3Code
       nav = replace(back(nav), next)
   derive visibleViewedCount = visiblePullFiles.filter(file => viewedFiles.paths.includes(file.path)).length
   action togglePullTests
+    selectedDiffLine = ""
+    if current.name == "pullFile"
+      filteredDiffVisit = diffVisit
     hidePullTests = not hidePullTests
   action retryPullFiles
     pullFileRevision = pullFileRevision + 1
   derive diffPath = current.name == "pullFile" or current.name == "pullFilesSheet" ? current.params.file : ""
   derive diffVisit = current.name == "pullFile" ? `${current.id}:${diffPath}` : ""
   derive diffFileFound = pullFiles.files.filter(file => file.path == diffPath).length > 0
-  derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or file.path == diffPath)
+  derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or (file.path == diffPath and filteredDiffVisit != diffVisit))
   resource diffRows = pullDiffRows(diffPath != "" ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
   task fetchDiffTarget when current.name == "pullFile" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(pullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
     after(1, retryPullFiles)
@@ -1086,6 +1105,8 @@ component T3Code
     collapsedDiffFiles = []
     nav = push(nav, path("pullFile", project, `${number}`, file))
   action foldDiffFile(file: string)
+    if selectedDiffRows.filter(line => line.path == file).length > 0
+      selectedDiffLine = ""
     collapsedDiffFiles = collapsedDiffFiles.includes(file) ? collapsedDiffFiles.filter(path => path != file) : collapsedDiffFiles.concat([file])
   mutation changedViewedFile as shape ViewedChange refreshes viewedFiles then afterViewedFile
   state viewedPendingKey = ""
@@ -1100,6 +1121,8 @@ component T3Code
     match changedViewedFile
       case some(reply)
         if reply.error == "" and current.name == "pullFile" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == reply.key).length == 1 and diffVisibleFiles.filter(item => item.path == reply.path).length == 1
+          if reply.viewed and selectedDiffRows.filter(line => line.path == reply.path).length > 0
+            selectedDiffLine = ""
           collapsedDiffFiles = reply.viewed ? collapsedDiffFiles.filter(path => path != reply.path).concat([reply.path]) : collapsedDiffFiles.filter(path => path != reply.path)
       case none
         viewedPendingKey = ""
@@ -3359,6 +3382,8 @@ component T3Code
                     button id="back" press=backPullRequest aria-label="Back to pull request" testId="pull-diff-back"
                       image "symbol:back"
                     text "Changes" role="heading" aria-level=2
+                    button popovertarget="pull-diff-options-menu" aria-haspopup="menu" aria-label="Diff options" min-width=44 min-height=44 testId="pull-diff-options"
+                      image "symbol:sf/ellipsis"
                   text `#${e.params.number} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
                   if viewedError != ""
                     text viewedError color="danger" role="alert" padding="7px 14px" testId="pull-viewed-error"
@@ -3370,6 +3395,9 @@ component T3Code
                     progress aria-label="Loading changes" testId="pull-diff-loading"
                   else if not diffFileFound
                     text "This file is not in the available diff." color="muted" padding=14 testId="pull-diff-missing"
+                  else if diffVisibleFiles.length == 0 and hidePullTests
+                    button press=togglePullTests min-height=44 testId="pull-diff-show-tests"
+                      text "Show test files"
                   list id="pull-diff-lines" appearance="none" virtualized=true flex=1 min-height=0 estimated-item-height=22 background-color="code-surface"
                     for line in diffRows key=line.key
                       column min-width=0
@@ -3389,9 +3417,9 @@ component T3Code
                         else if line.kind == "hunk" or line.kind == "meta"
                           text line.text user-select="text" font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="muted" padding="0 12px" white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
                         else
-                          row min-height=22 align-items="stretch" background-color=(line.kind == "addition" ? "diff-add-fill" : line.kind == "deletion" ? "diff-remove-fill" : "transparent")
-                            text (line.newLine != "" ? line.newLine : line.oldLine) width=42 padding-right=7 box-sizing="border-box" text-align="right" color="muted" font-family="ui-monospace" font-size="0.6875rem" line-height="1.375rem" font-variant-numeric="tabular-nums" flex-shrink=0
-                            text `${line.prefix}${line.text == "" ? " " : line.text}` user-select="text" flex=1 min-width=0 font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="foreground" padding-right=7 white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
+                          button press=selectDiffLine(line.key) aria-pressed=(selectedDiffVisit == diffVisit and selectedDiffLine == line.key) aria-label=`${line.path}, ${line.kind}, line ${line.newLine != "" ? line.newLine : line.oldLine}: ${line.text}` appearance="none" display="flex" width="100%" box-sizing="border-box" min-width=0 min-height=22 padding=0 border="0" border-left=(selectedDiffVisit == diffVisit and selectedDiffLine == line.key ? "3px solid AccentColor" : "3px solid transparent") align-items="stretch" text-align="left" background-color=(line.kind == "addition" ? "diff-add-fill" : line.kind == "deletion" ? "diff-remove-fill" : "transparent") testId=`pull-select-${line.key}`
+                            text (line.newLine != "" ? line.newLine : line.oldLine) width=39 padding-right=7 box-sizing="border-box" text-align="right" color="muted" font-family="ui-monospace" font-size="0.6875rem" line-height="1.375rem" font-variant-numeric="tabular-nums" flex-shrink=0
+                            text `${line.prefix}${line.text == "" ? " " : line.text}` user-select="text" flex=1 min-width=0 font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="foreground" padding-right=7 white-space=(wrapPullDiff ? "pre-wrap" : "pre") overflow-wrap=(wrapPullDiff ? "anywhere" : "normal") overflow-x=(wrapPullDiff ? "visible" : "auto") testId=`pull-diff-${line.key}`
                   if pullFiles.nextCursor != "" and diffFileFound
                     button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-diff-more"
                       text "Load more files"
@@ -3705,6 +3733,14 @@ component T3Code
           image "symbol:sf/plus"
           text "Open new terminal"
           text `Start another shell in ${terminalMenu.workspaceRoot == "" ? "this workspace" : terminalBasename(terminalMenu.workspaceRoot)}`
+      column id="pull-diff-options-menu" popover="auto" role="menu" aria-label="Diff options"
+        button role="menuitemcheckbox" aria-checked=wrapPullDiff press=toggleDiffWrap popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-wrap"
+          text "Word wrap"
+        button role="menuitemcheckbox" aria-checked=hidePullTests press=togglePullTests popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-hide-tests"
+          text "Hide test files"
+        if selectedDiffRows.length == 1
+          button role="menuitem" press=copyDiffLine popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-copy"
+            text "Copy line"
       column id="pull-file-filter-menu" popover="auto" role="menu" aria-label="Review files"
         button role="menuitemcheckbox" aria-checked=hidePullTests press=togglePullTests popovertarget="pull-file-filter-menu" popovertargetaction="hide" testId="pull-hide-test-files"
           text "Hide test files"

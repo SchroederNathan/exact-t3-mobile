@@ -136,6 +136,21 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect state current.params.file == "src/panel.test.ts"
+  tap "pull-diff-options"
+  expect tree missing "pull-diff-copy"
+  tap "pull-diff-wrap"
+  expect state wrapPullDiff == true
+  tap "pull-select-line:2:src/panel.test.ts"
+  tap "pull-diff-options"
+  tap "pull-diff-copy"
+  tap "pull-diff-options"
+  tap "pull-diff-hide-tests"
+  expect tree missing "pull-diff-file-src/panel.test.ts"
+  tap "pull-diff-show-tests"
+  tap "pull-diff-options"
+  expect tree missing "pull-diff-copy"
+  tap "pull-diff-wrap"
+  expect state wrapPullDiff == false
   request POST "http://127.0.0.1:0/assert/viewed-writes/0"
   tap "pull-toggle-viewed-src/panel.test.ts"
   clock data
