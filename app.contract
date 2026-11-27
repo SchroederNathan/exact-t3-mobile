@@ -502,6 +502,7 @@ shape PullRef
   routeKey: string
 
 shape PullRequestDetail
+  viewedKey: string
   items: PullRequest[]
   ready: bool
   error: string
@@ -511,6 +512,11 @@ shape PullRequestDetail
   deletions: number
   changedFiles: number
   checksState: string
+
+shape ViewedFiles
+  key: string
+  paths: string[]
+  complete: bool
 
 shape PullRequestComment
   id: string
@@ -900,6 +906,8 @@ component T3Code
   derive listedRefs = matchingPulls.map(item => PullRef(environmentId=item.environmentId, projectId=item.projectId, host=item.host, repository=item.repository, number=item.number, routeKey=item.routeKey))
   derive pullRefs = pullLink.length > 0 ? pullLink.filter(ref => catalog.environments.filter(env => env.id == ref.environmentId and env.enabled and env.status == "Connected").length > 0) : listedRefs
   resource pullRequestDetail = loadPullRequestDetail(pullRefs) as shape PullRequestDetail else empty()
+  resource viewedFiles = loadViewedFiles(pullRefs, pullRequestDetail.viewedKey) as shape ViewedFiles else empty()
+  derive viewedScope = viewedFiles.key != "" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == viewedFiles.key).length == 1
   resource pullRequestActivity = loadPullRequestActivity(pullRefs) as shape PullRequestActivity else empty()
   state pullFileRevision = 0
   state collapsedDiffFiles: string[] = []
@@ -914,6 +922,7 @@ component T3Code
   state hidePullTests = false persist
   derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
   derive hiddenPullFileCount = pullFiles.files.length - visiblePullFiles.length
+  derive visibleViewedCount = visiblePullFiles.filter(file => viewedFiles.paths.includes(file.path)).length
   action togglePullTests
     hidePullTests = not hidePullTests
   action retryPullFiles
@@ -3049,7 +3058,7 @@ component T3Code
                               column flex=1 min-width=0 gap=3.5
                                 text "Changed files" role="heading" aria-level=3 font-weight=600 testId="pull-files-heading"
                                 if pullFiles.files.length > 0
-                                  text `${visiblePullFiles.length} ${hiddenPullFileCount > 0 ? "visible" : "changed"} ${visiblePullFiles.length == 1 ? "file" : "files"} · ${hidePullTests ? `${hiddenPullFileCount} test ${hiddenPullFileCount == 1 ? "file" : "files"} hidden` : "Test files included"}` font-size="0.8125rem" line-height="1.0625rem" color="muted" testId="pull-files-summary"
+                                  text `${visiblePullFiles.length} ${hiddenPullFileCount > 0 ? "visible" : "changed"} ${visiblePullFiles.length == 1 ? "file" : "files"}${viewedScope and viewedFiles.complete ? ` · ${visibleViewedCount} viewed` : ""} · ${hidePullTests ? `${hiddenPullFileCount} test ${hiddenPullFileCount == 1 ? "file" : "files"} hidden` : "Test files included"}` font-size="0.8125rem" line-height="1.0625rem" color="muted" testId="pull-files-summary"
                               if pullFiles.files.length > 0
                                 button popovertarget="pull-file-filter-menu" aria-label="Filter review files" aria-haspopup="menu" min-height=44 min-width=44 testId="pull-file-filter"
                                   image "symbol:filter"
@@ -3062,7 +3071,7 @@ component T3Code
                             else
                               for file in visiblePullFiles key=file.path
                                 column min-width=0
-                                  button press=openPullFile(pull.routeKey, pull.number, file.path) aria-label=`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions` min-height=49 testId=`pull-file-${file.path}`
+                                  button press=openPullFile(pull.routeKey, pull.number, file.path) aria-label=`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions${viewedScope and viewedFiles.paths.includes(file.path) ? ", viewed" : ""}` min-height=49 testId=`pull-file-${file.path}`
                                     row min-width=0 align-items="center" gap=7
                                       column flex=1 min-width=0 gap=1.75
                                         text file.name font-size="0.875rem" font-weight=500 line-clamp=2
@@ -3070,6 +3079,9 @@ component T3Code
                                           text file.directory font-size="0.8125rem" color="muted" line-clamp=1
                                       text `+${file.additions}` color="status-done"
                                       text `−${file.deletions}` color="danger"
+                                      if viewedScope and viewedFiles.paths.includes(file.path)
+                                        image "symbol:checkmark.circle.fill" width=18 height=18 color="status-done" testId=`pull-viewed-${file.path}`
+                                      image "symbol:sf/chevron.right" width=12 height=12 color="muted"
                                   if file.omitted
                                     text "Patch omitted" color="muted"
                               if pullFiles.files.length == 0

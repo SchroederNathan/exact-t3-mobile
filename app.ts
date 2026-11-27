@@ -1797,7 +1797,7 @@ const sources: Sources = {
     return ref ? [ref] : [];
   },
   loadPullRequestDetail: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "", items: [] };
+    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
@@ -1816,10 +1816,22 @@ const sources: Sources = {
         deletions: Number(value.deletions ?? 0),
         changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
         checksState: string(value.checksState) || string(checks.state),
+        viewedKey: ["host", "environment"].includes(string(object(value.capabilities).viewedFiles)) ? `${row.routeKey}:${row.number}` : "",
       };
     } catch (error) {
       return { ...empty, error: error instanceof Error ? error.message : "Pull request detail could not be loaded." };
     }
+  },
+  loadViewedFiles: async ([matches, key], store, _storage, native) => {
+    const empty = { key: "", paths: [], complete: false };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    if (key !== `${row.routeKey}:${row.number}`) return empty;
+    try {
+      const result = await readPullRequestData(row.environmentId, store, native, session => session.pullFilesViewed(row.projectId, row.repository, row.number, row.host));
+      if (!Array.isArray(result.files)) return empty;
+      return { key, paths: result.files.filter(file => file && file.state === "viewed" && typeof file.path === "string").map(file => file.path), complete: result.truncated === false };
+    } catch { return empty; }
   },
   loadPullFiles: async ([matches, revision], store, _storage, native) => {
     const empty = { files: [], truncated: false, nextCursor: "", error: "" };

@@ -1323,6 +1323,10 @@ export class DirectSession {
     return this.query("pullRequests.filterOptions",{kind,...(text ? {query:text} : {}),...(projectId ? {projectId} : {})});
   }
 
+  async pullFilesViewed(projectId: string, repository: string, number: number, host: string) {
+    return this.query("pullRequests.filesViewed", { projectId, repository, number, host });
+  }
+
   async pullRequestActivity(
     projectId: string,
     repository: string,
