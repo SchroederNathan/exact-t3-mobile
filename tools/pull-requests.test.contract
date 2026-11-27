@@ -29,7 +29,21 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree missing "pull-request-comment-fixture-second.test"
   tap "pull-section-Activity"
+  clock data
   expect tree has "pull-request-comment-fixture-second.test"
+  expect tree missing "pull-request-comment-automated"
+  expect tree missing "pull-request-comment-thread-post"
+  expect tree missing "pull-request-discussion-resolved"
+  tap "pull-activity-show"
+  tap "pull-activity-resolved"
+  clock data
+  expect tree has "pull-request-discussion-resolved"
+  tap "pull-activity-kind"
+  tap "pull-activity-kind-Commits"
+  clock data
+  expect tree has "pull-request-commit-abcd1234"
+  expect tree missing "pull-request-comment-fixture-second.test"
+  expect tree missing "pull-activity-partial"
   expect tree missing "pull-file-example"
   tap "pull-section-Overview"
   expect text "pull-request-change-counts" == "0 files"
@@ -294,6 +308,7 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree missing "pull-request-comment-secondary-second.test"
   tap "pull-section-Activity"
+  clock data
   expect tree has "pull-request-comment-secondary-second.test"
   tap "pull-section-Overview"
   expect tree has "pull-file-example"
@@ -303,6 +318,7 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree missing "pull-request-comment-secondary-second.test"
   tap "pull-section-Activity"
+  clock data
   expect tree has "pull-request-comment-secondary-second.test"
   tap "pull-section-Overview"
   expect tree has "pull-file-example"

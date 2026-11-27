@@ -545,28 +545,31 @@ shape ViewedChange
   viewed: bool
   error: string
 
-shape PullRequestComment
+shape PullEvent
   id: string
+  key: string
   author: string
   body: string
-  createdAt: string
+  date: string
   kind: string
   path: string
-  reviewState: string
+  line: number
+  summary: string
+  bot: bool
+  resolved: bool
+  outdated: bool
+  replyCount: number
 
-shape PullRequestCommit
-  id: string
-  subject: string
-  author: string
-  createdAt: string
+shape PullTimeline
+  rows: PullEvent[]
+  hidden: number
 
 shape PullRequestActivity
+  key: string
   ready: bool
   error: string
-  comments: PullRequestComment[]
-  commits: PullRequestCommit[]
-  commentCount: number
-  commentsTruncated: bool
+  events: PullEvent[]
+  truncated: bool
 
 shape Project
   id: string
@@ -936,6 +939,32 @@ component T3Code
   resource viewedFiles = loadViewedFiles(pullRefs, pullRequestDetail.viewedKey) as shape ViewedFiles else empty()
   derive viewedScope = viewedFiles.key != "" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == viewedFiles.key).length == 1
   resource pullRequestActivity = loadPullRequestActivity(pullRefs) as shape PullRequestActivity else empty()
+  state activityKind = "All activity"
+  state activityBots = false
+  state activityResolved = false
+  state activityNewest = true
+  state activityVisit = ""
+  derive activityLocation = `${current.id}:${current.params.project}:${current.params.number}`
+  task startActivity when current.name == "pullRequest" key=activityLocation
+    change(resetActivityOptions)
+  action resetActivityOptions
+    if activityVisit != activityLocation
+      activityVisit = activityLocation
+      activityKind = "All activity"
+      activityBots = false
+      activityResolved = false
+      activityNewest = true
+  derive correctActivity = pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == pullRequestActivity.key).length == 1
+  resource timeline = localPullTimeline(visiblePullSection == "Activity" and correctActivity ? pullRequestActivity.events : [], activityKind, activityBots, activityResolved, activityNewest) as shape PullTimeline else empty()
+  action filterActivity(kind: string)
+    if ["All activity", "Comments", "Commits"].includes(kind)
+      activityKind = kind
+  action toggleActivityBots
+    activityBots = not activityBots
+  action toggleActivityResolved
+    activityResolved = not activityResolved
+  action orderActivity
+    activityNewest = not activityNewest
   state pullFileRevision = 0
   state collapsedDiffFiles: string[] = []
   state diffJumped = ""
@@ -3093,6 +3122,18 @@ component T3Code
                                 if pullRequestDetail.body != ""
                                   text pullRequestDetail.body line-clamp=12 padding-top=6
                             if visiblePullSection == "Activity"
+                              row align-items="center" gap=7 min-width=0 flex-wrap="wrap"
+                                button popovertarget="activity-kind-menu" aria-haspopup="menu" aria-label=`Activity type, ${activityKind}` appearance="none" min-height=44 display="flex" align-items="center" gap=7 testId="pull-activity-kind"
+                                  text activityKind font-size="0.875rem" font-weight=600
+                                  image "symbol:icon.disclose-down" width=11 height=11 color="muted"
+                                box flex=1
+                                button popovertarget="activity-show-menu" aria-haspopup="menu" aria-label=`Filter activity, ${timeline.hidden} hidden` min-height=44 min-width=44 appearance="none" display="flex" align-items="center" gap=5.25 testId="pull-activity-show"
+                                  if timeline.hidden > 0
+                                    text `${timeline.hidden} hidden` color="muted" font-size="0.8125rem"
+                                  image "symbol:filter" width=18 height=18 color="muted"
+                                button press=orderActivity aria-label=(activityNewest ? "Newest first" : "Oldest first") min-height=44 appearance="none" display="flex" align-items="center" gap=3.5 testId="pull-activity-order"
+                                  text (activityNewest ? "↓" : "↑") color="muted"
+                                  text (activityNewest ? "Newest" : "Oldest") font-size="0.8125rem" color="muted"
                               if pending(pullRequestActivity)
                                 row align-items="center" gap=8 padding-top=8
                                   progress width=16 height=16
@@ -3100,29 +3141,21 @@ component T3Code
                               else if pullRequestActivity.error != ""
                                 text pullRequestActivity.error color="danger" testId="pull-request-activity-error"
                               else
-                                if pullRequestActivity.commits.length > 0
-                                  column gap=6 padding-top=8
-                                    text "Commits" font-size=17 font-weight=700
-                                    for commit in pullRequestActivity.commits key=commit.id
-                                      row align-items="flex-start" gap=8 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-commit-${commit.id}`
-                                        image "symbol:sf/arrow.triangle.branch" width=15 height=15 color="muted"
-                                        column flex=1 min-width=0 gap=2
-                                          text commit.subject line-clamp=2
-                                          text `${commit.author != "" ? `${commit.author} · ` : ""}${commit.createdAt}` font-size=13 color="muted" line-clamp=1
-                                if pullRequestActivity.comments.length > 0
-                                  column gap=6 padding-top=8
-                                    text `Activity${pullRequestActivity.commentsTruncated ? " · Showing recent comments" : ""}` font-size=17 font-weight=700
-                                    for comment in pullRequestActivity.comments key=comment.id
-                                      column gap=3 padding="8px 0" border-bottom="1px solid edge" testId=`pull-request-comment-${comment.id}`
-                                        row align-items="center" gap=6
-                                          text (comment.author != "" ? comment.author : "Unknown reviewer") font-weight=700 line-clamp=1
-                                          text comment.kind font-size=12 color="muted"
-                                        if comment.path != ""
-                                          text comment.path font-size=12 color="muted" line-clamp=1
-                                        text comment.body white-space="pre-wrap" line-clamp=8
-                                        text comment.createdAt font-size=12 color="muted"
-                                if pullRequestActivity.commits.length == 0 and pullRequestActivity.comments.length == 0
-                                  text "No activity yet." padding-top=8 color="muted" testId="pull-request-activity-empty"
+                                for event in timeline.rows key=event.key
+                                  column gap=3.5 min-width=0 padding="7px 0" border-bottom="1px solid border-subtle" testId=`pull-request-${event.kind}-${event.id}`
+                                    text `${event.author} ${event.summary}` font-size="0.875rem" font-weight=500 line-clamp=2
+                                    if event.path != ""
+                                      text `${event.path}${event.line > 0 ? `:${event.line}` : ""}` color="muted" font-family="ui-monospace" font-size="0.8125rem" line-clamp=2
+                                    if event.body != ""
+                                      text event.body user-select="text" white-space="pre-wrap" line-clamp=8 overflow-wrap="break-word"
+                                    if event.kind == "discussion"
+                                      text `${event.resolved ? "Resolved" : "Unresolved"}${event.outdated ? " · Outdated" : ""} · ${event.replyCount} ${event.replyCount == 1 ? "comment" : "comments"}` font-size="0.8125rem" color="muted"
+                                    if event.date != ""
+                                      text event.date font-size="0.75rem" color="muted" line-clamp=1
+                                if timeline.rows.length == 0 and not pending(timeline)
+                                  text "No activity matches these filters." padding="21px 0" color="muted" testId="pull-request-activity-empty"
+                                if correctActivity and pullRequestActivity.truncated and activityKind != "Commits"
+                                  text "More activity is available on the provider." font-size="0.8125rem" color="muted" testId="pull-activity-partial"
                             if visiblePullSection == "Overview"
                               row align-items="center" min-height=60 gap=7
                                 column flex=1 min-width=0 gap=3.5
@@ -3572,6 +3605,15 @@ component T3Code
       column id="pull-file-filter-menu" popover="auto" role="menu" aria-label="Review files"
         button role="menuitemcheckbox" aria-checked=hidePullTests press=togglePullTests popovertarget="pull-file-filter-menu" popovertargetaction="hide" testId="pull-hide-test-files"
           text "Hide test files"
+      column id="activity-kind-menu" popover="auto" role="menu" aria-label="Activity"
+        for kind in ["All activity", "Comments", "Commits"] key=kind
+          button role="menuitemradio" aria-checked=(activityKind == kind) press=filterActivity(kind) popovertarget="activity-kind-menu" popovertargetaction="hide" testId=`pull-activity-kind-${kind}`
+            text kind
+      column id="activity-show-menu" popover="auto" role="menu" aria-label="Show in activity"
+        button role="menuitemcheckbox" aria-checked=activityBots press=toggleActivityBots popovertarget="activity-show-menu" popovertargetaction="hide" testId="pull-activity-bots"
+          text "Bot comments"
+        button role="menuitemcheckbox" aria-checked=activityResolved press=toggleActivityResolved popovertarget="activity-show-menu" popovertargetaction="hide" testId="pull-activity-resolved"
+          text "Resolved or dismissed"
       column id="terminal-options-menu" popover="auto" role="menu" aria-label="Terminal options"
         button role="menuitem" popovertarget="terminal-text-size-menu"
           image "symbol:sf/textformat.size"

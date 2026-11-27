@@ -3,6 +3,7 @@ import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullCounts, pullRow } from "./pull-row";
+import { activityEvents, activityTimeline } from "./pull-activity";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
@@ -599,6 +600,7 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  localPullTimeline: ([events,kind,bots,resolved,newest]) => activityTimeline(events,kind,bots,resolved,newest),
   pullFilePickerRows: ([files,folded]) => filePickerRows(files,folded),
   pullDiffRows: ([files,collapsed]) => pullDiffRows(files,collapsed),
   readPullPrefs: async (_args,_store,storage) => {
@@ -1866,46 +1868,12 @@ const sources: Sources = {
     }
   },
   loadPullRequestActivity: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", comments: [], commits: [], commentCount: 0, commentsTruncated: false };
+    const empty = { key:"", ready:true, error:"", events:[], truncated:false };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
       const activity = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestActivity(row.projectId, row.repository, row.number, row.host));
-      const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
-        (candidate: unknown) => {
-          const value = object(candidate);
-          const author = object(value.author);
-          return {
-            id: string(value.id),
-            author: string(author.login) || string(author.name) || string(value.author),
-            body: string(value.body),
-            createdAt: string(value.createdAt),
-            kind: string(value.kind),
-            path: string(value.path),
-            reviewState: string(value.reviewState),
-          };
-        },
-      );
-      const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
-        (candidate: unknown) => {
-          const value = object(candidate);
-          const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
-          return {
-            id: string(value.oid) || string(value.id),
-            subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
-            author: string(author.login) || string(author.name),
-            createdAt: string(value.committedDate) || string(value.createdAt),
-          };
-        },
-      );
-      return {
-        ready: true,
-        error: "",
-        comments,
-        commits,
-        commentCount: Number(activity.commentCount ?? comments.length),
-        commentsTruncated: activity.commentsTruncated === true,
-      };
+      return {key:`${row.routeKey}:${row.number}`, ready:true, error:"", events:activityEvents(activity), truncated:activity.commentsTruncated === true || activity.reviewThreadsTruncated === true};
     } catch (error) {
       return { ...empty, error: error instanceof Error ? error.message : "Pull request activity could not be loaded." };
     }
