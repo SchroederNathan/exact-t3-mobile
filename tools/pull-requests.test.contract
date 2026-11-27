@@ -28,7 +28,11 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect tree has "pull-request-comment-fixture-second.test"
-  expect text "pull-request-change-counts" == "0 changed files · +0 −0"
+  expect text "pull-request-change-counts" == "0 files"
+  expect text "pull-identity-status" == "Draft"
+  expect text "pull-identity-author" == "juniper"
+  expect text "pull-copy-base" == "main"
+  expect text "pull-copy-head" == "fix"
   expect tree has "pull-file-example"
   expect tree missing "pull-viewed-example"
   expect tree has "pull-file-omitted"
@@ -83,6 +87,8 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree has "pull-file-src/panel.test.ts"
   expect tree has "pull-viewed-src/panel.test.ts"
+  expect text "pull-identity-title" == "Updated title from the environment after the list was loaded"
+  expect text "pull-request-change-counts" == "1 file"
   expect text "pull-files-summary" == "1 changed file · 1 viewed · Test files included"
   tap "pull-file-src/panel.test.ts"
   clock data

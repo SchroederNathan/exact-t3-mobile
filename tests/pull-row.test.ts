@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { pullRow } from "../pull-row";
+import { pullCounts, pullRow } from "../pull-row";
+
+test("overview counts distinguish an actual empty diff from unavailable counts", () => {
+  expect(pullCounts({})).toEqual({added:"",deleted:"",files:""});
+  expect(pullCounts({additions:0,deletions:0,changedFiles:0}).files).toBe("0 files");
+  expect(pullCounts({addedLines:1234,deletedLines:2,changedFileCount:1})).toEqual({added:`+${(1234).toLocaleString()}`,deleted:"−2",files:"1 file"});
+  expect(pullCounts({additions:-1,deletions:Infinity,changedFiles:"0"})).toEqual({added:"",deleted:"",files:""});
+});
 
 test("PR rows expose all labels and status to assistive tech while only two chips take space", () => {
   const row = pullRow({state:"open", provider:"gitlab", title:"Keyboard", number:3, author:{login:"Élodie"}, mergeability:"conflicting", baseBranch:"main", labels:[{name:"UI",color:"#aBc123"},{name:"Docs",color:"url(bad)"},{name:"More"}], stack:{position:2,size:3}, checksState:"pending", viewerReviewRequested:true, reviewDecision:"approved", additions:1240, deletions:0});

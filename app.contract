@@ -513,7 +513,14 @@ shape PullRef
   number: number
   routeKey: string
 
+shape PullCounts
+  added: string
+  deleted: string
+  files: string
+
 shape PullRequestDetail
+  counts: PullCounts
+  key: string
   viewedKey: string
   items: PullRequest[]
   ready: bool
@@ -1294,7 +1301,8 @@ component T3Code
   derive pairError = match paired { case some(reply) => reply.error, case none => "" }
   derive sendError = failed(sent) ? "The message could not be sent. Try again." : match sent { case some(reply) => reply.error, case none => "" }
   derive current = top(nav)
-  derive selectedPullRequest = first(matchingPulls.length == 1 ? matchingPulls : pullRequestDetail.items)
+  derive currentPullDetail = pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == pullRequestDetail.key).length == 1
+  derive selectedPullRequest = first(currentPullDetail and pullRequestDetail.items.length == 1 ? pullRequestDetail.items : matchingPulls.length == 1 ? matchingPulls : [])
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
   derive split = device.split
@@ -1324,7 +1332,7 @@ component T3Code
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (thread.pinRank >= 0 or not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
-  derive listClockVisible = agesVisible or (current.name == "pullRequests" and pullRequests.items.length > 0)
+  derive listClockVisible = agesVisible or (current.name == "pullRequests" and pullRequests.items.length > 0) or (current.name == "pullRequest" and pullRefs.length == 1)
   task startThreadListClock when listClockVisible key=listClockVisible
     change(sampleThreadListClock)
   task tickThreadListClock when listClockVisible
@@ -3060,9 +3068,7 @@ component T3Code
                       match selectedPullRequest
                         case some(pull)
                           column gap=14
-                            text pull.title font-size=22 font-weight=700
-                            text `#${pull.number} · ${pull.state}${pull.isDraft ? " · Draft" : ""}` color="muted"
-                            text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` color="muted"
+                            PullIdentity(pull=pull, detail=pullRequestDetail, loaded=currentPullDetail, now=time.epochAtZero + threadListClock, copy=copyMessage)
                             if pending(pullRequestDetail)
                               row align-items="center" gap=8
                                 progress width=16 height=16
@@ -3070,9 +3076,8 @@ component T3Code
                             else if pullRequestDetail.error != ""
                               text pullRequestDetail.error color="danger" testId="pull-request-detail-error"
                             else
-                              text (pullRequestDetail.author != "" ? `Opened by ${pullRequestDetail.author}` : (pull.author != "" ? `Opened by ${pull.author}` : "")) color="muted"
-                              text `${pullRequestDetail.changedFiles} changed file${pullRequestDetail.changedFiles == 1 ? "" : "s"} · +${pullRequestDetail.additions} −${pullRequestDetail.deletions}` color="muted" testId="pull-request-change-counts"
-                              text (pullRequestDetail.checksState != "" ? `Checks: ${pullRequestDetail.checksState}` : "") color="muted"
+                              if pullRequestDetail.checksState != ""
+                                text `Checks: ${pullRequestDetail.checksState}` color="muted"
                               if pullRequestDetail.body != ""
                                 text pullRequestDetail.body line-clamp=12 padding-top=6
                             if pending(pullRequestActivity)
@@ -3151,7 +3156,6 @@ component T3Code
                                   text pullFiles.error color="danger"
                                 button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-files-more"
                                   text (pullFiles.error != "" ? "Retry loading files" : "Load more files")
-                            text `Updated ${pull.updatedAt}` font-size=13 color="muted"
                             button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
                               text "Open in source control"
                         case none
@@ -3760,6 +3764,45 @@ component ThreadList
                   text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
                 text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+
+component PullIdentity
+  props
+    pull: PullRequest
+    detail: PullRequestDetail
+    loaded: bool
+    now: number
+    copy: action
+  derive author = loaded and detail.author != "" ? detail.author : pull.author
+  derive added = loaded ? detail.counts.added : pull.row.addedText
+  derive deleted = loaded ? detail.counts.deleted : pull.row.deletedText
+  derive ink = pull.row.status == "Merged" ? "status-input" : pull.row.status == "Closed" ? "danger" : pull.row.status == "Draft" ? "muted" : "status-done"
+  view
+    column min-width=0 gap=10.5 testId="pull-identity"
+      row align-items="center" flex-wrap="wrap" gap=7 min-height=28
+        image "assets/pull-request.png" width=14 height=14 -exact-tint-color=ink
+        text pull.row.status color=ink font-size="0.8125rem" font-weight=500 testId="pull-identity-status"
+        if added != ""
+          text added color="status-done" font-size="0.75rem" font-weight=500 font-variant-numeric="tabular-nums"
+        if deleted != ""
+          text deleted color="danger" font-size="0.75rem" font-weight=500 font-variant-numeric="tabular-nums"
+        if loaded and detail.counts.files != ""
+          text detail.counts.files color="muted" font-size="0.75rem" testId="pull-request-change-counts"
+      text pull.title role="heading" aria-level=2 user-select="text" font-size="1.25rem" line-height="1.75rem" font-weight=700 overflow-wrap="break-word" testId="pull-identity-title"
+      row align-items="center" gap=7 min-width=0
+        column width=20 height=20 border-radius=10 background-color="card" align-items="center" justify-content="center" flex-shrink=0 aria-hidden=true
+          text pull.row.initial font-size=9 font-weight=500 color="muted"
+        text (author != "" ? author : "Unknown author") flex=1 min-width=0 font-size="0.8125rem" font-weight=500 line-clamp=1 testId="pull-identity-author"
+        if pull.row.updatedMs > 0
+          text `Updated ${compactAge(pull.row.updatedMs, now)} ago` min-width=0 max-width="55%" text-align="right" color="muted" font-size="0.75rem" line-clamp=1 testId="pull-identity-updated"
+      row align-items="center" gap=5.25 min-width=0
+        if pull.baseBranch != ""
+          button appearance="none" press=copy(pull.baseBranch) aria-label=`Copy base branch ${pull.baseBranch}` min-width=0 min-height=32 testId="pull-copy-base"
+            text pull.baseBranch color="muted" font-family="ui-monospace" font-size="0.75rem" line-clamp=2 overflow-wrap="anywhere"
+        if pull.baseBranch != "" and pull.headBranch != ""
+          text "←" color="muted" font-size=11 aria-hidden=true
+        if pull.headBranch != ""
+          button appearance="none" press=copy(pull.headBranch) aria-label=`Copy head branch ${pull.headBranch}` min-width=0 min-height=32 testId="pull-copy-head"
+            text pull.headBranch color="muted" font-family="ui-monospace" font-size="0.75rem" line-clamp=2 overflow-wrap="anywhere"
 
 component PullPageFooter
   props

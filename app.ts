@@ -2,7 +2,7 @@ import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./ap
 import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
-import { pullRow } from "./pull-row";
+import { pullCounts, pullRow } from "./pull-row";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
@@ -1798,7 +1798,7 @@ const sources: Sources = {
     return ref ? [ref] : [];
   },
   loadPullRequestDetail: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
+    const empty = { ready: true, error: "", body: "", author: "", counts:pullCounts({}), key:"", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
@@ -1806,7 +1806,7 @@ const sources: Sources = {
       const authorValue = object(value.author);
       const checks = object(value.checks);
       const items = projectPull(value, row.environmentId, row.host);
-      if (items.some(item => item.projectId !== row.projectId || item.repository !== row.repository || item.number !== row.number) || (value.host && value.host !== row.host)) throw new Error("The environment returned a different pull request.");
+      if (["projectId","repository","number","host"].some(field => value[field] !== undefined && value[field] !== row[field as keyof typeof row])) throw new Error("The environment returned a different pull request.");
       return {
         items,
         ready: true,
@@ -1817,6 +1817,7 @@ const sources: Sources = {
         deletions: Number(value.deletions ?? 0),
         changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
         checksState: string(value.checksState) || string(checks.state),
+        counts:pullCounts(value), key:`${row.routeKey}:${row.number}`,
         viewedKey: ["host", "environment"].includes(string(object(value.capabilities).viewedFiles)) ? `${row.routeKey}:${row.number}` : "",
       };
     } catch (error) {

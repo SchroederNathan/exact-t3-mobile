@@ -1,5 +1,11 @@
 import { object, string } from "./connection";
 
+export function pullCounts(raw: Record<string, unknown>) {
+  const label = (value:unknown, prefix:string) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? `${prefix}${value.toLocaleString()}` : "";
+  const count = raw.changedFiles ?? raw.changedFileCount;
+  return {added:label(raw.additions ?? raw.addedLines,"+"), deleted:label(raw.deletions ?? raw.deletedLines,"−"), files: typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? `${count.toLocaleString()} ${count === 1 ? "file" : "files"}` : ""};
+}
+
 export function pullRow(value: unknown) {
   const raw = object(value);
   const author = string(object(raw.author).login) || string(raw.author);
