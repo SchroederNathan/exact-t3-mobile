@@ -1,5 +1,18 @@
 import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./app.contract.d.ts";
 import { TableLayouts } from "./table-layout";
+import { usageWindow } from "./usage";
+import { poolLimitReports } from "./limit-pools";
+import { pullRow } from "./pull-row";
+import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
+import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
+import { decodePullRoute, pullRouteKey } from "./pull-route";
+import { ChangedFilePages } from "./pull-files";
+import { pullDiffRows } from "./pull-diff-view";
+import { pullListPredicate } from "./pull-search";
+import { PullPages } from "./pull-pages";
+import { readPullPreferences, writePullPreference } from "./pull-preferences";
+import { customSnoozeDeadline, localSnoozeField } from "./snooze";
+import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
 import { regroupNavigation } from "./navigation";
@@ -37,7 +50,10 @@ import { projectTurnDiff } from "./turn-review";
 import { addProjectSources } from "./add-project-sources";
 import {
   DirectSession,
+  rankThreadPins,
+  newPinKey,
   normalizeEnvironmentUrl,
+  parsePairingAddress,
   object,
   pair,
   readJson,
@@ -45,6 +61,7 @@ import {
   scopedThreadId,
   string,
   threadIdentity,
+  catalogThreadIdentity,
   threadIdFromUrl,
   type Catalog,
   type Environment,
@@ -52,7 +69,8 @@ import {
 } from "./connection";
 
 export const grants =
-  "device.microphone purpose.microphone\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
+  "device.camera purpose.camera\n" +
+  "device.microphone purpose.microphone\nfs.read app:/data/pull-list-controls-v1.json\nfs.write app:/data/pull-list-controls-v1.json\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
 const SECRET = "t3-environment-tokens";
@@ -213,6 +231,16 @@ function sessionScope(value: unknown, scope: string): boolean {
   return scope === "terminal:read" && scopes?.includes("terminal:operate") === true;
 }
 
+async function authorizeRow(id: string, key: string, store: Store) {
+  const identity = threadIdentity(id);
+  const session = sessionFor(identity.environmentId);
+  const token = credentials(store)[identity.environmentId];
+  if (!key || !token || key !== session.controlAccessKey()) throw new Error("Reconnect before updating the thread.");
+  const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+  if (session !== sessionFor(identity.environmentId)) throw new Error("The connection changed. Try again.");
+  return { session, threadId: identity.threadId, auth };
+}
+
 async function awaitReply<T>(operation: Promise<T>, native?: NativeModule | null): Promise<T> {
   if (!native?.available) return operation;
   const receipt = crypto.randomUUID();
@@ -311,6 +339,7 @@ function nativeCatalog(
   }
   syncNativeConnections(native);
   return {
+    limitProviders: poolLimitReports([...connections.values()].flatMap(({ session }) => session.subscriptionLimits()), now),
     environments: environments.map((environment) => {
       if (!environment.enabled) return { ...environment, status: "Off" };
       if (!tokens[environment.id]) return { ...environment, status: "Pairing required" };
@@ -321,8 +350,8 @@ function nativeCatalog(
       };
     }),
     projects: [...connections.values()].flatMap(({ session }) => session.projectList()),
-    threads: [...connections.values()]
-      .flatMap(({ session }) => session.threads(now))
+    threads: rankThreadPins([...connections.values()]
+      .flatMap(({ session }) => session.threads(now)))
       .sort(
         (left, right) =>
           Number(left.settled) - Number(right.settled) ||
@@ -341,7 +370,7 @@ async function loadCatalog(
   native?: NativeModule | null,
 ): Promise<Catalog> {
   const tokens = credentials(store);
-  const activeThread = activeThreadId ? threadIdentity(activeThreadId) : undefined;
+  const activeThread = catalogThreadIdentity(activeThreadId);
   if (native?.available) {
     native.watch("connections");
     return nativeCatalog(environments, tokens, activeThread, now, native);
@@ -352,10 +381,11 @@ async function loadCatalog(
   const environment = environmentId
     ? environments.find((entry) => entry.id === environmentId && entry.enabled)
     : environments.find((entry) => entry.enabled);
-  if (!environment) return { environments, threads: [], projects: [] };
+  if (!environment) return { environments, threads: [], projects: [], limitProviders: [] };
   const token = tokens[environment.id];
   if (!token)
     return {
+      limitProviders: [],
       environments: environments.map((entry) =>
         entry.id === environment.id ? { ...entry, status: "Pairing required" } : entry,
       ),
@@ -366,11 +396,12 @@ async function loadCatalog(
   current = session;
   if (activeThread?.environmentId === environment.id) session.select(activeThread.threadId);
   const snapshot = (): Catalog & { modelDraftRevision: number } => ({
+    limitProviders: poolLimitReports(session.subscriptionLimits(), now),
     modelDraftRevision,
     environments: environments.map((entry) =>
       entry.id === environment.id ? { ...session.environment } : entry,
     ),
-    threads: session.threads(now),
+    threads: rankThreadPins(session.threads(now)),
     projects: session.projectList(),
   });
   try {
@@ -533,7 +564,87 @@ const addProject = addProjectSources({
   },
 });
 
+const pullPages = new WeakMap<DirectSession, PullPages>();
+
+function projectPull(value: unknown, environmentId: string, hostOverride?: string) {
+  const raw = object(value);
+  const summary = pullRequestSummary(raw);
+  const projectId = string(raw.projectId);
+  if (!summary.repository || !projectId || summary.number < 1) return [];
+  const host = hostOverride ?? string(raw.host);
+  return [{ row: pullRow(raw), environmentId, host, routeKey:pullRouteKey(environmentId,projectId,host,summary.repository),
+    projectId, number:summary.number, title:summary.title, url:summary.url, state:summary.state, isDraft:raw.isDraft === true,
+    repository:summary.repository, baseBranch:summary.baseBranch, headBranch:summary.branch, updatedAt:summary.updatedAt, createdAt:string(raw.createdAt), author:summary.author,
+    body:string(raw.body) || string(raw.description), additions:Number(raw.additions ?? raw.addedLines ?? 0),
+    deletions:Number(raw.deletions ?? raw.deletedLines ?? 0), changedFiles:Number(raw.changedFiles ?? raw.changedFileCount ?? 0) }];
+}
+
+async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession, token: string) => Promise<T>): Promise<T> {
+  const session = sessionFor(id);
+  const key = session.controlAccessKey();
+  const token = credentials(store)[id];
+  const assertCurrent = () => {
+    if (!key || !token || key !== session.controlAccessKey() || session !== sessionFor(id) || token !== credentials(store)[id])
+      throw new Error("The environment connection changed. Reopen pull requests.");
+  };
+  assertCurrent();
+  const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
+  assertCurrent();
+  if (!sessionScope(auth, "orchestration:read")) throw new Error("This connection cannot read pull requests.");
+  const result = await awaitReply(read(session, token), native);
+  assertCurrent();
+  return result;
+}
+
+const filePages = new WeakMap<DirectSession, ChangedFilePages>();
+
 const sources: Sources = {
+  pullDiffRows: ([files,collapsed]) => pullDiffRows(files,collapsed),
+  readPullPrefs: async (_args,_store,storage) => {
+    try { return {ready:true,items:await readPullPreferences(storage.fs),error:""}; }
+    catch { return {ready:true,items:[],error:"Saved pull request filters could not be read."}; }
+  },
+  writePullPrefs: async ([entry],_store,storage) => {
+    try { await writePullPreference(storage.fs,entry); return {ok:true,error:""}; }
+    catch { return {ok:false,error:"Pull request filters could not be saved."}; }
+  },
+  pullControlMenu: ([state,involvement,draft,review,checks,sort,projects,environments,scope,project,count]) => pullControlMenu(state,involvement,draft,review,checks,sort,projects,environments,scope,project,count),
+  pullFacets: ([items,labels,author]) => pullFacets(items,labels,author),
+  facetSearchRows: ([selected,loaded,hosted,query]) => facetSearchRows(selected,loaded,hosted,query),
+  loadFacetOptions: async ([ids,kind,query,project],store,_storage,native) => {
+    const scope = project ? threadIdentity(project) : null;
+    const replies = await Promise.all(ids.filter(id=>!scope || id===scope.environmentId).map(async id=>{
+      try {
+        const page = await readPullRequestData(id,store,native,session=>session.pullFilterOptions(kind,query,scope?.threadId));
+        return {rows:hostFacetChoices(kind,page),failed:false};
+      } catch { return {rows:[],failed:true}; }
+    }));
+    return {kind,query,rows:replies.flatMap(reply=>reply.rows),failed:replies.some(reply=>reply.failed)};
+  },
+  orderPulls: ([items,sort]) => orderPulls(items,sort),
+  decodePairingScan: ([value, route]) => {
+    try {
+      if (value.length > 8192 || !/^(https?|t3code):\/\//i.test(value.trim())) throw new Error();
+      const { origin, credential } = parsePairingAddress(value, "");
+      return { route, address: origin, code: credential, error: "" };
+    } catch {
+      return { route, address: "", code: "", error: "Invalid pairing QR code. Scan the code from t3 pair or desktop Connections settings." };
+    }
+  },
+  searchMessages: async ([environmentId, query, project], _store, _storage, native) => {
+    const reply = { query, hits: [], unavailable: false };
+    try {
+      const scope = project ? threadIdentity(project) : null;
+      if (scope && scope.environmentId !== environmentId) return reply;
+      const session = sessionFor(environmentId);
+      const key = session.controlAccessKey();
+      const hits = await awaitReply(session.searchThreadMessages(query, scope?.threadId ?? ""), native);
+      return session === sessionFor(environmentId) && key === session.controlAccessKey()
+        ? { ...reply, hits: hits.map(hit => ({ ...hit, runs: excerptRuns(hit.snippet, query) })) } : reply;
+    } catch {
+      return { ...reply, unavailable: true };
+    }
+  },
   ...composerSources({sessionFor, sessions: allSessions, composerSettings, awaitReply}),
   ...composerImportSources({ sessionFor, awaitReply, readableEnvironmentIds: (environmentId) => sessionFor(environmentId).readableComposerEnvironmentIds() }),
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),
@@ -1172,6 +1283,76 @@ const sources: Sources = {
     loaded: true,
     items: await loadEnvironments(storage),
   }),
+  finishPinUndo: async ([id, receipt, now], _store, _storage, native) => {
+    try {
+      const identity = threadIdentity(id);
+      await awaitReply(sessionFor(identity.environmentId).finishPinUndo(identity.threadId, receipt, now), native);
+      return { ok: true, error: "" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not restore snooze." };
+    }
+  },
+  changeRowSettlement: async ([id, key, settle, receipt, now], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      const undo = await awaitReply(session.changeSettlement(threadId, key, settle, receipt, now, auth), native);
+      return { ok: true, error: "", undo };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not change thread settlement.", undo: "" }; }
+  },
+  updateRowTitle: async ([id, key, original, value, regenerate], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      await awaitReply(session.updateRowTitle(threadId, key, original, value, regenerate, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not update thread title." }; }
+  },
+  setRowAutoSettle: async ([id, key, enabled], store, _storage, native) => {
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      await awaitReply(session.setRowAutoSettle(threadId, key, enabled, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The auto-settle setting could not be changed." }; }
+  },
+  loadRowSnooze: ([id, key, opened]) => {
+    try {
+      const identity = threadIdentity(id);
+      return sessionFor(identity.environmentId).snoozeMenu(identity.threadId, key, opened);
+    } catch { return { available: false, sleeping: false, choices: [] }; }
+  },
+  customSnoozeStart: ([opened]) => ({ field: localSnoozeField(opened + 3_600_000), amounts: Array.from({ length: 99 }, (_, index) => String(index + 1)) }),
+  setCustomSnooze: async ([id, key, mode, field, amount, unit, now], store, _storage, native) => {
+    const wake = customSnoozeDeadline(mode, field, amount, unit, now);
+    if (!wake) return { ok: false, undo: "", error: mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration." };
+    try {
+      const { session, threadId, auth } = await authorizeRow(id, key, store);
+      const undo = await awaitReply(session.changeSnooze(threadId, key, "custom", now, now, auth, wake), native);
+      return { ok: true, undo, error: "" };
+    } catch (error) { return { ok: false, undo: "", error: error instanceof Error ? error.message : "Could not snooze thread." }; }
+  },
+  setRowSnooze: async ([id, key, choice, opened, now], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
+      const undo = await awaitReply(session.changeSnooze(threadId, key, choice, opened, now, auth), native);
+      return { ok: true, undo, error: "" };
+    } catch (error) { return { ok: false, undo: "", error: error instanceof Error ? error.message : "Could not update snooze." }; }
+  },
+  undoRowSnooze: async ([id, key, receipt, now], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
+      await awaitReply(session.undoThreadSnooze(threadId, key, receipt, now, auth), native);
+      return { ok: true, error: "" };
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "Could not undo snooze." }; }
+  },
+  setThreadPin: async ([id, key, pin, receipt], store, _storage, native) => {
+    try {
+      const {session, threadId, auth} = await authorizeRow(id, key, store);
+      const orderKey = pin ? newPinKey(allSessions().flatMap(item => item.pinKeys())) : undefined;
+      const undo = await awaitReply(session.setThreadPinned(threadId, key, pin, auth, orderKey, receipt), native);
+      return { ok: true, error: "", undo };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not change the thread pin.", undo: "" };
+    }
+  },
   loadControlAccess: async ([environmentId, key, _retry, forDraft], store) => {
     if (!environmentId || (!key && !forDraft)) return { key, allowed: false, error: "" };
     try {
@@ -1301,6 +1482,41 @@ const sources: Sources = {
       if (composerSettings.reconcile(id, live, live != null)) modelDraftRevision++;
     }
     return { ...catalog, modelDraftRevision };
+  },
+
+  loadUsage: async ([environments, days, refresh, now], store, _storage, native) => {
+    if (!environments.length) return [];
+    const window = usageWindow(days === 1 || days === 7 || days === 90 ? days : 30,
+      new Date(now), Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    const tokens = credentials(store);
+    return Promise.all(environments.map(async ({ id, label, enabled, status }) => {
+      const row = { id, label, cost: "", tokens: "", sessions: "", note: "", error: "",
+        chart: { periods: [], legend: [], nativeSeries: "[]", startLabel: "", endLabel: "", hasActivity: false, notice: "" } };
+      if (!enabled || status !== "Connected" || !tokens[id])
+        return { ...row, error: enabled ? "Waiting for connection…" : "Environment disabled." };
+      try {
+        const session = sessionFor(id);
+        const generation = session.controlAccessKey();
+        const auth = await readJson(`${session.environment.url}/api/auth/session`, {
+          headers: { Authorization: `Bearer ${tokens[id]}` },
+        });
+        if (!sessionScope(auth, "diagnostics:read"))
+          return { ...row, error: "This connection does not have permission to read usage." };
+        if (!generation || generation !== session.controlAccessKey() || session !== sessionFor(id))
+          return { ...row, error: "The environment connection changed. Refresh usage." };
+        const result = await awaitReply(session.readUsage(window, refresh > 0), native);
+        if (generation !== session.controlAccessKey() || session !== sessionFor(id))
+          return { ...row, error: "The environment connection changed. Refresh usage." };
+        return {
+          ...row, chart: { ...result.chart, nativeSeries: native?.available ? JSON.stringify(result.chart.periods) : "[]" }, cost: result.priced ? `$${result.cost.toFixed(2)}` : "Unpriced",
+          tokens: result.tokens.toLocaleString(), sessions: `Across ${result.sessions.toLocaleString()} ${result.sessions === 1 ? "session" : "sessions"}`,
+          note: [result.partial ? "Some sources could not report complete usage." : "",
+            result.unpriced > 0 ? "Some records have no known price." : ""].filter(Boolean).join(" "),
+        };
+      } catch (error) {
+        return { ...row, error: error instanceof Error ? error.message : "This environment could not report usage." };
+      }
+    }));
   },
 
   loadGitStatus: async ([id, _revision, draftEnvironmentId, draftCwd], _store, _storage, native) => {
@@ -1549,158 +1765,124 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async (_args, _store, _storage, native) => {
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    if (!sessions.length) return { ready: true, error: "", items: [] };
-    const responses = await Promise.allSettled(
-      sessions.map((session) => session.listPullRequests()),
-    );
-    const items = responses.flatMap((response) =>
-      response.status === "fulfilled"
-        ? (Array.isArray(response.value.entries) ? response.value.entries : []).map((entry: unknown) => {
+  loadPullRequests: async ([ids, state, involvement, search, index, project, labels, author], store, _storage, native) => {
+    const scope = project ? threadIdentity(project) : null;
+    const responses = await Promise.all(ids.filter(id=>!scope || scope.environmentId===id).map(async environmentId => {
+      try {
+        const {page, hasMore, moreError} = await readPullRequestData(environmentId, store, native, session => {
+          const pages = pullPages.get(session) ?? new PullPages();
+          pullPages.set(session, pages);
+          return pages.read(JSON.stringify([session.controlAccessKey(), state, involvement, search, project, labels, author]), index, request => session.listPullRequests(state, involvement, search, request, scope?.threadId,labels,author));
+        });
+        const matches = pullListPredicate(page, state, involvement, search,labels,author);
+        const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
-            const summary = pullRequestSummary(raw);
-            return {
-              number: summary.number,
-              title: summary.title,
-              url: summary.url,
-              state: summary.state,
-              isDraft: raw.isDraft === true,
-              repository: summary.repository,
-              baseBranch: summary.baseBranch,
-              headBranch: summary.branch,
-              updatedAt: summary.updatedAt,
-              projectId: string(raw.projectId),
-              author: summary.author,
-              body: string(raw.body) || string(raw.description),
-              additions: Number(raw.additions ?? raw.addedLines ?? 0),
-              deletions: Number(raw.deletions ?? raw.deletedLines ?? 0),
-              changedFiles: Number(raw.changedFiles ?? raw.changedFileCount ?? 0),
-            };
-          })
-        : [],
-    );
-    const failures = responses
-      .filter((response): response is PromiseRejectedResult => response.status === "rejected")
-      .map((response) => (response.reason instanceof Error ? response.reason.message : "Pull requests could not be loaded."));
-    return { ready: true, error: failures.join("\n"), items };
-  },
-  loadPullRequestDetail: async ([projectId, numberText], _store, _storage, native) => {
-    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "" };
-    if (!projectId || !numberText) return empty;
-    const number = Number(numberText);
-    if (!Number.isSafeInteger(number) || number < 1) return { ...empty, error: "This pull request number is invalid." };
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    for (const session of sessions) {
-      try {
-        const listed = await session.listPullRequests();
-        const entries = Array.isArray(listed.entries) ? listed.entries : [];
-        const entry = entries.find((candidate: unknown) => {
-          const raw = object(candidate);
-          return string(raw.projectId) === projectId && Number(raw.number) === number;
+            return (!scope || raw.projectId === scope.threadId) && matches(raw) ? projectPull(raw, environmentId) : [];
         });
-        if (!entry) continue;
-        const raw = object(entry);
-        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
-        if (!repository) continue;
-        const detail = await awaitReply(session.pullRequestDetail(projectId, repository, number), native);
-        const value = object(detail);
-        const authorValue = object(value.author);
-        const checks = object(value.checks);
-        return {
-          ready: true,
-          error: "",
-          body: string(value.body) || string(value.description),
-          author: string(authorValue.login) || string(authorValue.name) || string(value.author),
-          additions: Number(value.additions ?? raw.additions ?? 0),
-          deletions: Number(value.deletions ?? raw.deletions ?? 0),
-          changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
-          checksState: string(value.checksState) || string(checks.state),
-        };
-      } catch (error) {
-        return { ...empty, error: error instanceof Error ? error.message : "Pull request details could not be loaded." };
-      }
-    }
-    return { ...empty, error: "Pull request details are unavailable." };
-  },
-  loadPullRequestActivity: async ([projectId, numberText], _store, _storage, native) => {
-    const empty = {
-      ready: true,
-      error: "",
-      comments: [],
-      commits: [],
-      commentCount: 0,
-      commentsTruncated: false,
-    };
-    if (!projectId || !numberText) return empty;
-    const number = Number(numberText);
-    if (!Number.isSafeInteger(number) || number < 1)
-      return { ...empty, error: "This pull request number is invalid." };
-    const sessions = [...connections.values()].map((entry) => entry.session);
-    if (current && !sessions.includes(current)) sessions.push(current);
-    for (const session of sessions) {
-      try {
-        const listed = await session.listPullRequests();
-        const entries = Array.isArray(listed.entries) ? listed.entries : [];
-        const entry = entries.find((candidate: unknown) => {
-          const raw = object(candidate);
-          return string(raw.projectId) === projectId && Number(raw.number) === number;
+        const errors = (Array.isArray(page.errors) ? page.errors : []).map((failure: unknown) => {
+          const raw = object(failure);
+          return [string(raw.projectTitle), string(raw.message) || "Pull requests could not be loaded."].filter(Boolean).join(": ");
         });
-        if (!entry) continue;
-        const raw = object(entry);
-        const repository = string(raw.repository) || string(raw.repositoryFullName) || string(raw.repo);
-        if (!repository) continue;
-        const activity = object(
-          await awaitReply(session.pullRequestActivity(projectId, repository, number), native),
-        );
-        const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
-          (candidate: unknown) => {
-            const value = object(candidate);
-            const author = object(value.author);
-            return {
-              id: string(value.id),
-              author: string(author.login) || string(author.name) || string(value.author),
-              body: string(value.body),
-              createdAt: string(value.createdAt),
-              kind: string(value.kind),
-              path: string(value.path),
-              reviewState: string(value.reviewState),
-            };
-          },
-        );
-        const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
-          (candidate: unknown) => {
-            const value = object(candidate);
-            const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
-            return {
-              id: string(value.oid) || string(value.id),
-              subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
-              author: string(author.login) || string(author.name),
-              createdAt: string(value.committedDate) || string(value.createdAt),
-            };
-          },
-        );
-        return {
-          ready: true,
-          error: "",
-          comments,
-          commits,
-          commentCount: Number(activity.commentCount ?? comments.length),
-          commentsTruncated: activity.commentsTruncated === true,
-        };
+        return {items, errors, hasMore, moreError};
       } catch (error) {
-        return {
-          ...empty,
-          error: error instanceof Error ? error.message : "Pull request activity could not be loaded.",
-        };
+        return {items: [], errors: [error instanceof Error ? error.message : "Pull requests could not be loaded."], hasMore:false, moreError:""};
       }
-    }
-    return { ...empty, error: "Pull request activity is unavailable." };
+    }));
+    const items = responses.flatMap(result => result.items).sort((left, right) =>
+      (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0) || left.routeKey.localeCompare(right.routeKey) || right.number - left.number);
+    return {ready: true, error: responses.flatMap(result => result.errors).join("\n"), items, hasMore:responses.some(result => result.hasMore), moreError:responses.map(result => result.moreError).filter(Boolean).join("\n")};
   },
-
-
+  parsePullLink: ([key, number]) => {
+    const ref = decodePullRoute(key, number);
+    return ref ? [ref] : [];
+  },
+  loadPullRequestDetail: async ([matches], store, _storage, native) => {
+    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "", items: [] };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      const value = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestDetail(row.projectId, row.repository, row.number, row.host));
+      const authorValue = object(value.author);
+      const checks = object(value.checks);
+      const items = projectPull(value, row.environmentId, row.host);
+      if (items.some(item => item.projectId !== row.projectId || item.repository !== row.repository || item.number !== row.number) || (value.host && value.host !== row.host)) throw new Error("The environment returned a different pull request.");
+      return {
+        items,
+        ready: true,
+        error: "",
+        body: string(value.body) || string(value.description),
+        author: string(authorValue.login) || string(authorValue.name) || string(value.author),
+        additions: Number(value.additions ?? 0),
+        deletions: Number(value.deletions ?? 0),
+        changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
+        checksState: string(value.checksState) || string(checks.state),
+      };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Pull request detail could not be loaded." };
+    }
+  },
+  loadPullFiles: async ([matches, revision], store, _storage, native) => {
+    const empty = { files: [], truncated: false, nextCursor: "", error: "" };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      return await readPullRequestData(row.environmentId, store, native, (session, token) => {
+        const pages = filePages.get(session) ?? new ChangedFilePages();
+        filePages.set(session, pages);
+        return pages.read(JSON.stringify([session.controlAccessKey(),row.routeKey,row.number]), revision, cursor => readJson(`${session.environment.url}/api/pull-requests/diff`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: row.projectId, repository: row.repository, number: row.number, ...(row.host ? {host: row.host} : {}), ...(cursor ? {cursor} : {}) }),
+        }));
+      });
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Changed files could not be loaded." };
+    }
+  },
+  loadPullRequestActivity: async ([matches], store, _storage, native) => {
+    const empty = { ready: true, error: "", comments: [], commits: [], commentCount: 0, commentsTruncated: false };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      const activity = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestActivity(row.projectId, row.repository, row.number, row.host));
+      const comments = (Array.isArray(activity.comments) ? activity.comments : []).map(
+        (candidate: unknown) => {
+          const value = object(candidate);
+          const author = object(value.author);
+          return {
+            id: string(value.id),
+            author: string(author.login) || string(author.name) || string(value.author),
+            body: string(value.body),
+            createdAt: string(value.createdAt),
+            kind: string(value.kind),
+            path: string(value.path),
+            reviewState: string(value.reviewState),
+          };
+        },
+      );
+      const commits = (Array.isArray(activity.commits) ? activity.commits : []).map(
+        (candidate: unknown) => {
+          const value = object(candidate);
+          const author = Array.isArray(value.authors) ? object(value.authors[0]) : {};
+          return {
+            id: string(value.oid) || string(value.id),
+            subject: string(value.messageHeadline) || string(value.subject) || string(value.message),
+            author: string(author.login) || string(author.name),
+            createdAt: string(value.committedDate) || string(value.createdAt),
+          };
+        },
+      );
+      return {
+        ready: true,
+        error: "",
+        comments,
+        commits,
+        commentCount: Number(activity.commentCount ?? comments.length),
+        commentsTruncated: activity.commentsTruncated === true,
+      };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Pull request activity could not be loaded." };
+    }
+  },
   loadTerminalAccess: async ([threadId], store) => {
     if (!threadId) return { canRead: false, canOperate: false, error: "" };
     try {

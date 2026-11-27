@@ -1,0 +1,26 @@
+test "branch and linked PR searches find their thread without a message hit"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "search" "Subscription-Clock"
+  expect tree has "thread-fixture:alpha"
+  expect tree missing "thread-fixture:beta"
+  type "search" "fixture/ui#72"
+  expect tree has "thread-fixture:alpha"
+  type "search" "#7"
+  expect tree missing "thread-fixture:alpha"
+  type "search" "#81"
+  expect tree missing "thread-fixture:alpha"
+  type "search" "keyboard focus"
+  clock +121
+  clock data
+  expect tree has "thread-fixture:alpha"
+  expect tree missing "thread-excerpt-fixture:alpha"
+  tap "thread-fixture:alpha"
+  clock settle
+  expect state activeThreadId == "fixture:alpha"
