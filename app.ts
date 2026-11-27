@@ -17,6 +17,7 @@ import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
 import { parseFileLink, parseThreadLink, resolveThreadLink } from "./markdown-links";
+import { markdownBlocks } from "./markdown";
 import { regroupNavigation } from "./navigation";
 import { loadDrafts, saveDraft, restoreDrafts, parseSendSelection, parseLaunch, parseTaskStamp, type Draft } from "./drafts";
 import { RpcFailure } from "./attachment-session";
@@ -1812,7 +1813,7 @@ const sources: Sources = {
     return ref ? [ref] : [];
   },
   loadPullRequestDetail: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", body: "", author: "", counts:pullCounts({}), key:"", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
+    const empty = { ready: true, error: "", description: [], author: "", counts:pullCounts({}), key:"", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
@@ -1825,7 +1826,7 @@ const sources: Sources = {
         items,
         ready: true,
         error: "",
-        body: string(value.body) || string(value.description),
+        description: markdownBlocks(string(value.body) || string(value.description), `${row.routeKey}:${row.number}`),
         author: string(authorValue.login) || string(authorValue.name) || string(value.author),
         additions: Number(value.additions ?? 0),
         deletions: Number(value.deletions ?? 0),

@@ -526,7 +526,7 @@ shape PullRequestDetail
   items: PullRequest[]
   ready: bool
   error: string
-  body: string
+  description: MarkdownBlock[]
   author: string
   additions: number
   deletions: number
@@ -971,12 +971,18 @@ component T3Code
   state activityResolved = false
   state activityNewest = true
   state activityVisit = ""
+  state descriptionExpanded = false
+  action toggleDescription
+    if descriptionExpanded
+      scrollIntoView("pull-description-heading", block="start", behavior="instant")
+    descriptionExpanded = not descriptionExpanded
   derive activityLocation = `${current.id}:${current.params.project}:${current.params.number}`
   task startActivity when current.name == "pullRequest" key=activityLocation
     change(resetActivityOptions)
   action resetActivityOptions
     if activityVisit != activityLocation
       activityVisit = activityLocation
+      descriptionExpanded = false
       activityKind = "All activity"
       activityBots = false
       activityResolved = false
@@ -3186,8 +3192,8 @@ component T3Code
                               else
                                 if pullRequestDetail.checksState != ""
                                   text `Checks: ${pullRequestDetail.checksState}` color="muted"
-                                if pullRequestDetail.body != ""
-                                  text pullRequestDetail.body line-clamp=12 padding-top=6
+                                if currentPullDetail
+                                  PullDescription(blocks=pullRequestDetail.description, expanded=descriptionExpanded, toggle=toggleDescription)
                             if visiblePullSection == "Activity"
                               row align-items="center" gap=7 min-width=0 flex-wrap="wrap"
                                 button popovertarget="activity-kind-menu" aria-haspopup="menu" aria-label=`Activity type, ${activityKind}` appearance="none" min-height=44 display="flex" align-items="center" gap=7 testId="pull-activity-kind"
@@ -3917,6 +3923,53 @@ component ThreadList
                   text thread.title aria-label=(thread.regeneratingTitle ? `${thread.title}, regenerating title` : thread.title) opacity=(thread.regeneratingTitle ? 0.55 : 1) font-size=16 line-height="23px" font-weight=400 line-clamp=1 color=(sidebar and selectedId == thread.id ? "foreground" : sidebar ? "sidebar-muted" : "muted")
                   SearchExcerpt(hits=searchHits, id=thread.id)
                 text (shelf == "snoozed" ? wakeLabel(thread.wakeAt - now) : compactAge(thread.activityAt, now)) testId=`${shelf == "snoozed" ? "wake" : "age"}-${thread.id}` font-family="Menlo" font-size="0.875rem" line-height="1.1875rem" color=(sidebar ? "sidebar-muted" : "muted") font-variant-numeric="tabular-nums"
+
+component PullDescription
+  props
+    blocks: MarkdownBlock[]
+    expanded: bool
+    toggle: action
+  state naturalHeight = 0
+  derive foldable = naturalHeight > 240
+  derive folded = not expanded and foldable
+  action measured(width: number, height: number)
+    naturalHeight = height
+  view
+    column min-width=0 gap=10.5
+      text "Description" id="pull-description-heading" role="heading" aria-level=3 font="-exact-headline"
+      if blocks.length == 0
+        text "No description provided." color="muted" font="-exact-subheadline" testId="pull-description-empty"
+      else
+        column position="relative" min-width=0
+          column max-height=(expanded ? "none" : "240px") overflow="hidden" testId="pull-description-clip"
+            column resize=measured min-width=0 flex-shrink=0 testId="pull-description-content"
+              for block in blocks key=block.id
+                if block.kind == "thematic-break"
+                  box height=1 background-color="border-subtle" margin="7px 0"
+                else if block.kind == "heading"
+                  text role="heading" aria-level=block.headingLevel font="-exact-headline" user-select="text" overflow-wrap="anywhere" margin-bottom=block.spacingAfter
+                    for run in block.runs key=run.id
+                      text run.text
+                else if block.kind == "code" or block.kind == "table"
+                  text block.body font-family="Menlo" font-size="0.8125rem" white-space="pre-wrap" overflow-wrap="anywhere" background-color="card" padding=7 border-radius=7 user-select="text" margin-bottom=block.spacingAfter
+                else if block.kind == "image"
+                  text (block.imageAlt == "" ? "Image attachment" : block.imageAlt) color="muted" margin-bottom=block.spacingAfter
+                else
+                  row align-items="flex-start" min-width=0 gap=5 margin-left=(block.depth * 7) margin-bottom=block.spacingAfter border-left=(block.quoteDepth > 0 ? "2px solid border-subtle" : "none")
+                    if block.marker != ""
+                      text block.marker font="-exact-subheadline"
+                    text min-width=0 flex=1 user-select="text" font="-exact-subheadline" white-space="pre-wrap" overflow-wrap="anywhere"
+                      for run in block.runs key=run.id
+                        if run.linkKind == "external" and not folded
+                          text run.text href=run.href color="AccentColor"
+                        else
+                          text run.text font-weight=(run.strong ? 700 : 400) font-style=(run.emphasis ? "italic" : "normal") font-family=(run.code ? "Menlo" : "inherit") text-decoration-line=(run.strike ? "line-through" : "none")
+          if folded
+            box position="absolute" left=0 right=0 bottom=0 height=80 pointer-events="none" aria-hidden=true background-image="linear-gradient(180deg, transparent 0%, screen 72%, screen 100%)"
+          if foldable
+            button press=toggle aria-expanded=expanded aria-label=(expanded ? "Collapse description" : "Expand description") position=(folded ? "absolute" : "relative") left=0 right=0 bottom=0 appearance="none" min-height=44 display="flex" align-items="center" justify-content="center" gap=4 testId="pull-description-toggle"
+              text (expanded ? "Show less" : "Show more") font="-exact-footnote" font-weight=500
+              image "symbol:icon.disclose-down" width=10 height=10 transform=(expanded ? "rotate(180deg)" : "none")
 
 component PullIdentity
   props
