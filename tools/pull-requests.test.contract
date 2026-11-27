@@ -29,6 +29,7 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree missing "pull-request-comment-fixture-second.test"
   expect tree has "pull-description-content"
+  expect tree missing "pull-link-options"
   expect tree missing "pull-description-toggle"
   tap "pull-section-Activity"
   clock data
@@ -130,6 +131,9 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   tap "pull-description-toggle"
   expect state descriptionExpanded == false
   expect text "pull-identity-title" == "Updated title from the environment after the list was loaded"
+  tap "pull-link-options"
+  expect tree has "pull-request-open-url"
+  tap "pull-copy-link"
   expect text "pull-request-change-counts" == "1 file"
   expect text "pull-files-summary" == "1 changed file · 1 viewed · Test files included"
   tap "pull-file-src/panel.test.ts"

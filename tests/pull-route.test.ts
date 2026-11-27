@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { decodePullRoute, pullRouteKey } from "../pull-route";
+import { decodePullRoute, providerLink, pullRouteKey } from "../pull-route";
+
+test("provider actions preserve an explicit web URL and never share embedded credentials or invent an address",()=>{
+  for (const url of ["https://code.example.invalid/Org/My%20Project/pull/9?view=files#L4","http://git.internal:8080/org/review/9"]) expect(providerLink(url)).toBe(url);
+  for (const url of ["","/pull/9","//git.invalid/pull/9","javascript:alert(1)","https://token@git.invalid/pr/9","https://u:p@git.invalid","https://git.invalid/\npath","https://git.invalid\\other.invalid"]) expect(providerLink(url)).toBe("");
+});
 
 test("canonical PR routes round trip without normalizing host, repository, or Unicode", () => {
   const key = pullRouteKey("laptop:一", "project/one", "host.internal:443", "Org/repo%2F");

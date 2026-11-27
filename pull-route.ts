@@ -1,3 +1,11 @@
+export function providerLink(value: string): string {
+  if (!/^https?:\/\//i.test(value) || /[\\\s\u0000-\u001f\u007f]/u.test(value)) return "";
+  try {
+    const url = new URL(value);
+    return url.hostname && !url.username && !url.password ? value : "";
+  } catch { return ""; }
+}
+
 export function pullRouteKey(environmentId: string, projectId: string, host: string, repository: string) {
   return `pr-${Array.from(new TextEncoder().encode(JSON.stringify([environmentId, projectId, host, repository])), byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }

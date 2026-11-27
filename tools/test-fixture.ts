@@ -543,6 +543,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           }
           const detail = method === "setFilesViewed" ? null : method === "filesViewed" ? {files:[{path:"src/panel.test.ts",state:viewedPanel ? "viewed" : "unviewed"},{path:"example",state:"dismissed"}],truncated:false} : method === "detail" && frame.payload.host === "first.test" ? {...entries[0],...value,state:"open",changedFiles:1,additions:1234,deletions:0,title:"Updated title from the environment after the list was loaded",headBranch:"feature/keyboard-focus-and-accessibility-when-a-review-branch-has-a-long-name",capabilities:{viewedFiles:"host"}} : method === "detail" && offPage ? {...value,projectId:"shared",host:"second.test",repository,number:29,title:"Archived keyboard change",state:"merged",updatedAt:timestamp,baseBranch:"main",headBranch:"fix"} : value;
           if (method === "detail" && detail && "body" in detail) {
+            Object.assign(detail,{url:frame.payload.host === "first.test" ? `https://review.example.invalid/${repository}/pull/9?tab=details#overview` : ""});
             if (offPage) detail.body = "  \n";
             else if (frame.payload.host === "first.test") detail.body = ["## Keyboard changes", ...Array.from({length:15}, (_, index) => `- Verify **alignment** for row ${index + 1}`), "", "Final paragraph with `shortcuts` and [documentation](https://example.invalid/guide)."].join("\n");
           }

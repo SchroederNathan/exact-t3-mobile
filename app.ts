@@ -7,7 +7,7 @@ import { activityEvents, activityTimeline } from "./pull-activity";
 import { discussionGrants, discussionPage, discussionPosts, discussionSeeds } from "./pull-discussion";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
-import { decodePullRoute, pullRouteKey } from "./pull-route";
+import { decodePullRoute, providerLink, pullRouteKey } from "./pull-route";
 import { ChangedFilePages, filePickerRows } from "./pull-files";
 import { pullDiffRows } from "./pull-diff-view";
 import { pullListPredicate } from "./pull-search";
@@ -576,7 +576,7 @@ function projectPull(value: unknown, environmentId: string, hostOverride?: strin
   if (!summary.repository || !projectId || summary.number < 1) return [];
   const host = hostOverride ?? string(raw.host);
   return [{ row: pullRow(raw), environmentId, host, routeKey:pullRouteKey(environmentId,projectId,host,summary.repository),
-    projectId, number:summary.number, title:summary.title, url:summary.url, state:summary.state, isDraft:raw.isDraft === true,
+    projectId, number:summary.number, title:summary.title, url:providerLink(summary.url), state:summary.state, isDraft:raw.isDraft === true,
     repository:summary.repository, baseBranch:summary.baseBranch, headBranch:summary.branch, updatedAt:summary.updatedAt, createdAt:string(raw.createdAt), author:summary.author,
     body:string(raw.body) || string(raw.description), additions:Number(raw.additions ?? raw.addedLines ?? 0),
     deletions:Number(raw.deletions ?? raw.deletedLines ?? 0), changedFiles:Number(raw.changedFiles ?? raw.changedFileCount ?? 0) }];

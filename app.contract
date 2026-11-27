@@ -131,6 +131,9 @@ shape Device
   rail: bool
   split: bool
 
+shape ShareSupport
+  canShare: bool
+
 shape Environment
   id: string
   label: string
@@ -831,6 +834,7 @@ component T3Code
   derive shownModelGroups = settings.groups.filter(group => (modelProviderFilter == "" or modelProviderFilter == "@favorites" or group.id == modelProviderFilter) and matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites").length > 0)
   resource time = exactTime() as shape Time
   resource device = deviceTraits() as shape Device else empty()
+  resource shareSupport = exactPage() as shape ShareSupport
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = "" persist
   derive commitRoute = current.name == "pullCommit" or current.name == "pullCommitFile" or current.name == "pullCommitPicker"
@@ -1503,6 +1507,11 @@ component T3Code
       pullSectionVisit = `${current.id}:${current.params.project}:${current.params.number}`
       chosenPullSection = section
   derive selectedPullRequest = first(currentPullDetail and pullRequestDetail.items.length == 1 ? pullRequestDetail.items : matchingPulls.length == 1 ? matchingPulls : [])
+  derive reviewRepository = match first(pullRefs) { case some(ref) => ref.repository, case none => "" }
+  derive reviewDiffSubtitle = `${commitRoute ? commitOid.slice(0, 7) : `#${current.params.number}`} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}`
+  action sharePullLink(title: string, url: string)
+    if current.name == "pullRequest" and shareSupport.canShare and url != ""
+      share(title=title, url=url)
   derive duoFolded = device.kind == "duo-folded"
   derive duoDevice = duoFolded or device.kind == "duo-unfolded"
   derive split = device.split
@@ -3248,11 +3257,24 @@ component T3Code
                         text (hostedFacets.failed ? "Couldn't search the host" : facetKind == "labels" ? "No matching labels" : "No matching authors") font="-exact-headline" testId="pr-facet-empty"
                         text (hostedFacets.failed ? "The host didn't answer. Try again in a moment." : facetKind == "labels" ? "Search the labels of the repositories this list covers." : "Search the authors of the repositories this list covers.") font="-exact-footnote" color="muted" text-align="center"
               if e.name == "pullRequest"
-                column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
-                  header
-                    button press=backPullRequest aria-label="Back" testId="pull-request-back"
-                      image "symbol:back"
-                    text (match selectedPullRequest { case some(pull) => `#${pull.number} ${pull.title}`, case none => "Pull request" }) role="heading" aria-level=2 line-clamp=1
+                column navigationKey=`${e.id}` navigationScroll="pull-request-detail" data-review-subtitle=reviewRepository position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
+                  header display="grid" grid-template-columns="44px minmax(0, 1fr) 44px" align-items="center" min-height=44 padding="0 7px" testId="pull-detail-bar"
+                    if device.kind == "web"
+                      button id="back" press=backPullRequest aria-label="Back" appearance="none" display="flex" justify-content="center" align-items="center" padding=0 min-width=44 min-height=44 testId="pull-request-back"
+                        image "symbol:back"
+                    else
+                      button id="back" press=backPullRequest aria-label="Back" min-width=44 min-height=44 testId="pull-request-back"
+                        image "symbol:back"
+                    text `#${e.params.number}` role="heading" aria-level=2 min-width=0 text-align="center" line-clamp=1 margin=0
+                    match selectedPullRequest
+                      case some(pull)
+                        if pull.url != ""
+                          button popovertarget="pull-link-menu" aria-label="Pull request actions" aria-haspopup="menu" min-height=44 min-width=44 testId="pull-link-options"
+                            image "symbol:sf/ellipsis"
+                      case none
+                        box width=0
+                  if device.kind == "web" and reviewRepository != ""
+                    text reviewRepository color="muted" font="-exact-caption1" text-align="center" line-clamp=1 testId="pull-detail-subtitle"
                   scroll id="pull-request-detail" flex=1 min-height=0 padding=16
                     if pending(pullRequests) or (matchingPulls.length == 0 and pullLink.length > 0 and (pending(catalog) or pending(pullRequestDetail)))
                       row align-items="center" gap=8
@@ -3372,16 +3394,18 @@ component T3Code
                                     text pullFiles.error color="danger"
                                   button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-files-more"
                                     text (pullFiles.error != "" ? "Retry loading files" : "Load more files")
-                              button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
-                                text "Open in source control"
                         case none
                           text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
               if e.name == "pullDiscussion"
-                column navigationKey=`${e.id}` navigationScroll="discussion-posts" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
-                  header
-                    button id="back" press=backPullRequest aria-label="Back to activity" testId="pull-discussion-back"
-                      image "symbol:back"
-                    text "Discussion" role="heading" aria-level=2
+                column navigationKey=`${e.id}` navigationScroll="discussion-posts" data-review-subtitle=`#${e.params.number}` position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header display="grid" grid-template-columns="44px minmax(0, 1fr) 44px" align-items="center" min-height=44 padding="0 7px" testId="pull-discussion-bar"
+                    if device.kind == "web"
+                      button id="back" press=backPullRequest aria-label="Back to activity" appearance="none" display="flex" justify-content="center" align-items="center" padding=0 min-width=44 min-height=44 testId="pull-discussion-back"
+                        image "symbol:back"
+                    else
+                      button id="back" press=backPullRequest aria-label="Back to activity" min-width=44 min-height=44 testId="pull-discussion-back"
+                        image "symbol:back"
+                    text "Discussion" role="heading" aria-level=2 min-width=0 text-align="center" line-clamp=1 margin=0
                     if resolveAllowed
                       match first(discussionSeed)
                         case some(thread)
@@ -3422,10 +3446,14 @@ component T3Code
                           text "Reply"
               if e.name == "pullFilesSheet" or e.name == "pullCommitPicker"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
-                  header
-                    button id="back" press=backPullRequest aria-label="Close changed files" testId="pull-picker-close"
-                      image "symbol:close"
-                    text "Changed files" role="heading" aria-level=2
+                  header display="grid" grid-template-columns="44px minmax(0, 1fr) 44px" align-items="center" min-height=44 padding="0 7px" testId="pull-picker-bar"
+                    if device.kind == "web"
+                      button id="back" press=backPullRequest aria-label="Close changed files" appearance="none" display="flex" justify-content="center" align-items="center" padding=0 min-width=44 min-height=44 testId="pull-picker-close"
+                        image "symbol:close"
+                    else
+                      button id="back" press=backPullRequest aria-label="Close changed files" min-width=44 min-height=44 testId="pull-picker-close"
+                        image "symbol:close"
+                    text "Changed files" role="heading" aria-level=2 min-width=0 text-align="center" line-clamp=1 margin=0
                   row align-items="center" gap=7 padding="0 14px"
                     text (match first(pullRefs) { case some(ref) => `#${ref.number} · ${ref.repository}`, case none => "Changed files" }) flex=1 min-width=0 line-clamp=1 font="-exact-footnote" color="muted" testId="pull-picker-subtitle"
                     button popovertarget="pull-file-filter-menu" aria-label="Filter review files" min-height=44 min-width=44 testId="pull-picker-filter"
@@ -3464,14 +3492,19 @@ component T3Code
                     button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-picker-more"
                       text "Load more files"
               if e.name == "pullFile" or e.name == "pullCommit" or e.name == "pullCommitFile"
-                column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
-                  header
-                    button id="back" press=backPullRequest aria-label="Back to pull request" testId="pull-diff-back"
-                      image "symbol:back"
-                    text (commitRoute ? "Commit changes" : "Changes") role="heading" aria-level=2
+                column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" data-review-subtitle=reviewDiffSubtitle position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header display="grid" grid-template-columns="44px minmax(0, 1fr) 44px" align-items="center" min-height=44 padding="0 7px" testId="pull-diff-bar"
+                    if device.kind == "web"
+                      button id="back" press=backPullRequest aria-label="Back to pull request" appearance="none" display="flex" justify-content="center" align-items="center" padding=0 min-width=44 min-height=44 testId="pull-diff-back"
+                        image "symbol:back"
+                    else
+                      button id="back" press=backPullRequest aria-label="Back to pull request" min-width=44 min-height=44 testId="pull-diff-back"
+                        image "symbol:back"
+                    text (commitRoute ? "Commit changes" : "Changes") role="heading" aria-level=2 min-width=0 text-align="center" line-clamp=1 margin=0
                     button popovertarget="pull-diff-options-menu" aria-haspopup="menu" aria-label="Diff options" min-width=44 min-height=44 testId="pull-diff-options"
                       image "symbol:sf/ellipsis"
-                  text `${commitRoute ? commitOid.slice(0, 7) : `#${e.params.number}`} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
+                  if device.kind == "web"
+                    text reviewDiffSubtitle color="muted" font="-exact-footnote" text-align="center" line-clamp=1 testId="pull-diff-summary"
                   if viewedError != ""
                     text viewedError color="danger" role="alert" padding="7px 14px" testId="pull-viewed-error"
                   if pullFiles.error != ""
@@ -3822,6 +3855,19 @@ component T3Code
           image "symbol:sf/plus"
           text "Open new terminal"
           text `Start another shell in ${terminalMenu.workspaceRoot == "" ? "this workspace" : terminalBasename(terminalMenu.workspaceRoot)}`
+      column id="pull-link-menu" popover="auto" role="menu" aria-label="Pull request actions"
+        match selectedPullRequest
+          case some(pull)
+            if current.name == "pullRequest" and pull.url != ""
+              button role="menuitem" press=openPullRequestUrl(pull.url) popovertarget="pull-link-menu" popovertargetaction="hide" testId="pull-request-open-url"
+                text "Open in source control"
+              button role="menuitem" press=copyMessage(pull.url) popovertarget="pull-link-menu" popovertargetaction="hide" testId="pull-copy-link"
+                text "Copy link"
+              if shareSupport.canShare
+                button role="menuitem" press=sharePullLink(pull.title,pull.url) popovertarget="pull-link-menu" popovertargetaction="hide" testId="pull-share-link"
+                  text "Share…"
+          case none
+            box width=0
       column id="pull-diff-options-menu" popover="auto" role="menu" aria-label="Diff options"
         button role="menuitemcheckbox" aria-checked=wrapPullDiff press=toggleDiffWrap popovertarget="pull-diff-options-menu" popovertargetaction="hide" testId="pull-diff-wrap"
           text "Word wrap"

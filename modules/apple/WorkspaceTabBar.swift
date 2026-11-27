@@ -268,6 +268,9 @@ final class T3NativeModule: ExactModule {
       let item = route.controller.navigationItem
       let style = route.data[.workspaceHeader]
       configureWorkspacePageTitle(item, bar: route.controller.navigationController?.navigationBar)
+      if #available(iOS 26.0, *), let subtitle = route.data[.reviewSubtitle] {
+        item.subtitle = subtitle.isEmpty ? nil : subtitle
+      }
       item.backButtonDisplayMode = .minimal
       item.hidesBackButton = route.data[.hidesBack] == "true"
       if let sidebar = route.data[.sidebar] { container?.setSidebarHidden(sidebar == "hidden") }
