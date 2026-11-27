@@ -1307,13 +1307,13 @@ export class DirectSession {
     return this.query("pullRequests.list", { state, involvement, ...page, ...pullSearch(search,labels,author), ...(projectId ? {projectId} : {}) });
   }
 
-  async pullRequestDetail(projectId: string, repository: string, number: number, host?: string): Promise<ObjectValue> {
+  async pullRequestDetail(projectId: string, repository: string, number: number, host?: string, allowStale = true): Promise<ObjectValue> {
     return this.query("pullRequests.detail", {
       ...(host ? { host } : {}),
       projectId,
       repository,
       number,
-      allowStale: true,
+      allowStale,
     });
   }
 
@@ -1331,6 +1331,10 @@ export class DirectSession {
     return this.query("pullRequests.threadComments",{projectId,repository,number,host,threadId,cursor});
   }
 
+  async changePullDiscussion(ref: {projectId:string; repository:string; number:number; host:string; threadId:string}, change: {body:string} | {resolved:boolean}) {
+    await this.query("body" in change ? "pullRequests.replyToThread" : "pullRequests.setThreadResolution", {...ref,...change});
+  }
+
   async setPullFileViewed(projectId: string, repository: string, number: number, host: string, path: string, viewed: boolean) {
     await this.query("pullRequests.setFilesViewed", {projectId,repository,number,host,files:[{path,viewed}]});
   }
@@ -1340,13 +1344,14 @@ export class DirectSession {
     repository: string,
     number: number,
     host?: string,
+    allowStale = true,
   ): Promise<ObjectValue> {
     return this.query("pullRequests.activity", {
       ...(host ? { host } : {}),
       projectId,
       repository,
       number,
-      allowStale: true,
+      allowStale,
     });
   }
 

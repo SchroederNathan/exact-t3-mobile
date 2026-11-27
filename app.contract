@@ -520,6 +520,9 @@ shape PullCounts
   files: string
 
 shape PullRequestDetail
+  discussionAccess: string
+  canReply: bool
+  canResolve: bool
   counts: PullCounts
   key: string
   viewedKey: string
@@ -585,6 +588,7 @@ shape PullDiscussion
   path: string
   line: number
   resolved: bool
+  resolutionAllowed: bool
   outdated: bool
   posts: DiscussionPost[]
   count: number
@@ -596,6 +600,13 @@ shape DiscussionPage
   posts: DiscussionPost[]
   next: string
   hidden: number
+  error: string
+
+shape DiscussionWrite
+  key: string
+  visit: string
+  operation: string
+  body: string
   error: string
 
 shape Project
@@ -1000,6 +1011,48 @@ component T3Code
     activityNewest = not activityNewest
   derive discussionKey = current.name == "pullDiscussion" and correctActivity ? `${pullRequestActivity.key}:${current.params.thread}` : ""
   derive discussionSeed = pullRequestActivity.discussions.filter(item => discussionKey != "" and item.id == current.params.thread)
+  derive discussionVisit = current.name == "pullDiscussion" ? `${current.id}:${current.params.project}:${current.params.number}:${current.params.thread}` : ""
+  derive canDiscuss = currentPullDetail and discussionSeed.length == 1 and pullRequestDetail.discussionAccess != ""
+  derive replyAllowed = canDiscuss and pullRequestDetail.canReply
+  derive resolveAllowed = canDiscuss and pullRequestDetail.canResolve and discussionSeed.filter(thread => thread.resolutionAllowed).length == 1
+  state replyDraft = ""
+  state replyVisit = ""
+  state writeMessage = ""
+  state writeFailed = false
+  derive shownDraft = replyVisit == discussionVisit ? replyDraft : ""
+  derive discussionBusy = pending(discussionWrite) or pending(moreDiscussion)
+  mutation discussionWrite as shape DiscussionWrite refreshes pullRequestActivity, pullRequestDetail then afterDiscussionWrite
+  action editDiscussionReply(value: string)
+    if replyAllowed and not discussionBusy
+      replyVisit = discussionVisit
+      replyDraft = value.slice(0, 65536)
+      writeMessage = ""
+  action postDiscussionReply
+    if replyAllowed and not discussionBusy and shownDraft.trim() != ""
+      writeMessage = ""
+      send discussionWrite = writePullDiscussion(pullRefs, discussionKey, discussionVisit, current.params.thread, pullRequestDetail.discussionAccess, "reply", shownDraft, false)
+  action toggleDiscussionResolution
+    if resolveAllowed and not discussionBusy
+      match first(discussionSeed)
+        case some(thread)
+          if replyVisit != discussionVisit
+            replyDraft = ""
+          replyVisit = discussionVisit
+          writeMessage = ""
+          send discussionWrite = writePullDiscussion(pullRefs, discussionKey, discussionVisit, current.params.thread, pullRequestDetail.discussionAccess, "resolve", "", not thread.resolved)
+        case none
+          writeMessage = ""
+  action afterDiscussionWrite
+    match discussionWrite
+      case some(result)
+        if result.visit == discussionVisit and replyVisit == discussionVisit
+          writeFailed = result.error != ""
+          writeMessage = (result.error != "" ? result.error : result.operation == "reply" ? "Reply posted." : "Discussion status updated.")
+          if result.error == "" and result.operation == "reply" and replyDraft == result.body
+            replyDraft = ""
+      case none
+        writeFailed = true
+        writeMessage = "The provider could not complete this action."
   state discussionCacheKey = ""
   state discussionExtra: DiscussionPost[] = []
   state discussionNext = ""
@@ -1014,7 +1067,7 @@ component T3Code
       discussionCacheKey = ""
       nav = push(nav,path("pullDiscussion",current.params.project,current.params.number,id))
   action loadDiscussionPage
-    if discussionSeed.length == 1 and discussionKey != "" and discussionCursor != "" and not pending(moreDiscussion)
+    if discussionSeed.length == 1 and discussionKey != "" and discussionCursor != "" and not discussionBusy
       let cursor = discussionCursor
       if discussionCacheKey != discussionKey
         discussionExtra = []
@@ -1030,11 +1083,12 @@ component T3Code
         if reply.key == discussionKey and reply.key == discussionCacheKey and reply.cursor == discussionNext
           discussionError = reply.error
           if reply.error == ""
+            let used = discussionUsed.concat([reply.cursor])
             discussionExtra = discussionExtra.concat(reply.posts)
             discussionHidden = discussionHidden + reply.hidden
-            discussionUsed = discussionUsed.concat([reply.cursor])
-            discussionNext = discussionUsed.includes(reply.next) ? "" : reply.next
-            if discussionUsed.includes(reply.next)
+            discussionUsed = used
+            discussionNext = used.includes(reply.next) ? "" : reply.next
+            if used.includes(reply.next)
               discussionError = "The environment repeated a replies page."
       case none
         discussionError = "More replies could not be loaded."
@@ -3310,6 +3364,13 @@ component T3Code
                     button id="back" press=backPullRequest aria-label="Back to activity" testId="pull-discussion-back"
                       image "symbol:back"
                     text "Discussion" role="heading" aria-level=2
+                    if resolveAllowed
+                      match first(discussionSeed)
+                        case some(thread)
+                          button press=toggleDiscussionResolution disabled=(discussionBusy or pending(pullRequestActivity)) aria-label=(thread.resolved ? "Unresolve" : "Resolve") min-height=44 min-width=44 testId="discussion-resolution"
+                            image (thread.resolved ? "symbol:sf/arrow.uturn.backward" : "symbol:checkmark")
+                        case none
+                          box width=0
                   scroll id="discussion-posts" flex=1 min-height=0 padding="7px 14px 28px"
                     match first(discussionSeed)
                       case some(thread)
@@ -3326,13 +3387,21 @@ component T3Code
                           if discussionCacheKey == discussionKey and discussionError != ""
                             text discussionError color="danger" testId="discussion-page-error"
                           if discussionCursor != ""
-                            button press=loadDiscussionPage disabled=pending(moreDiscussion) min-height=44 testId="discussion-more"
+                            button press=loadDiscussionPage disabled=discussionBusy min-height=44 testId="discussion-more"
                               text (pending(moreDiscussion) ? "Loading…" : "Load more replies")
                       case none
                         if pending(pullRequestActivity) or pending(catalog)
                           progress aria-label="Loading discussion"
                         else
                           text (pullRequestActivity.error != "" ? pullRequestActivity.error : "This discussion is unavailable.") color="muted" padding=14 testId="pull-discussion-unavailable"
+                  if replyVisit == discussionVisit and writeMessage != ""
+                    text writeMessage role=(writeFailed ? "alert" : "status") color=(writeFailed ? "danger" : "muted") padding="7px 14px" testId="discussion-write-message"
+                  if replyAllowed or shownDraft != ""
+                    row align-items="flex-end" gap=4 padding=4 margin="0 14px max(12px, env(safe-area-inset-bottom))" border-radius=24 backgroundMaterial="glass" background-color="card"
+                      textarea value=shownDraft input=editDiscussionReply readonly=(not replyAllowed or discussionBusy) placeholder="Reply…" aria-label="Discussion reply" rows=1 field-sizing="content" min-width=0 flex=1 min-height=48 max-height=144 box-sizing="border-box" padding="12px 14px" font-size="1rem" border="0" appearance="none" background-color="transparent" testId="discussion-reply"
+                      if replyAllowed
+                        button press=postDiscussionReply disabled=(discussionBusy or shownDraft.trim() == "") min-height=44 min-width=44 testId="discussion-post"
+                          text "Reply"
               if e.name == "pullFilesSheet"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header

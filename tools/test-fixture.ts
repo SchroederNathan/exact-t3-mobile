@@ -219,6 +219,10 @@ function environment(id: string, label: string, secondary = false, port = 0) {
   let viewedPanel = true;
   let viewedWritable = true;
   let viewedWrites = 0;
+  let discussionResolved = true;
+  let discussionWrites = 0;
+  let discussionViewer = true;
+  const postedReplies: {id:string;body:string;createdAt:string;author:{login:string}}[] = [];
   const pullFilters: string[] = [];
   let lastPullProject = "";
   const optionReads: {kind:string;query?:string;projectId?:string}[] = [];
@@ -325,6 +329,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (pullsMode && path.startsWith("/fixture/discussion-viewer/")) {
+          discussionViewer = path.endsWith("/allow");
+          return json({discussionViewer});
+        }
+        if (pullsMode && path.startsWith("/assert/discussion-writes/")) return json({discussionWrites},path === `/assert/discussion-writes/${discussionWrites}` ? 200 : 409);
         if (pullsMode && path.startsWith("/fixture/viewed-permission/")) {
           viewedWritable = path.endsWith("/allow");
           return json({viewedWritable});
@@ -479,10 +488,22 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
+        } else if (pullsMode && ["pullRequests.replyToThread","pullRequests.setThreadResolution"].includes(frame.tag)) {
+          const target = frame.payload;
+          if (secondary || !discussionViewer || !viewedWritable || target.projectId !== "shared" || target.repository !== `${id}/client` || target.number !== 9 || target.host !== "second.test" || target.threadId !== "resolved") throw new Error("Unauthorized or misdirected discussion mutation");
+          discussionWrites++;
+          if (frame.tag === "pullRequests.replyToThread" && target.body === "fixture rejected") {
+            socket.send(JSON.stringify({_tag:"Exit",requestId:frame.id,exit:{_tag:"Failure",cause:[{_tag:"Fail",error:{message:"Fixture rejected the reply."}}]}}));
+            return;
+          }
+          if (frame.tag === "pullRequests.setThreadResolution" && typeof target.resolved === "boolean") discussionResolved = target.resolved;
+          else if (frame.tag === "pullRequests.replyToThread" && typeof target.body === "string" && target.body.trim()) postedReplies.push({id:`posted-${postedReplies.length+1}`,body:target.body,createdAt:"2026-01-05",author:{login:"otter"}});
+          else throw new Error("Invalid discussion mutation payload");
+          socket.send(JSON.stringify({_tag:"Exit",requestId:frame.id,exit:{_tag:"Success",value:null}}));
         } else if (pullsMode && frame.tag === "pullRequests.threadComments") {
           const ref = frame.payload;
           if (ref.projectId !== "shared" || ref.repository !== `${id}/client` || ![9,29].includes(ref.number) || ref.host !== "second.test" || ref.threadId !== "resolved" || ref.cursor !== "older / page 1") throw new Error("Incorrect discussion target");
-          const value = {comments:[{id:"older",author:{login:"river"},body:"First reply",createdAt:"2026-01-01"},{id:"thread-post",body:"Stale duplicate",createdAt:"2026-01-04"}],nextCursor:null,hiddenCount:1};
+          const value = {comments:[{id:"older",author:{login:"river"},body:"First reply",createdAt:"2026-01-01"},{id:"thread-post",body:"Stale duplicate",createdAt:"2026-01-04"}],nextCursor:secondary ? ref.cursor : null,hiddenCount:1};
           socket.send(JSON.stringify({_tag:"Exit",requestId:frame.id,exit:{_tag:"Success",value}}));
         } else if (pullsMode && frame.tag === "pullRequests.filterOptions") {
           const input = frame.payload;
@@ -519,6 +540,10 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           if (method === "detail" && detail && "body" in detail) {
             if (offPage) detail.body = "  \n";
             else if (frame.payload.host === "first.test") detail.body = ["## Keyboard changes", ...Array.from({length:15}, (_, index) => `- Verify **alignment** for row ${index + 1}`), "", "Final paragraph with `shortcuts` and [documentation](https://example.invalid/guide)."].join("\n");
+          }
+          if (!secondary && frame.payload.host === "second.test" && frame.payload.number === 9) {
+            if (method === "detail" && detail) Object.assign(detail,{capabilities:{review:{reply:true,resolve:true}},viewerPermissions:{comment:discussionViewer,resolve:discussionViewer}});
+            if (method === "activity" && value.reviewThreads) Object.assign(value.reviewThreads[0]!,{isResolved:discussionResolved,commentCount:3+postedReplies.length,comments:[...value.reviewThreads[0]!.comments,...postedReplies]});
           }
           const answerPull = () => socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: method === "list" && paged ? {...value, nextCursors:continued ? {} : {fixture:"page-2"}} : detail } }));
           if (method === "list" && paged && continued) setTimeout(answerPull, 400);

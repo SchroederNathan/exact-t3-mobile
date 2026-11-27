@@ -362,3 +362,46 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree has "pull-request-comment-secondary-second.test"
   tap "pull-section-Overview"
   expect tree has "pull-file-example"
+  type "root" "/pulls/pr-5b227365636f6e64617279222c22736861726564222c227365636f6e642e74657374222c227365636f6e646172792f636c69656e74225d/29/discussion/resolved"
+  clock data
+  clock settle
+  expect tree has "pull-discussion-path"
+  expect tree missing "discussion-reply"
+  expect tree missing "discussion-resolution"
+  tap "discussion-more"
+  clock data
+  clock settle
+  expect text "discussion-page-error" == "The environment repeated a replies page."
+  expect tree missing "discussion-more"
+  type "root" "/pulls/pr-5b2266697874757265222c22736861726564222c227365636f6e642e74657374222c22666978747572652f636c69656e74225d/9/discussion/resolved"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/discussion-writes/0"
+  type "discussion-reply" "fixture rejected"
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect text "discussion-write-message" == "Fixture rejected the reply."
+  expect state replyDraft == "fixture rejected"
+  type "discussion-reply" "Checked on the narrow screen."
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect state replyDraft == ""
+  expect tree has "pull-discussion-post-posted-1"
+  expect text "discussion-write-message" == "Reply posted."
+  tap "discussion-resolution"
+  clock data
+  clock settle
+  expect text "discussion-write-message" == "Discussion status updated."
+  request POST "http://127.0.0.1:0/assert/discussion-writes/3"
+  type "discussion-reply" "Do not lose this draft"
+  request POST "http://127.0.0.1:0/fixture/discussion-viewer/deny"
+  tap "discussion-post"
+  clock data
+  clock settle
+  expect state replyDraft == "Do not lose this draft"
+  expect text "discussion-write-message" == "This connection cannot change this discussion."
+  expect tree missing "discussion-post"
+  request POST "http://127.0.0.1:0/assert/discussion-writes/3"
+  request POST "http://127.0.0.2:0/assert/discussion-writes/0"

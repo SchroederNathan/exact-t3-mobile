@@ -4,7 +4,7 @@ import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullCounts, pullRow } from "./pull-row";
 import { activityEvents, activityTimeline } from "./pull-activity";
-import { discussionPage, discussionPosts, discussionSeeds } from "./pull-discussion";
+import { discussionGrants, discussionPage, discussionPosts, discussionSeeds } from "./pull-discussion";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
@@ -602,6 +602,29 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  writePullDiscussion: async ([matches,key,visit,thread,access,operation,body,resolved],store,_storage,native) => {
+    const receipt = {key,visit,operation,body,error:""};
+    try {
+      const row = matches[0];
+      if (matches.length !== 1 || !row || !thread || !access || key !== `${row.routeKey}:${row.number}:${thread}`) throw new Error("Reopen the discussion before making changes.");
+      if (operation !== "resolve" && (operation !== "reply" || !body.trim() || body.length > 65536)) throw new Error("Enter a reply of up to 65,536 characters.");
+      const ref = {projectId:row.projectId,repository:row.repository,number:row.number,host:row.host,threadId:thread};
+      const denied = "This connection cannot change this discussion.";
+      await readPullRequestData(row.environmentId,store,native,async (session,_token,auth) => {
+        if (session.controlAccessKey() !== access || !sessionScope(auth,"source-control:write")) throw new Error(denied);
+        const [detail,activity] = await Promise.all([session.pullRequestDetail(row.projectId,row.repository,row.number,row.host,false),session.pullRequestActivity(row.projectId,row.repository,row.number,row.host,false)]);
+        if (["projectId","repository","number","host"].some(field => detail[field] !== undefined && detail[field] !== row[field as keyof typeof row])) throw new Error(denied);
+        const grants = discussionGrants(detail,true), threads = discussionSeeds(activity).filter(item=>item.id===thread);
+        if (threads.length !== 1 || (operation === "reply" ? !grants.canReply : !grants.canResolve || !threads[0]!.resolutionAllowed)) throw new Error(denied);
+        if (operation === "resolve" && threads[0]!.resolved === resolved) throw new Error("The discussion status changed. Check its current status.");
+        await readPullRequestData(row.environmentId,store,native,async (current,_currentToken,fresh) => {
+          if (current !== session || current.controlAccessKey() !== access || !sessionScope(fresh,"source-control:write")) throw new Error(denied);
+          await current.changePullDiscussion(ref, operation === "reply" ? {body} : {resolved});
+        });
+      });
+      return receipt;
+    } catch (error) {return {...receipt,error:error instanceof Error ? error.message : "The provider could not complete this action."};}
+  },
   mergeDiscussionPosts: ([seeds,extra]) => seeds.length === 1 ? discussionPage(seeds[0]!,extra) : [],
   nextDiscussionPosts: async ([matches,key,thread,cursor],store,_storage,native) => {
     const empty={key,cursor,next:"",posts:[],hidden:0,error:""};
@@ -1813,11 +1836,11 @@ const sources: Sources = {
     return ref ? [ref] : [];
   },
   loadPullRequestDetail: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", description: [], author: "", counts:pullCounts({}), key:"", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
+    const empty = { ready: true, error: "", description: [], discussionAccess:"", ...discussionGrants({},false), author: "", counts:pullCounts({}), key:"", additions: 0, deletions: 0, changedFiles: 0, checksState: "", viewedKey: "", items: [] };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
-      const value = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestDetail(row.projectId, row.repository, row.number, row.host));
+      const {value,discussionAccess,writable} = await readPullRequestData(row.environmentId, store, native, async (session,_token,auth) => ({value:await session.pullRequestDetail(row.projectId, row.repository, row.number, row.host),discussionAccess:session.controlAccessKey(),writable:sessionScope(auth,"source-control:write")}));
       const authorValue = object(value.author);
       const checks = object(value.checks);
       const items = projectPull(value, row.environmentId, row.host);
@@ -1827,6 +1850,7 @@ const sources: Sources = {
         ready: true,
         error: "",
         description: markdownBlocks(string(value.body) || string(value.description), `${row.routeKey}:${row.number}`),
+        discussionAccess, ...discussionGrants(value,writable),
         author: string(authorValue.login) || string(authorValue.name) || string(value.author),
         additions: Number(value.additions ?? 0),
         deletions: Number(value.deletions ?? 0),
