@@ -515,8 +515,16 @@ shape PullRequestDetail
 
 shape ViewedFiles
   key: string
+  access: string
+  writable: bool
   paths: string[]
   complete: bool
+
+shape ViewedChange
+  key: string
+  path: string
+  viewed: bool
+  error: string
 
 shape PullRequestComment
   id: string
@@ -944,6 +952,23 @@ component T3Code
     nav = push(nav, path("pullFile", project, `${number}`, file))
   action foldDiffFile(file: string)
     collapsedDiffFiles = collapsedDiffFiles.includes(file) ? collapsedDiffFiles.filter(path => path != file) : collapsedDiffFiles.concat([file])
+  mutation changedViewedFile as shape ViewedChange refreshes viewedFiles then afterViewedFile
+  state viewedPendingKey = ""
+  state viewedPendingPath = ""
+  derive viewedError = match changedViewedFile { case some(reply) => viewedScope and reply.key == viewedFiles.key ? reply.error : "", case none => "" }
+  action toggleViewedFile(file: string)
+    if current.name == "pullFile" and viewedScope and viewedFiles.writable and not pending(changedViewedFile) and not pending(viewedFiles) and diffVisibleFiles.filter(item => item.path == file).length == 1
+      viewedPendingKey = viewedFiles.key
+      viewedPendingPath = file
+      send changedViewedFile = changeViewedFile(pullRefs, viewedFiles.key, viewedFiles.access, file, not viewedFiles.paths.includes(file))
+  action afterViewedFile
+    match changedViewedFile
+      case some(reply)
+        if reply.error == "" and current.name == "pullFile" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == reply.key).length == 1 and diffVisibleFiles.filter(item => item.path == reply.path).length == 1
+          collapsedDiffFiles = reply.viewed ? collapsedDiffFiles.filter(path => path != reply.path).concat([reply.path]) : collapsedDiffFiles.filter(path => path != reply.path)
+      case none
+        viewedPendingKey = ""
+    viewedPendingPath = ""
   resource terminalAccess = loadTerminalAccess(activeThreadId) as shape TerminalAccess else empty()
   resource terminalMenu = loadTerminalMenu(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalMenu else empty()
   resource terminal = loadTerminal(activeThreadId, threadRoute.name == "terminal" ? threadRoute.params.terminalId : "", terminalAccess.canRead, terminalAccess.canOperate, terminalClock) as shape TerminalView else empty()
@@ -3110,6 +3135,8 @@ component T3Code
                       image "symbol:back"
                     text "Changes" role="heading" aria-level=2
                   text `#${e.params.number} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
+                  if viewedError != ""
+                    text viewedError color="danger" role="alert" padding="7px 14px" testId="pull-viewed-error"
                   if pullFiles.error != ""
                     text pullFiles.error color="danger" padding=14
                     button press=retryPullFiles testId="pull-diff-retry"
@@ -3122,11 +3149,18 @@ component T3Code
                     for line in diffRows key=line.key
                       column min-width=0
                         if line.kind == "file"
-                          button press=foldDiffFile(line.path) aria-expanded=line.expanded aria-label=`${line.text}, ${line.added} additions, ${line.deleted} deletions` display="flex" align-items="center" gap=7 padding="7px 14px" min-height=44 text-align="left" background-color="card" testId=`pull-diff-file-${line.path}`
-                            image (line.expanded ? "symbol:sf/chevron.down" : "symbol:forward-chevron") width=11 height=11
-                            text line.text flex=1 min-width=0 line-clamp=2 font="-exact-footnote" font-weight=600
-                            text `+${line.added}` color="status-done" font="-exact-caption1"
-                            text `−${line.deleted}` color="danger" font="-exact-caption1"
+                          row align-items="center" background-color="card"
+                            button press=foldDiffFile(line.path) aria-expanded=line.expanded aria-label=`${line.text}, ${line.added} additions, ${line.deleted} deletions` display="flex" flex=1 min-width=0 align-items="center" gap=7 padding="7px 14px" min-height=44 text-align="left" testId=`pull-diff-file-${line.path}`
+                              image (line.expanded ? "symbol:sf/chevron.down" : "symbol:forward-chevron") width=11 height=11
+                              text line.text flex=1 min-width=0 line-clamp=2 font="-exact-footnote" font-weight=600
+                              text `+${line.added}` color="status-done" font="-exact-caption1"
+                              text `−${line.deleted}` color="danger" font="-exact-caption1"
+                            if viewedScope
+                              button press=toggleViewedFile(line.path) disabled=(not viewedFiles.writable or pending(changedViewedFile) or pending(viewedFiles)) aria-label=`Mark ${line.path} as ${viewedFiles.paths.includes(line.path) ? "unviewed" : "viewed"}` min-width=44 min-height=44 testId=`pull-toggle-viewed-${line.path}`
+                                if pending(changedViewedFile) and viewedPendingKey == viewedFiles.key and viewedPendingPath == line.path
+                                  progress width=18 height=18 aria-label="Updating viewed state"
+                                else
+                                  image (viewedFiles.paths.includes(line.path) ? "symbol:checkmark.circle.fill" : "symbol:sf/circle") width=18 height=18 color=(viewedFiles.paths.includes(line.path) ? "status-done" : "muted")
                         else if line.kind == "hunk" or line.kind == "meta"
                           text line.text user-select="text" font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="muted" padding="0 12px" white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
                         else

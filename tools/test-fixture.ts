@@ -216,6 +216,9 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const pullReads: string[] = [];
+  let viewedPanel = true;
+  let viewedWritable = true;
+  let viewedWrites = 0;
   const pullFilters: string[] = [];
   let lastPullProject = "";
   const optionReads: {kind:string;query?:string;projectId?:string}[] = [];
@@ -322,6 +325,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (pullsMode && path.startsWith("/fixture/viewed-permission/")) {
+          viewedWritable = path.endsWith("/allow");
+          return json({viewedWritable});
+        }
+        if (pullsMode && path.startsWith("/assert/viewed-writes/")) return json({viewedWrites}, path === `/assert/viewed-writes/${viewedWrites}` ? 200 : 409);
         if (pullsMode && path === "/api/pull-requests/diff") {
           const ref = await request.json();
           if (request.headers.get("authorization") !== "Bearer fixture-access" || ref.projectId !== "shared" || ref.repository !== `${id}/client` || !(ref.number === 9 || (secondary && ref.host === "second.test" && ref.number === 29)) || !["first.test", "second.test"].includes(ref.host)) return json({message:"Incorrect diff reference"}, 403);
@@ -353,7 +361,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       if (path === "/api/auth/session" && !controls && !attachments) {
         return json({
           authenticated: true,
-          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read", ...(usageMode ? ["diagnostics:read"] : [])],
+          scopes: ["orchestration:read", "orchestration:operate", ...(viewedWritable ? ["source-control:write"] : []), "filesystem:read", ...(usageMode ? ["diagnostics:read"] : [])],
         });
       }
       if (path === "/.well-known/t3/environment") {
@@ -496,7 +504,13 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           const continued = frame.payload.cursors?.fixture === "page-2";
           if (paged && continued && listed.length) listed.push({...listed[0]!,number:19,title:"More pages"});
           const value = method === "list" ? {entries: listed, providers: [{host:"first.test",searchesOnHost:false},{host:"second.test",searchesOnHost:true}], viewers:{"first.test":"juniper","second.test":"otter"}, errors: secondary || frame.payload.state !== "open" ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body: "Fixture review", kind: "comment"}], commits: []} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
-          const detail = method === "filesViewed" ? {files:[{path:"src/panel.test.ts",state:"viewed"},{path:"example",state:"dismissed"}],truncated:false} : method === "detail" && frame.payload.host === "first.test" ? {...value,capabilities:{viewedFiles:"host"}} : method === "detail" && offPage ? {...value,projectId:"shared",host:"second.test",repository,number:29,title:"Archived keyboard change",state:"merged",updatedAt:timestamp,baseBranch:"main",headBranch:"fix"} : value;
+          if (method === "setFilesViewed") {
+            const change = frame.payload.files?.[0];
+            if (!viewedWritable || frame.payload.host !== "first.test" || frame.payload.files?.length !== 1 || change?.path !== "src/panel.test.ts" || typeof change.viewed !== "boolean") throw new Error("Invalid viewed write");
+            viewedPanel = change.viewed;
+            viewedWrites++;
+          }
+          const detail = method === "setFilesViewed" ? null : method === "filesViewed" ? {files:[{path:"src/panel.test.ts",state:viewedPanel ? "viewed" : "unviewed"},{path:"example",state:"dismissed"}],truncated:false} : method === "detail" && frame.payload.host === "first.test" ? {...value,capabilities:{viewedFiles:"host"}} : method === "detail" && offPage ? {...value,projectId:"shared",host:"second.test",repository,number:29,title:"Archived keyboard change",state:"merged",updatedAt:timestamp,baseBranch:"main",headBranch:"fix"} : value;
           const answerPull = () => socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: method === "list" && paged ? {...value, nextCursors:continued ? {} : {fixture:"page-2"}} : detail } }));
           if (method === "list" && paged && continued) setTimeout(answerPull, 400);
           else answerPull();

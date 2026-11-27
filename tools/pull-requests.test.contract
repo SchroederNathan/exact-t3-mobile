@@ -38,6 +38,7 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect state current.name == "pullFile"
   expect text "pull-diff-line:5:example" == "+second.test"
+  expect tree missing "pull-toggle-viewed-example"
   tap "pull-diff-file-example"
   expect tree missing "pull-diff-line:5:example"
   tap "pull-diff-file-example"
@@ -66,6 +67,22 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect state current.params.file == "src/panel.test.ts"
+  request POST "http://127.0.0.1:0/assert/viewed-writes/0"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/viewed-writes/1"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  expect tree missing "pull-diff-line:2:src/panel.test.ts"
+  request POST "http://127.0.0.1:0/fixture/viewed-permission/deny"
+  tap "pull-toggle-viewed-src/panel.test.ts"
+  clock data
+  clock settle
+  expect text "pull-viewed-error" == "This connection cannot change viewed files."
+  request POST "http://127.0.0.1:0/assert/viewed-writes/2"
+  request POST "http://127.0.0.1:0/fixture/viewed-permission/allow"
   reload
   clock data
   clock settle

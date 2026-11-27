@@ -579,7 +579,7 @@ function projectPull(value: unknown, environmentId: string, hostOverride?: strin
     deletions:Number(raw.deletions ?? raw.deletedLines ?? 0), changedFiles:Number(raw.changedFiles ?? raw.changedFileCount ?? 0) }];
 }
 
-async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession, token: string) => Promise<T>): Promise<T> {
+async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession, token: string, auth: Record<string, unknown>) => Promise<T>): Promise<T> {
   const session = sessionFor(id);
   const key = session.controlAccessKey();
   const token = credentials(store)[id];
@@ -591,7 +591,7 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
   const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
   assertCurrent();
   if (!sessionScope(auth, "orchestration:read")) throw new Error("This connection cannot read pull requests.");
-  const result = await awaitReply(read(session, token), native);
+  const result = await awaitReply(read(session, token, auth), native);
   assertCurrent();
   return result;
 }
@@ -1823,15 +1823,28 @@ const sources: Sources = {
     }
   },
   loadViewedFiles: async ([matches, key], store, _storage, native) => {
-    const empty = { key: "", paths: [], complete: false };
+    const empty = { key: "", access: "", paths: [], complete: false, writable: false };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     if (key !== `${row.routeKey}:${row.number}`) return empty;
     try {
-      const result = await readPullRequestData(row.environmentId, store, native, session => session.pullFilesViewed(row.projectId, row.repository, row.number, row.host));
-      if (!Array.isArray(result.files)) return empty;
-      return { key, paths: result.files.filter(file => file && file.state === "viewed" && typeof file.path === "string").map(file => file.path), complete: result.truncated === false };
+      return await readPullRequestData(row.environmentId, store, native, async (session, _token, auth) => {
+        const result = await session.pullFilesViewed(row.projectId, row.repository, row.number, row.host);
+        if (!Array.isArray(result.files)) return empty;
+        return { key, access:session.controlAccessKey(), writable:sessionScope(auth,"source-control:write"), paths: result.files.filter(file => file && file.state === "viewed" && typeof file.path === "string").map(file => file.path), complete: result.truncated === false };
+      });
     } catch { return empty; }
+  },
+  changeViewedFile: async ([matches, key, access, path, viewed], store, _storage, native) => {
+    try {
+      const row = matches[0];
+      if (matches.length !== 1 || !row || key !== `${row.routeKey}:${row.number}` || !access || !path) throw new Error("Reopen the file to change its viewed state.");
+      await readPullRequestData(row.environmentId,store,native,async (session,_token,auth) => {
+        if (session.controlAccessKey() !== access || !sessionScope(auth,"source-control:write")) throw new Error("This connection cannot change viewed files.");
+        await session.setPullFileViewed(row.projectId,row.repository,row.number,row.host,path,viewed);
+      });
+      return {key,path,viewed,error:""};
+    } catch (error) { return {key,path,viewed,error:error instanceof Error ? error.message : "Could not update the viewed file."}; }
   },
   loadPullFiles: async ([matches, revision], store, _storage, native) => {
     const empty = { files: [], truncated: false, nextCursor: "", error: "" };

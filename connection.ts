@@ -1327,6 +1327,10 @@ export class DirectSession {
     return this.query("pullRequests.filesViewed", { projectId, repository, number, host });
   }
 
+  async setPullFileViewed(projectId: string, repository: string, number: number, host: string, path: string, viewed: boolean) {
+    await this.query("pullRequests.setFilesViewed", {projectId,repository,number,host,files:[{path,viewed}]});
+  }
+
   async pullRequestActivity(
     projectId: string,
     repository: string,
