@@ -2074,7 +2074,7 @@ component T3Code
           text "Photo Library"
         if attachmentAccess.maxFileBytes > 0
           button press=pickAttachments(false) role="menuitem" testId="choose-files"
-            image "symbol:sf/folder"
+            image "symbol:icon.directory"
             text "Choose Files"
       match attachmentViewer
         case some(viewer)
@@ -2302,7 +2302,7 @@ component T3Code
                       image "symbol:sf/point.topleft.down.curvedto.point.bottomright.up"
                     if not isDraftKey(e.params.id) or (e.params.id == newTask.key and newTask.cwd != "")
                       button press=inspect("files") disabled=(isDraftKey(e.params.id) and not newTask.canReadFiles) aria-label="Open files" testId="thread-files"
-                        image "symbol:sf/folder"
+                        image "symbol:icon.directory"
                   column flex=1 min-height=0 min-width=0
                     column flex=1 min-height=0 min-width=0 position="relative"
                       if routeMode(allDrafts, threadLive(catalog, e.params.id), e.params.id) == "draft"
@@ -2330,7 +2330,7 @@ component T3Code
                                           if thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory))
                                             progress width=18 height=18
                                           else
-                                            image "symbol:sf/chevron.up" width=18 height=18
+                                            image "symbol:icon.disclose-up" width=18 height=18
                                           text (thread.history.loading or (loadingHistoryId == e.params.id and pending(earlierHistory)) ? "Loading earlier activity…" : "Load earlier activity") font-size=16 font-weight=500
                                       if thread.history.error != "" or (loadingHistoryId == e.params.id and historyError != "")
                                         text (loadingHistoryId == e.params.id and historyError != "" ? historyError : thread.history.error) color="danger" font-size=14 testId="history-error"
@@ -2346,7 +2346,7 @@ component T3Code
                                               row align-items="center" padding="0 7px" border-bottom="1px solid edge"
                                                 button press=toggleTool(e.params.id, row.id) appearance="none" display="flex" align-items="center" gap=7 min-width=0 min-height=38.5 flex=1 padding=0 color="muted" aria-label=`${tool.displayTitle}, ${tool.status}, ${toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "expanded" : "collapsed"}` aria-expanded=(toolAttempt(expandedTools, e.params.id, row.id) >= 0) testId=`tool-toggle-${row.id}`
                                                   text tool.displayTitle font-size=14 font-weight=500 line-height="19px" line-clamp=1 text-overflow="ellipsis" font-variant-numeric="tabular-nums"
-                                                  image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:sf/chevron.down" : "symbol:sf/chevron.right") width=15 height=15
+                                                  image (toolAttempt(expandedTools, e.params.id, row.id) >= 0 ? "symbol:icon.disclose-down" : "symbol:forward-chevron") width=15 height=15
                                                 match row.changes
                                                   case some(changes)
                                                     TurnChangeStat(changes=changes, threadId=e.params.id, open=openTurnReview)
@@ -2508,7 +2508,7 @@ component T3Code
                                       text (composerModel.label == "" ? "Choose model" : composerModel.label) flex-shrink=1 min-width=0 font-size=14 line-height="19px" font-weight=500 color="foreground" line-clamp=1 text-overflow="ellipsis" testId="model-label"
                                       if composerModel.summary != ""
                                         text composerModel.summary flex-shrink=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1 text-overflow="ellipsis" testId="model-summary"
-                                    image "symbol:sf/chevron.down" width=10 height=10 flex-shrink=0
+                                    image "symbol:icon.disclose-down" width=10 height=10 flex-shrink=0
                                   if voice.available
                                     button press=requestComposerVoice appearance="none" width=44 height=44 aria-label=(voice.phase == "error" and voice.error.includes("Microphone access is off") ? "Open microphone settings" : "Start dictation") testId="composer-voice"
                                       image "symbol:sf/mic" width=20 height=20
@@ -2640,7 +2640,7 @@ component T3Code
                           if modelProviderFilter == "" and modelQuery.trim() == ""
                             if modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false)
                               text `${matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, false).length}` font-size=12 font-weight=500
-                            image (modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false) ? "symbol:sf/chevron.down" : "symbol:sf/chevron.up") width=12 height=12
+                            image (modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, false) ? "symbol:icon.disclose-down" : "symbol:icon.disclose-up") width=12 height=12
                         if not modelGroupCollapsed(group, modelExpansionOverrides, settings.appliedModelId, modelProviderFilter != "" or modelQuery.trim() != "")
                           column margin="0 14px" border-radius=14 overflow="hidden" background-color="card"
                             for model, index in matchingModels(group, modelQuery, showLegacyModels, settings.selectedModelId, modelProviderFilter == "@favorites") key=model.id
@@ -2778,7 +2778,7 @@ component T3Code
                       else
                         for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
                           button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-ref-${ref.name}`
-                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            image (ref.current ? "symbol:select-fill" : "symbol:sf/arrow.branch") width=18 height=18
                             column flex=1 min-width=0 gap=3
                               text ref.name line-clamp=1
                               text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "") font-size=13 color="muted" line-clamp=1
@@ -2806,7 +2806,7 @@ component T3Code
                               for item in result.items key=item.id
                                 button press=inspectEntry(item.id, item.kind) disabled=(item.kind == "info") appearance="none" padding="12px 0" width="100%" text-align="left" testId=`inspector-entry-${item.id}`
                                   row align-items="center" gap=10
-                                    image (item.kind == "directory" ? "symbol:sf/folder" : item.kind == "file" ? "symbol:sf/doc.text" : "symbol:sf/info.circle") width=20 height=20
+                                    image (item.kind == "directory" ? "symbol:icon.directory" : item.kind == "file" ? "symbol:sf/doc.text" : "symbol:sf/info.circle") width=20 height=20
                                     column flex=1 min-width=0 gap=3
                                       text item.label font-size=16
                                       if item.detail != ""
@@ -2876,7 +2876,7 @@ component T3Code
                       else
                         for ref in gitRefs.refs.filter(item => not item.isRemote) key=ref.name
                           button press=switchGitRef(ref.name) disabled=(gitBusy or ref.current or not gitWritable) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" width="100%" text-align="left" testId=`git-overview-ref-${ref.name}`
-                            image (ref.current ? "symbol:checkmark.circle.fill" : "symbol:sf/arrow.branch") width=18 height=18
+                            image (ref.current ? "symbol:select-fill" : "symbol:sf/arrow.branch") width=18 height=18
                             column flex=1 min-width=0 gap=3
                               text ref.name line-clamp=1
                               text (ref.worktreePath != "" ? ref.worktreePath : ref.isDefault ? "Default branch" : "Local branch") font-size=13 color="muted" line-clamp=1
@@ -2913,7 +2913,7 @@ component T3Code
                           text (gitExcludedFiles.length == 0 ? "Deselect all" : "Select all") color="foreground"
                     for file in gitStatus.workingFiles key=file.path
                       button press=toggleGitFile(file.path) role="checkbox" aria-checked=(not gitExcludedFiles.includes(file.path)) appearance="none" display="flex" align-items="center" gap=10 padding="10px 0" testId=`git-file-${file.path}`
-                        image (gitExcludedFiles.includes(file.path) ? "symbol:sf/circle" : "symbol:checkmark.circle.fill") width=18 height=18
+                        image (gitExcludedFiles.includes(file.path) ? "symbol:sf/circle" : "symbol:select-fill") width=18 height=18
                         text file.path flex=1 min-width=0 line-clamp=1
                         text `+${file.insertions} −${file.deletions}` font-size=13 color="muted"
                     if gitStatus.workingFiles.length == 0
@@ -2954,7 +2954,7 @@ component T3Code
                         else
                           button popovertarget="pull-environments-menu" aria-haspopup="menu" aria-label="Choose pull request environment" appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 white-space="nowrap" backgroundMaterial="glass" font-size="0.875rem" font-weight=500 color=(selectedPullEnvironment != "" ? "white" : "muted") background-color=(selectedPullEnvironment != "" ? "AccentColor" : "transparent") testId="pull-filter-environment"
                             text (selectedPullEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedPullEnvironment)) max-width=180 line-clamp=1
-                            image "symbol:sf/chevron.down" width=11 height=11
+                            image "symbol:icon.disclose-down" width=11 height=11
                       PullFilterChip(field="state", selected=pullState, options=["open", "closed", "merged", "all"], label="Filter by state", native=(device.kind != "web" and device.kind != ""), choose=filterPullState)
                       PullFilterChip(field="involvement", selected=pullInvolvement, options=["all", "reviewing", "authored"], label="Filter by involvement", native=(device.kind != "web" and device.kind != ""), choose=filterPullInvolvement)
                       PullFacetChip(field="labels", title=(pullLabels.length > 0 ? `Labels ${pullLabels.length}` : "Labels"), label="Filter by label", active=(pullLabels.length > 0), facet=facets.labels, native=(device.kind != "web" and device.kind != ""), choose=labelMenuAction)
@@ -3133,8 +3133,8 @@ component T3Code
                                       text `+${file.additions}` color="status-done"
                                       text `−${file.deletions}` color="danger"
                                       if viewedScope and viewedFiles.paths.includes(file.path)
-                                        image "symbol:checkmark.circle.fill" width=18 height=18 color="status-done" testId=`pull-viewed-${file.path}`
-                                      image "symbol:sf/chevron.right" width=12 height=12 color="muted"
+                                        image "symbol:select-fill" width=18 height=18 color="status-done" testId=`pull-viewed-${file.path}`
+                                      image "symbol:icon.disclose-forward" width=12 height=12 color="muted"
                                   if file.omitted
                                     text "Patch omitted" color="muted"
                               if pullFiles.files.length == 0
@@ -3171,8 +3171,8 @@ component T3Code
                       column min-width=0
                         if item.kind == "directory"
                           button press=foldFileDirectory(item.path) aria-label=item.label aria-expanded=(not foldedPullDirectories.includes(item.path)) appearance="none" display="flex" align-items="center" text-align="left" gap=7 min-height=44 padding="14px 14px 7px" testId=`pull-picker-${item.key}`
-                            image (foldedPullDirectories.includes(item.path) ? "symbol:forward-chevron" : "symbol:sf/chevron.down") width=11 height=11 color="muted"
-                            image "symbol:sf/folder" width=16 height=16 color="muted"
+                            image (foldedPullDirectories.includes(item.path) ? "symbol:icon.disclose-forward" : "symbol:icon.disclose-down") width=11 height=11 color="muted"
+                            image "symbol:icon.directory" width=16 height=16 color="muted"
                             text item.label flex=1 min-width=0 font="-exact-subheadline" color="muted" line-clamp=2
                         else
                           button press=jumpFromFilePicker(item.path) aria-label=`View diff for ${item.path}, ${item.added} additions, ${item.deleted} deletions${viewedScope and viewedFiles.paths.includes(item.path) ? ", viewed" : ""}` appearance="none" display="flex" align-items="center" text-align="left" gap=10.5 min-height=49 padding="10.5px 14px" border-bottom="1px solid border-subtle" testId=`pull-picker-${item.key}`
@@ -3183,8 +3183,8 @@ component T3Code
                             text `+${item.added}` color="status-done" font="-exact-caption1"
                             text `−${item.deleted}` color="danger" font="-exact-caption1"
                             if viewedScope and viewedFiles.paths.includes(item.path)
-                              image "symbol:checkmark.circle.fill" color="status-done" width=18 height=18
-                            image "symbol:forward-chevron" color="muted" width=12 height=12
+                              image "symbol:select-fill" color="status-done" width=18 height=18
+                            image "symbol:icon.disclose-forward" color="muted" width=12 height=12
                   if pending(pullFiles) and pullFiles.files.length == 0
                     progress aria-label="Loading changed files"
                   else if pullFiles.error != ""
@@ -3222,7 +3222,7 @@ component T3Code
                         if line.kind == "file"
                           row align-items="center" background-color="card"
                             button press=foldDiffFile(line.path) aria-expanded=line.expanded aria-label=`${line.text}, ${line.added} additions, ${line.deleted} deletions` display="flex" flex=1 min-width=0 align-items="center" gap=7 padding="7px 14px" min-height=44 text-align="left" testId=`pull-diff-file-${line.path}`
-                              image (line.expanded ? "symbol:sf/chevron.down" : "symbol:forward-chevron") width=11 height=11
+                              image (line.expanded ? "symbol:icon.disclose-down" : "symbol:icon.disclose-forward") width=11 height=11
                               text line.text flex=1 min-width=0 line-clamp=2 font="-exact-footnote" font-weight=600
                               text `+${line.added}` color="status-done" font="-exact-caption1"
                               text `−${line.deleted}` color="danger" font="-exact-caption1"
@@ -3231,7 +3231,7 @@ component T3Code
                                 if pending(changedViewedFile) and viewedPendingKey == viewedFiles.key and viewedPendingPath == line.path
                                   progress width=18 height=18 aria-label="Updating viewed state"
                                 else
-                                  image (viewedFiles.paths.includes(line.path) ? "symbol:checkmark.circle.fill" : "symbol:sf/circle") width=18 height=18 color=(viewedFiles.paths.includes(line.path) ? "status-done" : "muted")
+                                  image (viewedFiles.paths.includes(line.path) ? "symbol:select-fill" : "symbol:sf/circle") width=18 height=18 color=(viewedFiles.paths.includes(line.path) ? "status-done" : "muted")
                         else if line.kind == "hunk" or line.kind == "meta"
                           text line.text user-select="text" font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="muted" padding="0 12px" white-space="pre-wrap" overflow-wrap="break-word" testId=`pull-diff-${line.key}`
                         else
@@ -3668,10 +3668,10 @@ component ThreadList
             else
               button popovertarget="environment-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedEnvironment == "" ? "muted" : "white") background-color=(selectedEnvironment == "" ? "transparent" : "AccentColor") testId="all-environments"
                 text (selectedEnvironment == "" ? "All environments" : environmentLabel(catalog, selectedEnvironment)) max-width=180 line-clamp=1
-                image "symbol:sf/chevron.down" width=11 height=11
+                image "symbol:icon.disclose-down" width=11 height=11
               button popovertarget="project-filter-menu" appearance="none" display="flex" align-items="center" backgroundMaterial="glass" border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" gap=5.25 font-size=14 line-height="19px" font-weight=500 color=(selectedProject == "" ? "muted" : "white") background-color=(selectedProject == "" ? "transparent" : "AccentColor") testId="all-projects"
                 text selectedProjectLabel max-width=180 line-clamp=1
-                image "symbol:sf/chevron.down" width=11 height=11
+                image "symbol:icon.disclose-down" width=11 height=11
             if selectedEnvironment != "" or selectedProject != ""
               button press=resetFilters appearance="none" aria-label="Reset thread filters" testId="reset-filters" width=28 height=28 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                 image "symbol:sf/xmark.circle.fill" width=18 height=18 color="muted"
@@ -3700,7 +3700,7 @@ component ThreadList
               row align-items="center" gap=8.75 width="100%"
                 text (showWorking ? "Working" : `Working (${workingThreads.length})`) font-size=13 line-height="17px" font-weight=500 color="muted"
                 view flex=1 height=1 background-color="edge"
-                image (showWorking ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") font-size=10 color="muted"
+                image (showWorking ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") font-size=10 color="muted"
           for thread, index in threads key=thread.id
             button press=openThread(path("thread", thread.id)) contextmenu=aimPin(thread.id, thread.controls.accessKey, thread.pinRank < 0) contextPopover="thread-row-menu" appearance="none" testId=`thread-${thread.id}` width=(sidebar ? "calc(100% - 16px)" : "100%") box-sizing="border-box" text-align="left" margin=(sidebar ? "0 8px" : "0") border-radius=(sidebar ? 12 : 0) background-color=(sidebar and selectedId == thread.id ? "thread-selected" : "transparent")
               column flex=1 min-width=0 gap=3.5 opacity=(thread.working and selectedId != thread.id ? 0.55 : 1) padding=(sidebar ? "10px 12px" : "8.75px 17.5px")
@@ -3745,7 +3745,7 @@ component ThreadList
                 text (shelf == "snoozed" ? (showSnoozed ? "Snoozed" : `Snoozed (${snoozedThreads.length})`) : (showSettled ? "Settled" : `Settled (${settledThreads.length})`)) testId=`${shelf}-title` font-size="0.8125rem" line-height="1.0625rem" font-weight=500 color="muted"
                 view flex=1 height=1 background-color=(shelf == "snoozed" ? "AccentColor" : "edge") opacity=(shelf == "snoozed" ? 0.2 : 1)
                 if nativeMenus
-                  image ((shelf == "snoozed" ? showSnoozed : showSettled) ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") width=10 height=10 font-size=10 color="muted"
+                  image ((shelf == "snoozed" ? showSnoozed : showSettled) ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") width=10 height=10 font-size=10 color="muted"
                 else
                   svg viewBox="0 0 10 10" width=10 height=10 fill="none" stroke="muted" stroke-width=1.4 stroke-linecap="round" stroke-linejoin="round" aria-hidden=true
                     path d=((shelf == "snoozed" ? showSnoozed : showSettled) ? "M1.5 6.5 5 3l3.5 3.5" : "M1.5 3.5 5 7l3.5-3.5")
@@ -3791,7 +3791,7 @@ component PullFacetChip
     else
       button popovertarget=`pull-facet-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 flex-shrink=0 white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size="0.875rem" font-weight=500 testId=`pull-filter-${field}`
         text title max-width=180 line-clamp=1
-        image "symbol:sf/chevron.down" width=11 height=11
+        image "symbol:icon.disclose-down" width=11 height=11
 
 component PullFacetMenu
   props
@@ -3826,7 +3826,7 @@ component PullFilterChip
     else
       button popovertarget=`pull-filter-menu-${field}` aria-haspopup="menu" aria-label=label appearance="none" display="flex" align-items="center" gap=5.25 border-radius=16 padding="5.25px 10.5px" min-height=28 box-sizing="border-box" white-space="nowrap" backgroundMaterial="glass" color=(active ? "white" : "muted") background-color=(active ? "AccentColor" : "transparent") font-size=14 line-height="19px" font-weight=500 testId=`pull-filter-${field}`
         text pullFilterLabel(selected, involvement)
-        image "symbol:sf/chevron.down" width=11 height=11
+        image "symbol:icon.disclose-down" width=11 height=11
 
 component PullFilterMenu
   props
@@ -3892,4 +3892,4 @@ component EnvironmentRow
         text environment.status font-size=13 line-height="17px" color="muted"
       input type="checkbox" switch accent-color="AccentColor" checked=environment.enabled change=toggleEnvironment(environment.id) aria-label=`Enable ${environment.label}` testId=`environment-${environment.id}`
       button press=manageEnvironment(environment.id) aria-label=label appearance="none" width=44 height=44 color="muted"
-        image (detail ? (expanded ? "symbol:sf/chevron.up" : "symbol:sf/chevron.down") : "symbol:forward-chevron") width=12 height=12
+        image (detail ? (expanded ? "symbol:icon.disclose-up" : "symbol:icon.disclose-down") : "symbol:forward-chevron") width=12 height=12
