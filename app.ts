@@ -2,6 +2,7 @@ import type { Answer, NativeModule, Result, Sources, Storage, Store } from "./ap
 import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
+import { pullRow } from "./pull-row";
 import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
@@ -1727,7 +1728,7 @@ const sources: Sources = {
             const raw = object(entry);
             const summary = pullRequestSummary(raw);
             if (!summary.repository || !string(raw.projectId) || summary.number < 1) return [];
-            return [{ environmentId, host: string(raw.host), routeKey: pullRouteKey(environmentId, string(raw.projectId), string(raw.host), summary.repository),
+            return [{ row: pullRow(raw), environmentId, host: string(raw.host), routeKey: pullRouteKey(environmentId, string(raw.projectId), string(raw.host), summary.repository),
               number: summary.number,
               title: summary.title,
               url: summary.url,

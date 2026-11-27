@@ -346,7 +346,26 @@ shape GitActionReply
   action: string
   result: GitActionResult
 
+shape PullLabel
+  name: string
+  color: string
+
+shape PullRow
+  status: string
+  conflict: bool
+  checks: string
+  review: string
+  stackText: string
+  labels: PullLabel[]
+  extraLabels: number
+  initial: string
+  updatedMs: number
+  addedText: string
+  deletedText: string
+  accessible: string
+
 shape PullRequest
+  row: PullRow
   routeKey: string
   environmentId: string
   host: string
@@ -994,9 +1013,10 @@ component T3Code
   derive searchHits = messageResults.filter(reply => reply.query == searchText).map(reply => reply.hits).flat()
   derive visibleThreads = filteredThreads(catalog.threads, selectedEnvironment, searchText.toLowerCase(), searchHits).filter(thread => selectedProject == "" or thread.projectId == selectedProject)
   derive agesVisible = (current.name == "threads" or (split and visibleTab == "threads" and not sidebarHidden)) and visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero or (thread.settled ? showSettled or searchText != "" or (split and thread.id == activeThreadId) : thread.status == "" and (thread.pinRank >= 0 or not thread.working or showWorking or searchText != "" or (split and thread.id == activeThreadId)))).length > 0
-  task startThreadListClock when agesVisible key=agesVisible
+  derive listClockVisible = agesVisible or (current.name == "pullRequests" and pullRequests.items.length > 0)
+  task startThreadListClock when listClockVisible key=listClockVisible
     change(sampleThreadListClock)
-  task tickThreadListClock when agesVisible
+  task tickThreadListClock when listClockVisible
     every(60000, sampleThreadListClock)
   derive nearWake = visibleThreads.filter(thread => thread.wakeAt > time.epochAtZero + threadListClock and thread.wakeAt <= time.epochAtZero + threadListClock + 60000).length > 0
   task tickImminentWake when agesVisible and nearWake
@@ -2594,20 +2614,47 @@ component T3Code
                           text (pullRequests.error != "" ? "Couldn't load pull requests" : catalog.environments.length == 0 ? "Connect an environment" : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Environment offline" : "No matching pull requests") role="heading" aria-level=3 font-size=20 font-weight=700 text-align="center" testId="pulls-empty"
                           text (pullRequests.error != "" ? pullRequests.error : catalog.environments.length == 0 ? "Add an environment in Settings to browse its pull requests." : catalog.environments.filter(env => env.enabled and env.status == "Connected").length == 0 ? "Reconnect to load pull requests that aren't saved on this device." : "Pull requests from the selected environments' projects appear here.") font-size=16 line-height=24 text-align="center" color="muted" testId="pulls-empty-detail"
                   else
-                    list id="pulls-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
+                    list id="pulls-list" appearance="none" flex=1 min-height=0 background-color="screen"
                       if pullRequests.error != ""
-                        section
-                          row
-                            text pullRequests.error color="muted" testId="pulls-error"
-                      section
-                        for pull in pullRequests.items key=`${pull.routeKey}:${pull.number}`
-                          row press=openPullRequest(pull.routeKey, pull.number) role="button" aria-label=`Open pull request #${pull.number}, ${pull.title}` testId=`pull-${pull.environmentId}-${pull.host}-${pull.repository}-${pull.projectId}-${pull.number}`
-                            column flex=1 min-width=0 gap=3
-                              text `#${pull.number} ${pull.title}` font="-exact-body" line-clamp=2
-                              text `${pull.repository} · ${pull.headBranch} → ${pull.baseBranch}` font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
-                              text (pull.author != "" ? `by ${pull.author}` : "") font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
-                            text pull.state font="-exact-footnote" color=(pull.state == "open" ? "status-working" : "muted")
-                            text "View" color="foreground" testId=`pull-open-${pull.routeKey}-${pull.number}`
+                        text pullRequests.error padding="10.5px 14px" font-size=13 line-height="17px" color="muted" testId="pulls-error"
+                      for pull in pullRequests.items key=`${pull.routeKey}:${pull.number}`
+                        button press=openPullRequest(pull.routeKey, pull.number) appearance="none" aria-label=pull.row.accessible testId=`pull-${pull.environmentId}-${pull.host}-${pull.repository}-${pull.projectId}-${pull.number}` width="100%" box-sizing="border-box" display="flex" flex-direction="row" align-items="flex-start" text-align="left" gap=10.5 padding="0 14px" border="none" background-color="transparent" color="foreground"
+                          column position="relative" flex-shrink=0 margin-top=8.75 width=20 height=20 aria-hidden=true
+                            if pull.row.status == "Open" or pull.row.status == "Draft"
+                              image "assets/pull-request.png" width=20 height=20 -exact-tint-color=(pull.row.status == "Open" ? "status-done" : "icon-muted")
+                            else
+                              image (pull.row.status == "Merged" ? "symbol:sf/arrow.triangle.merge" : "symbol:sf/xmark.circle") width=20 height=20 color=(pull.row.status == "Merged" ? "status-input" : "danger")
+                            if pull.row.conflict
+                              image "symbol:sf/exclamationmark.triangle.fill" width=10 height=10 position="absolute" bottom=-2 right=-3 color="status-warning" background-color="screen" border-radius=3
+                          column min-width=0 flex=1 padding="8.75px 0" gap=3.5 border-bottom="1px solid border-subtle"
+                            row align-items="center" gap=5.25 min-width=0
+                              column width=16 height=16 flex-shrink=0 border-radius=8 background-color="card" align-items="center" justify-content="center"
+                                text pull.row.initial font-size=7.2 line-height="10px" font-weight=500 color="muted"
+                              text `${pull.repository} #${pull.number}` flex=1 min-width=0 font-size=13 line-height="17px" color="muted" line-clamp=1
+                              if pull.row.stackText != ""
+                                image "symbol:sf/square.3.layers.3d" width=12 height=12 color="muted"
+                                text pull.row.stackText font-size=12 line-height="16px" color="muted" font-variant-numeric="tabular-nums"
+                              text compactAge(pull.row.updatedMs, time.epochAtZero + threadListClock) font-size=12 line-height="16px" color="muted" font-variant-numeric="tabular-nums" flex-shrink=0
+                            text pull.title font-size=16 line-height="17.5px" font-weight=500 line-clamp=2
+                            row align-items="center" gap=5.25 min-width=0
+                              row flex=1 min-width=0 align-items="center" gap=3.5
+                                for label in pull.row.labels key=label.name
+                                  row min-width=0 max-width=160 flex-shrink=1 align-items="center" gap=3.5 border-radius=5 padding="1.75px 5.25px" background-color=(label.color == "" ? "subtle" : `${label.color}20`)
+                                    if label.color != ""
+                                      column width=5 height=5 border-radius=3 background-color=label.color flex-shrink=0
+                                    text label.name min-width=0 line-clamp=1 font-size=12 line-height="16px" font-weight=500 color="muted"
+                                if pull.row.extraLabels > 0
+                                  text `+${pull.row.extraLabels}` font-size=12 line-height="16px" color="muted" flex-shrink=0
+                              if pull.row.checks != ""
+                                image (pull.row.checks == "passing" ? "symbol:sf/checkmark.circle" : pull.row.checks == "failing" ? "symbol:sf/xmark.circle.fill" : "symbol:sf/clock") color=(pull.row.checks == "passing" ? "status-done" : pull.row.checks == "failing" ? "danger" : "status-warning") width=13 height=13 flex-shrink=0
+                              if pull.row.review != ""
+                                image (pull.row.review == "Reviews approved" ? "symbol:sf/person.fill.checkmark" : pull.row.review == "Changes requested" ? "symbol:sf/person.fill.xmark" : "symbol:sf/person.badge.clock") color=(pull.row.review == "Reviews approved" ? "status-done" : pull.row.review == "Changes requested" ? "danger" : pull.row.review == "Your review requested" ? "status-warning" : "muted") width=13 height=13 flex-shrink=0
+                              if pull.row.addedText != "" or pull.row.deletedText != ""
+                                row align-items="center" gap=7 flex-shrink=0
+                                  if pull.row.addedText != ""
+                                    text pull.row.addedText font-size=12 line-height="16px" font-weight=500 font-variant-numeric="tabular-nums" color="status-done"
+                                  if pull.row.deletedText != ""
+                                    text pull.row.deletedText font-size=12 line-height="16px" font-weight=500 font-variant-numeric="tabular-nums" color="danger"
               if e.name == "pullRequest"
                 column navigationKey=`${e.id}` navigationScroll="pull-request-detail" position="absolute" inset=0 display="flex" flex-direction="column" background-color="screen"
                   header

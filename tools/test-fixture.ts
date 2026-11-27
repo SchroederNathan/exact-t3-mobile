@@ -459,7 +459,8 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           pullReads.push(method);
           const repository = `${id}/client`;
           if (method !== "list" && (frame.payload.projectId !== "shared" || frame.payload.repository !== repository || frame.payload.number !== 9 || !["first.test", "second.test"].includes(frame.payload.host))) throw new Error("Incorrect pull request coordinates");
-          const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: `${id} ${host} change`, headBranch: "fix", baseBranch: "main", additions: 18, updatedAt: timestamp}));
+          const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: host === "first.test" ? "Keep the status column aligned when a long pull request title wraps onto its second line" : "Adjust safe-area spacing", headBranch: "fix", baseBranch: "main", author: {login: "juniper"}, additions: 18, updatedAt: timestamp,
+            ...(host === "first.test" ? {mergeability: "conflicting", checksState: "failing", viewerReviewRequested: true, stack: {position: 1, size: 3}, labels: [{name:"accessibility and keyboard navigation",color:"a855f7"},{name:"appearance",color:"0ea5e9"},{name:"triage",color:null}],deletions: 4} : {isDraft: true})}));
           const value = method === "list" ? {entries, errors: secondary ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body: "Fixture review", kind: "comment"}], commits: []} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
           socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value } }));
         } else if (frame.tag === "server.getUsageSummary" && usageMode) {
