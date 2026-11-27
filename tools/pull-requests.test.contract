@@ -38,6 +38,23 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   tap "pull-activity-resolved"
   clock data
   expect tree has "pull-request-discussion-resolved"
+  tap "pull-open-discussion-resolved"
+  clock data
+  clock settle
+  expect text "pull-discussion-path" == "example:8"
+  expect tree has "pull-discussion-post-thread-post"
+  expect tree missing "pull-discussion-post-older"
+  tap "discussion-more"
+  clock data
+  clock settle
+  expect tree has "pull-discussion-post-older"
+  expect text "discussion-hidden" == "1 reply hidden by the provider."
+  expect tree missing "discussion-more"
+  tap "pull-discussion-back"
+  clock data
+  clock settle
+  expect state visiblePullSection == "Activity"
+  expect tree has "pull-request-discussion-resolved"
   tap "pull-activity-kind"
   tap "pull-activity-kind-Commits"
   clock data

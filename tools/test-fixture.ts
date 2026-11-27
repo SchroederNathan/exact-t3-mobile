@@ -479,6 +479,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
           accepted(socket, frame.id);
           for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
+        } else if (pullsMode && frame.tag === "pullRequests.threadComments") {
+          const ref = frame.payload;
+          if (ref.projectId !== "shared" || ref.repository !== `${id}/client` || ![9,29].includes(ref.number) || ref.host !== "second.test" || ref.threadId !== "resolved" || ref.cursor !== "older / page 1") throw new Error("Incorrect discussion target");
+          const value = {comments:[{id:"older",author:{login:"river"},body:"First reply",createdAt:"2026-01-01"},{id:"thread-post",body:"Stale duplicate",createdAt:"2026-01-04"}],nextCursor:null,hiddenCount:1};
+          socket.send(JSON.stringify({_tag:"Exit",requestId:frame.id,exit:{_tag:"Success",value}}));
         } else if (pullsMode && frame.tag === "pullRequests.filterOptions") {
           const input = frame.payload;
           if (!["authors","labels"].includes(input.kind) || (input.query && input.query.length > 100)) throw new Error("Invalid facet request");
@@ -503,7 +508,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           const paged = frame.payload.query === "pages";
           const continued = frame.payload.cursors?.fixture === "page-2";
           if (paged && continued && listed.length) listed.push({...listed[0]!,number:19,title:"More pages"});
-          const value = method === "list" ? {entries: listed, providers: [{host:"first.test",searchesOnHost:false},{host:"second.test",searchesOnHost:true}], viewers:{"first.test":"juniper","second.test":"otter"}, errors: secondary || frame.payload.state !== "open" ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body:"Fixture review",author:{login:"juniper"},kind:"comment",createdAt:"2026-01-02"},{id:"automated",body:"Builder noise",author:{login:"build",isBot:true},createdAt:"2026-01-03"},{id:"thread-post",body:"Nested copy"}], commits:[{oid:"abcd1234",messageHeadline:"Change spacing",authors:[{login:"juniper"}],committedDate:"2026-01-01"}],reviewThreads:[{id:"resolved",path:"example",line:8,isResolved:true,comments:[{id:"thread-post",author:{login:"reviewer"},body:"Fixed",createdAt:"2026-01-04"}]}],commentsTruncated:true} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
+          const value = method === "list" ? {entries: listed, providers: [{host:"first.test",searchesOnHost:false},{host:"second.test",searchesOnHost:true}], viewers:{"first.test":"juniper","second.test":"otter"}, errors: secondary || frame.payload.state !== "open" ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body:"Fixture review",author:{login:"juniper"},kind:"comment",createdAt:"2026-01-02"},{id:"automated",body:"Builder noise",author:{login:"build",isBot:true},createdAt:"2026-01-03"},{id:"thread-post",body:"Nested copy"}], commits:[{oid:"abcd1234",messageHeadline:"Change spacing",authors:[{login:"juniper"}],committedDate:"2026-01-01"}],reviewThreads:[{id:"resolved",path:"example",line:8,isResolved:true,commentCount:3,nextCommentsCursor:"older / page 1",comments:[{id:"thread-post",author:{login:"reviewer"},body:"Fixed",createdAt:"2026-01-04"}]}],commentsTruncated:true} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
           if (method === "setFilesViewed") {
             const change = frame.payload.files?.[0];
             if (!viewedWritable || frame.payload.host !== "first.test" || frame.payload.files?.length !== 1 || change?.path !== "src/panel.test.ts" || typeof change.viewed !== "boolean") throw new Error("Invalid viewed write");

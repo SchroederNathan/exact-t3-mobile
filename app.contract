@@ -55,6 +55,7 @@ routes nav
   tab pullRequests "/pulls"
     pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
+      pullDiscussion "/pulls/:project/:number/discussion/:thread"
       pullFile "/pulls/:project/:number/file/:file"
         pullFilesSheet "/pulls/:project/:number/file/:file/picker"
   tab usage "/usage"
@@ -569,7 +570,33 @@ shape PullRequestActivity
   ready: bool
   error: string
   events: PullEvent[]
+  discussions: PullDiscussion[]
   truncated: bool
+
+shape DiscussionPost
+  id: string
+  author: string
+  body: string
+  date: string
+  edited: string
+
+shape PullDiscussion
+  id: string
+  path: string
+  line: number
+  resolved: bool
+  outdated: bool
+  posts: DiscussionPost[]
+  count: number
+  next: string
+
+shape DiscussionPage
+  key: string
+  cursor: string
+  posts: DiscussionPost[]
+  next: string
+  hidden: number
+  error: string
 
 shape Project
   id: string
@@ -791,7 +818,7 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = "" persist
-  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile" or current.name == "pullFilesSheet"
+  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile" or current.name == "pullFilesSheet" or current.name == "pullDiscussion"
   derive pullWorkspace = current.name == "pullRequests" or pullDetailRoute or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
   resource pullLink = parsePullLink(pullDetailRoute ? current.params.project : "", pullDetailRoute ? current.params.number : "") as shape PullRef[] else empty()
@@ -965,6 +992,46 @@ component T3Code
     activityResolved = not activityResolved
   action orderActivity
     activityNewest = not activityNewest
+  derive discussionKey = current.name == "pullDiscussion" and correctActivity ? `${pullRequestActivity.key}:${current.params.thread}` : ""
+  derive discussionSeed = pullRequestActivity.discussions.filter(item => discussionKey != "" and item.id == current.params.thread)
+  state discussionCacheKey = ""
+  state discussionExtra: DiscussionPost[] = []
+  state discussionNext = ""
+  state discussionUsed: string[] = []
+  state discussionHidden = 0
+  state discussionError = ""
+  derive discussionCursor = discussionCacheKey == discussionKey ? discussionNext : match first(discussionSeed) { case some(thread) => thread.next, case none => "" }
+  resource discussionRows = mergeDiscussionPosts(discussionSeed, discussionCacheKey == discussionKey ? discussionExtra : []) as shape DiscussionPost[] else empty()
+  mutation moreDiscussion as shape DiscussionPage then afterDiscussionPage
+  action openDiscussion(id: string)
+    if current.name == "pullRequest" and correctActivity and pullRequestActivity.discussions.filter(thread => thread.id == id).length == 1
+      discussionCacheKey = ""
+      nav = push(nav,path("pullDiscussion",current.params.project,current.params.number,id))
+  action loadDiscussionPage
+    if discussionSeed.length == 1 and discussionKey != "" and discussionCursor != "" and not pending(moreDiscussion)
+      let cursor = discussionCursor
+      if discussionCacheKey != discussionKey
+        discussionExtra = []
+        discussionUsed = []
+        discussionHidden = 0
+        discussionNext = cursor
+        discussionCacheKey = discussionKey
+      discussionError = ""
+      send moreDiscussion = nextDiscussionPosts(pullRefs, discussionKey, current.params.thread, cursor)
+  action afterDiscussionPage
+    match moreDiscussion
+      case some(reply)
+        if reply.key == discussionKey and reply.key == discussionCacheKey and reply.cursor == discussionNext
+          discussionError = reply.error
+          if reply.error == ""
+            discussionExtra = discussionExtra.concat(reply.posts)
+            discussionHidden = discussionHidden + reply.hidden
+            discussionUsed = discussionUsed.concat([reply.cursor])
+            discussionNext = discussionUsed.includes(reply.next) ? "" : reply.next
+            if discussionUsed.includes(reply.next)
+              discussionError = "The environment repeated a replies page."
+      case none
+        discussionError = "More replies could not be loaded."
   state pullFileRevision = 0
   state collapsedDiffFiles: string[] = []
   state diffJumped = ""
@@ -3149,7 +3216,8 @@ component T3Code
                                     if event.body != ""
                                       text event.body user-select="text" white-space="pre-wrap" line-clamp=8 overflow-wrap="break-word"
                                     if event.kind == "discussion"
-                                      text `${event.resolved ? "Resolved" : "Unresolved"}${event.outdated ? " · Outdated" : ""} · ${event.replyCount} ${event.replyCount == 1 ? "comment" : "comments"}` font-size="0.8125rem" color="muted"
+                                      button press=openDiscussion(event.id) aria-label=`Open ${event.resolved ? "resolved" : "unresolved"} discussion in ${event.path == "" ? "the overview" : event.path}` min-height=44 appearance="none" text-align="left" testId=`pull-open-discussion-${event.id}`
+                                        text `${event.resolved ? "Resolved" : "Unresolved"}${event.outdated ? " · Outdated" : ""} · ${event.replyCount} ${event.replyCount == 1 ? "comment" : "comments"}` font-size="0.8125rem" color="muted"
                                     if event.date != ""
                                       text event.date font-size="0.75rem" color="muted" line-clamp=1
                                 if timeline.rows.length == 0 and not pending(timeline)
@@ -3207,6 +3275,35 @@ component T3Code
                                 text "Open in source control"
                         case none
                           text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
+              if e.name == "pullDiscussion"
+                column navigationKey=`${e.id}` navigationScroll="discussion-posts" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Back to activity" testId="pull-discussion-back"
+                      image "symbol:back"
+                    text "Discussion" role="heading" aria-level=2
+                  scroll id="discussion-posts" flex=1 min-height=0 padding="7px 14px 28px"
+                    match first(discussionSeed)
+                      case some(thread)
+                        column gap=10.5 min-width=0
+                          text (thread.path == "" ? "Overview" : `${thread.path}${thread.line > 0 ? `:${thread.line}` : ""}`) role="heading" aria-level=3 font="-exact-headline" line-clamp=2 testId="pull-discussion-path"
+                          text `${thread.resolved ? "Resolved" : "Unresolved"}${thread.outdated ? " · Outdated" : ""} · ${thread.count} ${thread.count == 1 ? "comment" : "comments"}` color="muted" font="-exact-footnote"
+                          for post in discussionRows key=post.id
+                            column gap=5.25 min-width=0 padding="10.5px 0" border-bottom="1px solid border-subtle" testId=`pull-discussion-post-${post.id}`
+                              text post.author font="-exact-subheadline" font-weight=600 line-clamp=1
+                              text post.body user-select="text" white-space="pre-wrap" overflow-wrap="anywhere"
+                              text `${post.date}${post.edited != "" ? " · Edited" : ""}` font="-exact-caption1" color="muted"
+                          if discussionCacheKey == discussionKey and discussionHidden > 0
+                            text `${discussionHidden} ${discussionHidden == 1 ? "reply hidden" : "replies hidden"} by the provider.` font="-exact-footnote" color="muted" testId="discussion-hidden"
+                          if discussionCacheKey == discussionKey and discussionError != ""
+                            text discussionError color="danger" testId="discussion-page-error"
+                          if discussionCursor != ""
+                            button press=loadDiscussionPage disabled=pending(moreDiscussion) min-height=44 testId="discussion-more"
+                              text (pending(moreDiscussion) ? "Loading…" : "Load more replies")
+                      case none
+                        if pending(pullRequestActivity) or pending(catalog)
+                          progress aria-label="Loading discussion"
+                        else
+                          text (pullRequestActivity.error != "" ? pullRequestActivity.error : "This discussion is unavailable.") color="muted" padding=14 testId="pull-discussion-unavailable"
               if e.name == "pullFilesSheet"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header

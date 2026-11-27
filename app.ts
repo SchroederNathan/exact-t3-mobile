@@ -4,6 +4,7 @@ import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullCounts, pullRow } from "./pull-row";
 import { activityEvents, activityTimeline } from "./pull-activity";
+import { discussionPage, discussionPosts, discussionSeeds } from "./pull-discussion";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
@@ -600,6 +601,17 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  mergeDiscussionPosts: ([seeds,extra]) => seeds.length === 1 ? discussionPage(seeds[0]!,extra) : [],
+  nextDiscussionPosts: async ([matches,key,thread,cursor],store,_storage,native) => {
+    const empty={key,cursor,next:"",posts:[],hidden:0,error:""};
+    try {
+      const row=matches[0];
+      if (matches.length !== 1 || !row || !thread || !cursor || key !== `${row.routeKey}:${row.number}:${thread}`) throw new Error("Reopen the discussion to load replies.");
+      const page=await readPullRequestData(row.environmentId,store,native,session=>session.pullThreadComments(row.projectId,row.repository,row.number,row.host,thread,cursor));
+      if (!Array.isArray(page.comments) || !(page.nextCursor === null || typeof page.nextCursor === "string")) throw new Error("The environment returned an invalid replies page.");
+      return {...empty,next:string(page.nextCursor),posts:discussionPosts(page.comments),hidden:Number.isSafeInteger(page.hiddenCount) && Number(page.hiddenCount)>0 ? Number(page.hiddenCount) : 0};
+    } catch(error) {return {...empty,error:error instanceof Error ? error.message : "More replies could not be loaded."};}
+  },
   localPullTimeline: ([events,kind,bots,resolved,newest]) => activityTimeline(events,kind,bots,resolved,newest),
   pullFilePickerRows: ([files,folded]) => filePickerRows(files,folded),
   pullDiffRows: ([files,collapsed]) => pullDiffRows(files,collapsed),
@@ -1868,12 +1880,12 @@ const sources: Sources = {
     }
   },
   loadPullRequestActivity: async ([matches], store, _storage, native) => {
-    const empty = { key:"", ready:true, error:"", events:[], truncated:false };
+    const empty = { key:"", ready:true, error:"", events:[], discussions:[], truncated:false };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
       const activity = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestActivity(row.projectId, row.repository, row.number, row.host));
-      return {key:`${row.routeKey}:${row.number}`, ready:true, error:"", events:activityEvents(activity), truncated:activity.commentsTruncated === true || activity.reviewThreadsTruncated === true};
+      return {key:`${row.routeKey}:${row.number}`, ready:true, error:"", events:activityEvents(activity), discussions:discussionSeeds(activity), truncated:activity.commentsTruncated === true || activity.reviewThreadsTruncated === true};
     } catch (error) {
       return { ...empty, error: error instanceof Error ? error.message : "Pull request activity could not be loaded." };
     }
