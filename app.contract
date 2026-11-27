@@ -740,7 +740,9 @@ component T3Code
   state pullReviewFilter = "all"
   state pullChecksFilter = "all"
   state pullSort = "updated"
-  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort) as shape PullControlMenu else empty()
+  state pullProject = ""
+  derive scopedPullProject = catalog.projects.filter(project => project.id == pullProject and not project.isScratch and (selectedPullEnvironment == "" or selectedPullEnvironment == project.environmentId)).length > 0 ? pullProject : ""
+  resource pullControls = pullControlMenu(pullState, pullInvolvement, pullDraftFilter, pullReviewFilter, pullChecksFilter, pullSort, catalog.projects, catalog.environments, selectedPullEnvironment, scopedPullProject) as shape PullControlMenu else empty()
   state pullPageIndex = 0
   state pullSearchDraft = ""
   state pullQuery = ""
@@ -750,16 +752,20 @@ component T3Code
   derive pullTargets = catalog.environments.filter(env => selectedPullEnvironment == "" or env.id == selectedPullEnvironment)
   derive connectedPullTargets = pullTargets.filter(env => env.enabled and env.status == "Connected").map(env => env.id)
   derive effectivePullQuery = `${pullDraftFilter == "only" ? "draft:true " : pullDraftFilter == "hide" ? "draft:false " : ""}${pullReviewFilter == "all" ? "" : `review:${pullReviewFilter} `}${pullChecksFilter == "all" ? "" : `checks:${pullChecksFilter} `}${pullQuery}`.trim()
-  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex) as shape PullRequests else empty()
+  resource pullRequests = loadPullRequests(pullWorkspace ? connectedPullTargets : [], pullState, pullInvolvement, effectivePullQuery, pullPageIndex, scopedPullProject) as shape PullRequests else empty()
   resource orderedPulls = orderPulls(pullRequests.items, pullSort) as shape PullRequest[] else empty()
   action choosePullControl(id: string)
     if id == "reset"
+      pullProject = ""
       pullDraftFilter = "all"
       pullReviewFilter = "all"
       pullChecksFilter = "all"
       pullSort = "updated"
       pullInvolvement = "all"
       pullState = "open"
+      pullPageIndex = 0
+    else if id.startsWith("project:")
+      pullProject = id.slice(8)
       pullPageIndex = 0
     else if ["sort:updated", "sort:created", "sort:oldest"].includes(id)
       pullSort = id.slice(5)
@@ -775,6 +781,7 @@ component T3Code
   action filterPullEnvironment(id: string)
     if id == "" or environmentState.items.filter(env => env.id == id).length > 0
       pullEnvironment = id
+      pullProject = ""
       pullPageIndex = 0
   task resetHiddenPullPages when current.name != "pullRequests" and current.name != "pullRequest" key=current.name
     change(resetPullPages)

@@ -596,7 +596,7 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
-  pullControlMenu: ([state,involvement,draft,review,checks,sort]) => pullControlMenu(state,involvement,draft,review,checks,sort),
+  pullControlMenu: ([state,involvement,draft,review,checks,sort,projects,environments,scope,project]) => pullControlMenu(state,involvement,draft,review,checks,sort,projects,environments,scope,project),
   orderPulls: ([items,sort]) => orderPulls(items,sort),
   decodePairingScan: ([value, route]) => {
     try {
@@ -1741,18 +1741,19 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async ([ids, state, involvement, search, index], store, _storage, native) => {
-    const responses = await Promise.all(ids.map(async environmentId => {
+  loadPullRequests: async ([ids, state, involvement, search, index, project], store, _storage, native) => {
+    const scope = project ? threadIdentity(project) : null;
+    const responses = await Promise.all(ids.filter(id=>!scope || scope.environmentId===id).map(async environmentId => {
       try {
         const {page, hasMore, moreError} = await readPullRequestData(environmentId, store, native, session => {
           const pages = pullPages.get(session) ?? new PullPages();
           pullPages.set(session, pages);
-          return pages.read(JSON.stringify([session.controlAccessKey(), state, involvement, search]), index, request => session.listPullRequests(state, involvement, search, request));
+          return pages.read(JSON.stringify([session.controlAccessKey(), state, involvement, search, project]), index, request => session.listPullRequests(state, involvement, search, request, scope?.threadId));
         });
         const matches = pullListPredicate(page, state, involvement, search);
         const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
-            return matches(raw) ? projectPull(raw, environmentId) : [];
+            return (!scope || raw.projectId === scope.threadId) && matches(raw) ? projectPull(raw, environmentId) : [];
         });
         const errors = (Array.isArray(page.errors) ? page.errors : []).map((failure: unknown) => {
           const raw = object(failure);

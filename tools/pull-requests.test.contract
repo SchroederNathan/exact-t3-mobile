@@ -96,6 +96,22 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree missing "pull-fixture-first.test-fixture/client-shared-9"
   expect state selectedEnvironment == ""
   request POST "http://127.0.0.2:0/assert/pulls/list"
+  tap "pull-filter-more"
+  tap "pull-more-project"
+  expect tree missing "pull-choice-project:fixture:shared"
+  tap "pull-choice-project:secondary:shared"
+  clock data
+  clock settle
+  expect state pullControls.count == 1
+  expect tree has "pull-secondary-second.test-secondary/client-shared-9"
+  request POST "http://127.0.0.2:0/assert/project/shared"
+  tap "pull-filter-more"
+  tap "pull-more-project"
+  tap "pull-choice-project:secondary:remote"
+  clock data
+  clock settle
+  expect tree missing "pull-secondary-second.test-secondary/client-shared-9"
+  request POST "http://127.0.0.2:0/assert/project/remote"
   tap "pull-filter-environment"
   tap "pull-environment-all"
   clock data

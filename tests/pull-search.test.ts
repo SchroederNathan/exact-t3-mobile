@@ -1,14 +1,22 @@
 import {expect, test} from "bun:test";
 import {pullSearch, pullListPredicate} from "../pull-search";
-import {orderPulls, pullControlMenu} from "../pull-controls";
+import {orderPulls, pullControlMenu, pullProjectOptions} from "../pull-controls";
 
 test("advanced menu counts filters but not sort; typed qualifiers override selected filters", () => {
   const menu = pullControlMenu("open","all","only","approved","all","oldest");
   expect(menu.count).toBe(2);
-  expect(menu.groups.map(group=>group.title)).toEqual(["Drafts only","Approved","Checks","Oldest updated"]);
+  expect(menu.groups.map(group=>group.title)).toEqual(["Drafts only","Approved","Checks","Project","Oldest updated"]);
   expect(menu.groups.every(group=>group.options.filter(option=>option.selected).length === 1)).toBe(true);
   expect(pullControlMenu("open","all","all","all","all","created")).toMatchObject({count:0, reset:true});
   expect(pullSearch("draft:true review:approved draft:false").filters).toEqual({draft:"hide", review:"approved"});
+});
+
+test("project choices keep selected repo aliases, exclude scratch, and distinguish identical projects across servers", () => {
+  const base = {title:"Client",repositoryKey:"Repo",workspaceRoot:"/client",isScratch:false};
+  const projects = [{...base,id:"a:1",environmentId:"a"},{...base,id:"a:2",environmentId:"a",repositoryKey:"repo"},{...base,id:"b:1",environmentId:"b"},{...base,id:"c:1",environmentId:"c",isScratch:true}];
+  const environments = [{id:"a",label:"Home"},{id:"b",label:"Work"}];
+  expect(pullProjectOptions(projects,environments,"","a:2")).toEqual([{id:"project:a:2",title:"Client · Home",selected:true},{id:"project:b:1",title:"Client · Work",selected:false}]);
+  expect(pullProjectOptions(projects,environments,"a","")).toEqual([{id:"project:a:1",title:"Client",selected:false}]);
 });
 
 test("sorts the loaded rows without mutating their default order", () => {

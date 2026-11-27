@@ -217,6 +217,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
   let modelFavorites: Array<{ provider: string; model: string }> = [];
   const pullReads: string[] = [];
   const pullFilters: string[] = [];
+  let lastPullProject = "";
   const serverConfig = () => ({
     settings: { favorites: modelFavorites, ...(threadTimeMode ? { snoozePresets: [{kind:"after", minutes:90}, {kind:"at", day:"tomorrow", time:"09:00"}] } : {}) },
     environment: {
@@ -273,7 +274,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           { id: "active", title: "Active project" },
           { id: "empty", title: "Empty project" },
         ]
-  ).map((project) => ({
+  ).concat(pullsMode ? [{id:"shared",title:"Shared client"}] : []).map((project) => ({
     ...project,
     ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}),
     ...(composer ? { workspaceRoot: composer.cwd } : {}),
@@ -328,6 +329,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           if (ref.host === "first.test") return json({patch:"diff --git a/src/panel.test.ts b/src/panel.test.ts\n@@ -0,0 +1 @@\n+ok", truncated:false, nextCursor:null});
           return ref.cursor ? json({patch:"diff --git a/final.txt b/final.txt\n@@ -0,0 +1 @@\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
         }
+        if (pullsMode && path.startsWith("/assert/project/")) return json({lastPullProject}, lastPullProject === path.slice("/assert/project/".length) ? 200 : 409);
         if (pullsMode && path.startsWith("/assert/filters/")) return json({pullFilters}, pullFilters.at(-1) === path.slice("/assert/filters/".length) ? 200 : 409);
         if (pullsMode && path.startsWith("/assert/pulls/")) {
           const expected = path.slice("/assert/pulls/".length);
@@ -473,6 +475,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: host === "first.test" ? "Keep the status column aligned when a long pull request title wraps onto its second line" : "Adjust safe-area spacing", headBranch: "fix", baseBranch: "main", author: {login: "juniper"}, additions: 18, updatedAt: timestamp,
             ...(host === "first.test" ? {mergeability: "conflicting", checksState: "failing", viewerReviewRequested: true, stack: {position: 1, size: 3}, labels: [{name:"accessibility and keyboard navigation",color:"a855f7"},{name:"appearance",color:"0ea5e9"},{name:"triage",color:null}],deletions: 4} : {isDraft: true})}));
           if (method === "list") pullFilters.push(`${frame.payload.state}-${frame.payload.involvement}`);
+          if (method === "list") lastPullProject = frame.payload.projectId ?? "";
           const listed = frame.payload.state === "closed" ? [] : entries.filter(entry => frame.payload.involvement !== "reviewing" || entry.host === "first.test").map(entry => ({...entry, state: frame.payload.state === "merged" ? "merged" : "open"}));
           const paged = frame.payload.query === "pages";
           const continued = frame.payload.cursors?.fixture === "page-2";
