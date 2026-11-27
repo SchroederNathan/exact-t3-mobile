@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
-import { changedFiles, ChangedFilePages } from "../pull-files";
+import { changedFiles, ChangedFilePages, filePickerRows } from "../pull-files";
 
 const sample = (name: string, nextCursor: string | null = null) => ({patch:`diff --git a/${name} b/${name}\n@@ -1 +1 @@\n-old\n+new`, truncated:false, nextCursor});
+
+test("file picker sorts directories and paths independently without mutating diff order", () => {
+  const files = ["src/z.ts","root","a/first","src/a.ts"].flatMap(path=>changedFiles(sample(path)).files);
+  expect(filePickerRows(files,["a"]).map(row=>row.key)).toEqual(["dir:","file:root","dir:a","dir:src","file:src/a.ts","file:src/z.ts"]);
+  expect(filePickerRows(files,[""])[0]?.label).toBe("Repository root");
+  expect(files[0]?.path).toBe("src/z.ts");
+});
 
 test("renames separate the actual target from display text, including literal arrows and backslashes", () => {
   const patch = 'diff --git a/old.ts "b/src/new → literal\\\\name.ts"\nrename from old.ts\nrename to "src/new → literal\\\\name.ts"\n--- a/old.ts\n+++ "b/src/new → literal\\\\name.ts"\n@@ -1 +1 @@\n-a\n+b';

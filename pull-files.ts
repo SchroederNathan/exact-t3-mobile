@@ -12,6 +12,21 @@ function describePath(path: string) {
 
 export type ChangedFile = ReturnType<typeof describePath> & { path: string; previousPath: string; copied: boolean; additions: number; deletions: number; omitted: boolean; rows: ReviewRow[] };
 
+export function filePickerRows(files: readonly Pick<ChangedFile,"path"|"name"|"directory"|"previousPath"|"copied"|"additions"|"deletions">[], folded: readonly string[]) {
+  const hidden = new Set(folded);
+  const order = [...files].sort((left,right) => left.directory.localeCompare(right.directory) || left.path.localeCompare(right.path));
+  let previous: string | undefined;
+  return order.flatMap(file => {
+    const items = [];
+    if (previous !== file.directory) {
+      previous = file.directory;
+      items.push({kind:"directory",key:`dir:${previous}`,path:previous,label:previous || "Repository root",origin:"",added:0,deleted:0});
+    }
+    if (!hidden.has(file.directory)) items.push({kind:"file",key:`file:${file.path}`,path:file.path,label:file.name,origin:file.previousPath ? `${file.copied ? "Copied" : "Renamed"} from ${file.previousPath}` : "",added:file.additions,deleted:file.deletions});
+    return items;
+  });
+}
+
 export function changedFiles(value: Record<string, unknown>) {
   if (typeof value.patch !== "string" || typeof value.truncated !== "boolean" || !(value.nextCursor === null || typeof value.nextCursor === "string")) throw new Error("The environment returned an invalid diff.");
   const files: ChangedFile[] = [];

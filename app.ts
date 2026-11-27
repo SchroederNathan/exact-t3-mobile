@@ -6,7 +6,7 @@ import { pullRow } from "./pull-row";
 import { hostFacetChoices, facetSearchRows } from "./pull-facet-search";
 import { orderPulls, pullControlMenu, pullFacets } from "./pull-controls";
 import { decodePullRoute, pullRouteKey } from "./pull-route";
-import { ChangedFilePages } from "./pull-files";
+import { ChangedFilePages, filePickerRows } from "./pull-files";
 import { pullDiffRows } from "./pull-diff-view";
 import { pullListPredicate } from "./pull-search";
 import { PullPages } from "./pull-pages";
@@ -599,6 +599,7 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
 const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
+  pullFilePickerRows: ([files,folded]) => filePickerRows(files,folded),
   pullDiffRows: ([files,collapsed]) => pullDiffRows(files,collapsed),
   readPullPrefs: async (_args,_store,storage) => {
     try { return {ready:true,items:await readPullPreferences(storage.fs),error:""}; }

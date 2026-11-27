@@ -56,6 +56,7 @@ routes nav
     pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
       pullFile "/pulls/:project/:number/file/:file"
+        pullFilesSheet "/pulls/:project/:number/file/:file/picker"
   tab usage "/usage"
   tab settings "/settings"
   tab settingsDetail "/settings/detail"
@@ -495,6 +496,15 @@ shape PullDiffRow
   added: number
   deleted: number
 
+shape FilePickerRow
+  kind: string
+  key: string
+  path: string
+  label: string
+  origin: string
+  added: number
+  deleted: number
+
 shape PullRef
   environmentId: string
   projectId: string
@@ -771,7 +781,7 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = "" persist
-  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile"
+  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile" or current.name == "pullFilesSheet"
   derive pullWorkspace = current.name == "pullRequests" or pullDetailRoute or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
   resource pullLink = parsePullLink(pullDetailRoute ? current.params.project : "", pullDetailRoute ? current.params.number : "") as shape PullRef[] else empty()
@@ -932,16 +942,30 @@ component T3Code
   state hidePullTests = false persist
   derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
   derive hiddenPullFileCount = pullFiles.files.length - visiblePullFiles.length
+  state foldedPullDirectories: string[] = []
+  resource pickerFiles = pullFilePickerRows(current.name == "pullFilesSheet" ? visiblePullFiles : [], foldedPullDirectories) as shape FilePickerRow[] else empty()
+  action openFilePicker
+    if current.name == "pullFile"
+      foldedPullDirectories = []
+      nav = push(nav, path("pullFilesSheet", current.params.project, current.params.number, current.params.file))
+  action foldFileDirectory(directory: string)
+    foldedPullDirectories = foldedPullDirectories.includes(directory) ? foldedPullDirectories.filter(item => item != directory) : foldedPullDirectories.concat([directory])
+  action jumpFromFilePicker(file: string)
+    if current.name == "pullFilesSheet" and visiblePullFiles.filter(item => item.path == file).length == 1
+      let next = path("pullFile", current.params.project, current.params.number, file)
+      collapsedDiffFiles = collapsedDiffFiles.filter(item => item != file)
+      diffJumped = ""
+      nav = replace(back(nav), next)
   derive visibleViewedCount = visiblePullFiles.filter(file => viewedFiles.paths.includes(file.path)).length
   action togglePullTests
     hidePullTests = not hidePullTests
   action retryPullFiles
     pullFileRevision = pullFileRevision + 1
-  derive diffPath = current.name == "pullFile" ? current.params.file : ""
+  derive diffPath = current.name == "pullFile" or current.name == "pullFilesSheet" ? current.params.file : ""
   derive diffVisit = current.name == "pullFile" ? `${current.id}:${diffPath}` : ""
   derive diffFileFound = pullFiles.files.filter(file => file.path == diffPath).length > 0
   derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or file.path == diffPath)
-  resource diffRows = pullDiffRows(current.name == "pullFile" ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
+  resource diffRows = pullDiffRows(diffPath != "" ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
   task fetchDiffTarget when current.name == "pullFile" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(pullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
     after(1, retryPullFiles)
   task jumpToPullFile when current.name == "pullFile" and diffVisit != diffJumped and diffRows.filter(row => row.key == `file:${diffPath}`).length > 0 key=diffVisit
@@ -3132,6 +3156,49 @@ component T3Code
                               text "Open in source control"
                         case none
                           text "This pull request is no longer available." color="muted" testId="pull-request-not-found"
+              if e.name == "pullFilesSheet"
+                column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
+                  header
+                    button id="back" press=backPullRequest aria-label="Close changed files" testId="pull-picker-close"
+                      image "symbol:close"
+                    text "Changed files" role="heading" aria-level=2
+                  row align-items="center" gap=7 padding="0 14px"
+                    text (match first(pullRefs) { case some(ref) => `#${ref.number} · ${ref.repository}`, case none => "Changed files" }) flex=1 min-width=0 line-clamp=1 font="-exact-footnote" color="muted" testId="pull-picker-subtitle"
+                    button popovertarget="pull-file-filter-menu" aria-label="Filter review files" min-height=44 min-width=44 testId="pull-picker-filter"
+                      image "symbol:filter" width=20 height=20
+                  list id="pull-picker-files" virtualized=true estimated-item-height=49 flex=1 min-height=0 appearance="none"
+                    for item in pickerFiles key=item.key
+                      column min-width=0
+                        if item.kind == "directory"
+                          button press=foldFileDirectory(item.path) aria-label=item.label aria-expanded=(not foldedPullDirectories.includes(item.path)) appearance="none" display="flex" align-items="center" text-align="left" gap=7 min-height=44 padding="14px 14px 7px" testId=`pull-picker-${item.key}`
+                            image (foldedPullDirectories.includes(item.path) ? "symbol:forward-chevron" : "symbol:sf/chevron.down") width=11 height=11 color="muted"
+                            image "symbol:sf/folder" width=16 height=16 color="muted"
+                            text item.label flex=1 min-width=0 font="-exact-subheadline" color="muted" line-clamp=2
+                        else
+                          button press=jumpFromFilePicker(item.path) aria-label=`View diff for ${item.path}, ${item.added} additions, ${item.deleted} deletions${viewedScope and viewedFiles.paths.includes(item.path) ? ", viewed" : ""}` appearance="none" display="flex" align-items="center" text-align="left" gap=10.5 min-height=49 padding="10.5px 14px" border-bottom="1px solid border-subtle" testId=`pull-picker-${item.key}`
+                            column flex=1 min-width=0 gap=1.75
+                              text item.label font-size="0.875rem" font-weight=500 line-clamp=2
+                              if item.origin != ""
+                                text item.origin font-size="0.8125rem" color="muted" line-clamp=1
+                            text `+${item.added}` color="status-done" font="-exact-caption1"
+                            text `−${item.deleted}` color="danger" font="-exact-caption1"
+                            if viewedScope and viewedFiles.paths.includes(item.path)
+                              image "symbol:checkmark.circle.fill" color="status-done" width=18 height=18
+                            image "symbol:forward-chevron" color="muted" width=12 height=12
+                  if pending(pullFiles) and pullFiles.files.length == 0
+                    progress aria-label="Loading changed files"
+                  else if pullFiles.error != ""
+                    text pullFiles.error color="danger" padding=14
+                    button press=retryPullFiles min-height=44 testId="pull-picker-retry"
+                      text "Retry loading files"
+                  else if visiblePullFiles.length == 0
+                    text (hiddenPullFileCount > 0 ? "Only test files changed" : "No text changes available.") color="muted" padding=14
+                    if hiddenPullFileCount > 0
+                      button press=togglePullTests min-height=44 testId="pull-picker-show-tests"
+                        text "Show test files"
+                  if pullFiles.nextCursor != "" and pullFiles.error == ""
+                    button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-picker-more"
+                      text "Load more files"
               if e.name == "pullFile"
                 column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header
@@ -3174,6 +3241,8 @@ component T3Code
                   if pullFiles.nextCursor != "" and diffFileFound
                     button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-diff-more"
                       text "Load more files"
+                  button press=openFilePicker aria-label="Changed files" buttonStyle="glass" align-self="end" min-height=44 min-width=44 testId="pull-diff-open-picker"
+                    image "symbol:sf/doc.on.doc" font-size=20
               if e.name == "usage"
                 column navigationKey=`${e.id}` navigationScroll="usage" position="absolute" inset=0 display="flex" flex-direction="column"
                   header
