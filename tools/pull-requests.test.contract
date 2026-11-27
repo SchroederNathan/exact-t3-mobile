@@ -29,17 +29,60 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock settle
   expect tree has "pull-request-comment-fixture-second.test"
   expect text "pull-request-change-counts" == "0 changed files · +0 −0"
-  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,list"
+  expect tree has "pull-file-example"
+  expect tree has "pull-file-omitted"
+  expect tree has "pull-files-partial"
+  tap "pull-file-example"
+  expect text "pull-file-line-5" == "+second.test"
+  tap "pull-file-example"
+  expect tree missing "pull-file-line-5"
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,list"
+  tap "pull-files-more"
+  clock data
+  clock settle
+  expect tree has "pull-file-final.txt"
+  expect tree has "pull-file-example"
+  expect tree missing "pull-files-more"
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,diff,list"
   request POST "http://127.0.0.2:0/assert/pulls/none"
   tap "pull-request-back"
   clock settle
   expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  tap "pull-fixture-first.test-fixture/client-shared-9"
+  clock data
+  clock settle
+  expect tree has "pull-file-src/panel.test.ts"
+  tap "pull-file-filter"
+  tap "pull-hide-test-files"
+  expect tree missing "pull-file-src/panel.test.ts"
+  expect text "pull-files-summary" == "0 visible files · 1 test file hidden"
+  reload
+  clock data
+  clock settle
+  expect tree has "pull-show-test-files"
+  tap "pull-show-test-files"
+  expect tree has "pull-file-src/panel.test.ts"
+  tap "pull-request-back"
+  clock settle
   type "root" "/pulls/shared/9"
   clock data
   clock settle
   expect tree has "pull-request-ambiguous"
   type "root" "/pulls"
   clock settle
+  tap "pull-filter-environment"
+  tap "pull-environment-secondary"
+  clock data
+  clock settle
+  expect tree has "pull-secondary-second.test-secondary/client-shared-9"
+  expect tree missing "pull-fixture-first.test-fixture/client-shared-9"
+  expect state selectedEnvironment == ""
+  request POST "http://127.0.0.2:0/assert/pulls/list"
+  tap "pull-filter-environment"
+  tap "pull-environment-all"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
   tap "pull-filter-state"
   tap "pull-state-closed"
   clock data
@@ -69,3 +112,24 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  type "pulls-search" "pages"
+  clock +180
+  clock data
+  clock settle
+  expect tree has "pulls-more"
+  tap "pulls-more"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-19"
+  expect tree missing "pulls-more"
+  type "root" "/pulls/pr-5b227365636f6e64617279222c22736861726564222c227365636f6e642e74657374222c227365636f6e646172792f636c69656e74225d/29"
+  clock data
+  clock settle
+  expect tree has "pull-request-comment-secondary-second.test"
+  expect tree has "pull-file-example"
+  expect tree missing "pull-request-not-found"
+  reload
+  clock data
+  clock settle
+  expect tree has "pull-request-comment-secondary-second.test"
+  expect tree has "pull-file-example"

@@ -1,3 +1,11 @@
+test "a direct pull requests visit explains how to connect without showing a loading row"
+  at "/pulls"
+  clock data
+  clock settle
+  expect text "pulls-empty" == "Connect an environment"
+  expect text "pulls-empty-detail" == "Add an environment in Settings to browse its pull requests."
+  expect tree missing "pulls-loading"
+
 test "usage without an environment does not report measured activity"
   at "/usage"
   clock data

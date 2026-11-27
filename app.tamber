@@ -25,6 +25,8 @@ theme
   sidebar-muted = light-dark(#6f6f79, #a3a3a3)
   foreground = light-dark(#27272a, #f5f5f5)
   muted = light-dark(#6f6f79, #838383)
+  tab-muted = light-dark(#686872, #a0a0a8)
+  tab-selected = light-dark(#275cdd, #759aff)
   composer-menu-muted = light-dark(#6f6f79, #92929a)
   icon = light-dark(#27272a, #f5f5f5)
   icon-muted = light-dark(#71717b, #818181)

@@ -3,7 +3,10 @@ import { TableLayouts } from "./table-layout";
 import { usageWindow } from "./usage";
 import { poolLimitReports } from "./limit-pools";
 import { pullRow } from "./pull-row";
+import { decodePullRoute, pullRouteKey } from "./pull-route";
+import { ChangedFilePages } from "./pull-files";
 import { pullListPredicate } from "./pull-search";
+import { PullPages } from "./pull-pages";
 import { customSnoozeDeadline, localSnoozeField } from "./snooze";
 import { excerptRuns } from "./search-excerpt";
 import { CodeHighlights, codeRuns, type CodeRun } from "./code-highlight";
@@ -54,6 +57,7 @@ import {
   scopedThreadId,
   string,
   threadIdentity,
+  catalogThreadIdentity,
   threadIdFromUrl,
   type Catalog,
   type Environment,
@@ -362,7 +366,7 @@ async function loadCatalog(
   native?: NativeModule | null,
 ): Promise<Catalog> {
   const tokens = credentials(store);
-  const activeThread = activeThreadId ? threadIdentity(activeThreadId) : undefined;
+  const activeThread = catalogThreadIdentity(activeThreadId);
   if (native?.available) {
     native.watch("connections");
     return nativeCatalog(environments, tokens, activeThread, now, native);
@@ -556,11 +560,22 @@ const addProject = addProjectSources({
   },
 });
 
-function pullRouteKey(environmentId: string, projectId: string, host: string, repository: string) {
-  return `pr-${Array.from(new TextEncoder().encode(JSON.stringify([environmentId, projectId, host, repository])), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+const pullPages = new WeakMap<DirectSession, PullPages>();
+
+function projectPull(value: unknown, environmentId: string, hostOverride?: string) {
+  const raw = object(value);
+  const summary = pullRequestSummary(raw);
+  const projectId = string(raw.projectId);
+  if (!summary.repository || !projectId || summary.number < 1) return [];
+  const host = hostOverride ?? string(raw.host);
+  return [{ row: pullRow(raw), environmentId, host, routeKey:pullRouteKey(environmentId,projectId,host,summary.repository),
+    projectId, number:summary.number, title:summary.title, url:summary.url, state:summary.state, isDraft:raw.isDraft === true,
+    repository:summary.repository, baseBranch:summary.baseBranch, headBranch:summary.branch, updatedAt:summary.updatedAt, author:summary.author,
+    body:string(raw.body) || string(raw.description), additions:Number(raw.additions ?? raw.addedLines ?? 0),
+    deletions:Number(raw.deletions ?? raw.deletedLines ?? 0), changedFiles:Number(raw.changedFiles ?? raw.changedFileCount ?? 0) }];
 }
 
-async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession) => Promise<T>): Promise<T> {
+async function readPullRequestData<T>(id: string, store: Store, native: NativeModule | null | undefined, read: (session: DirectSession, token: string) => Promise<T>): Promise<T> {
   const session = sessionFor(id);
   const key = session.controlAccessKey();
   const token = credentials(store)[id];
@@ -572,10 +587,12 @@ async function readPullRequestData<T>(id: string, store: Store, native: NativeMo
   const auth = await readJson(`${session.environment.url}/api/auth/session`, { headers: { Authorization: `Bearer ${token}` } });
   assertCurrent();
   if (!sessionScope(auth, "orchestration:read")) throw new Error("This connection cannot read pull requests.");
-  const result = await awaitReply(read(session), native);
+  const result = await awaitReply(read(session, token), native);
   assertCurrent();
   return result;
 }
+
+const filePages = new WeakMap<DirectSession, ChangedFilePages>();
 
 const sources: Sources = {
   decodePairingScan: ([value, route]) => {
@@ -1721,66 +1738,76 @@ const sources: Sources = {
       };
     }
   },
-  loadPullRequests: async ([ids, state, involvement, search], store, _storage, native) => {
+  loadPullRequests: async ([ids, state, involvement, search, index], store, _storage, native) => {
     const responses = await Promise.all(ids.map(async environmentId => {
       try {
-        const page = await readPullRequestData(environmentId, store, native, session => session.listPullRequests(state, involvement, search));
+        const {page, hasMore, moreError} = await readPullRequestData(environmentId, store, native, session => {
+          const pages = pullPages.get(session) ?? new PullPages();
+          pullPages.set(session, pages);
+          return pages.read(JSON.stringify([session.controlAccessKey(), state, involvement, search]), index, request => session.listPullRequests(state, involvement, search, request));
+        });
         const matches = pullListPredicate(page, state, involvement, search);
         const items = (Array.isArray(page.entries) ? page.entries : []).flatMap((entry: unknown) => {
             const raw = object(entry);
-            const summary = pullRequestSummary(raw);
-            if (!summary.repository || !string(raw.projectId) || summary.number < 1 || !matches(raw)) return [];
-            return [{ row: pullRow(raw), environmentId, host: string(raw.host), routeKey: pullRouteKey(environmentId, string(raw.projectId), string(raw.host), summary.repository),
-              number: summary.number,
-              title: summary.title,
-              url: summary.url,
-              state: summary.state,
-              isDraft: raw.isDraft === true,
-              repository: summary.repository,
-              baseBranch: summary.baseBranch,
-              headBranch: summary.branch,
-              updatedAt: summary.updatedAt,
-              projectId: string(raw.projectId),
-              author: summary.author,
-              body: string(raw.body) || string(raw.description),
-              additions: Number(raw.additions ?? raw.addedLines ?? 0),
-              deletions: Number(raw.deletions ?? raw.deletedLines ?? 0),
-              changedFiles: Number(raw.changedFiles ?? raw.changedFileCount ?? 0),
-            }];
+            return matches(raw) ? projectPull(raw, environmentId) : [];
         });
         const errors = (Array.isArray(page.errors) ? page.errors : []).map((failure: unknown) => {
           const raw = object(failure);
           return [string(raw.projectTitle), string(raw.message) || "Pull requests could not be loaded."].filter(Boolean).join(": ");
         });
-        return {items, errors};
+        return {items, errors, hasMore, moreError};
       } catch (error) {
-        return {items: [], errors: [error instanceof Error ? error.message : "Pull requests could not be loaded."]};
+        return {items: [], errors: [error instanceof Error ? error.message : "Pull requests could not be loaded."], hasMore:false, moreError:""};
       }
     }));
     const items = responses.flatMap(result => result.items).sort((left, right) =>
       (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0) || left.routeKey.localeCompare(right.routeKey) || right.number - left.number);
-    return {ready: true, error: responses.flatMap(result => result.errors).join("\n"), items};
+    return {ready: true, error: responses.flatMap(result => result.errors).join("\n"), items, hasMore:responses.some(result => result.hasMore), moreError:responses.map(result => result.moreError).filter(Boolean).join("\n")};
+  },
+  parsePullLink: ([key, number]) => {
+    const ref = decodePullRoute(key, number);
+    return ref ? [ref] : [];
   },
   loadPullRequestDetail: async ([matches], store, _storage, native) => {
-    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "" };
+    const empty = { ready: true, error: "", body: "", author: "", additions: 0, deletions: 0, changedFiles: 0, checksState: "", items: [] };
     if (matches.length !== 1) return empty;
     const row = matches[0];
     try {
       const value = await readPullRequestData(row.environmentId, store, native, session => session.pullRequestDetail(row.projectId, row.repository, row.number, row.host));
       const authorValue = object(value.author);
       const checks = object(value.checks);
+      const items = projectPull(value, row.environmentId, row.host);
+      if (items.some(item => item.projectId !== row.projectId || item.repository !== row.repository || item.number !== row.number) || (value.host && value.host !== row.host)) throw new Error("The environment returned a different pull request.");
       return {
+        items,
         ready: true,
         error: "",
         body: string(value.body) || string(value.description),
         author: string(authorValue.login) || string(authorValue.name) || string(value.author),
-        additions: Number(value.additions ?? row.additions ?? 0),
-        deletions: Number(value.deletions ?? row.deletions ?? 0),
+        additions: Number(value.additions ?? 0),
+        deletions: Number(value.deletions ?? 0),
         changedFiles: Number(value.changedFiles ?? value.changedFileCount ?? 0),
         checksState: string(value.checksState) || string(checks.state),
       };
     } catch (error) {
       return { ...empty, error: error instanceof Error ? error.message : "Pull request detail could not be loaded." };
+    }
+  },
+  loadPullFiles: async ([matches, revision], store, _storage, native) => {
+    const empty = { files: [], truncated: false, nextCursor: "", error: "" };
+    if (matches.length !== 1) return empty;
+    const row = matches[0];
+    try {
+      return await readPullRequestData(row.environmentId, store, native, (session, token) => {
+        const pages = filePages.get(session) ?? new ChangedFilePages();
+        filePages.set(session, pages);
+        return pages.read(JSON.stringify([session.controlAccessKey(),row.routeKey,row.number]), revision, cursor => readJson(`${session.environment.url}/api/pull-requests/diff`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: row.projectId, repository: row.repository, number: row.number, ...(row.host ? {host: row.host} : {}), ...(cursor ? {cursor} : {}) }),
+        }));
+      });
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : "Changed files could not be loaded." };
     }
   },
   loadPullRequestActivity: async ([matches], store, _storage, native) => {

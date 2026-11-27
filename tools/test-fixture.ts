@@ -320,6 +320,14 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (pullsMode && path === "/api/pull-requests/diff") {
+          const ref = await request.json();
+          if (request.headers.get("authorization") !== "Bearer fixture-access" || ref.projectId !== "shared" || ref.repository !== `${id}/client` || !(ref.number === 9 || (secondary && ref.host === "second.test" && ref.number === 29)) || !["first.test", "second.test"].includes(ref.host)) return json({message:"Incorrect diff reference"}, 403);
+          pullReads.push("diff");
+          if (ref.cursor && ref.cursor !== "after fixture/1") return json({message:"Invalid diff cursor"}, 400);
+          if (ref.host === "first.test") return json({patch:"diff --git a/src/panel.test.ts b/src/panel.test.ts\n@@ -0,0 +1 @@\n+ok", truncated:false, nextCursor:null});
+          return ref.cursor ? json({patch:"diff --git a/final.txt b/final.txt\n@@ -0,0 +1 @@\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
+        }
         if (pullsMode && path.startsWith("/assert/filters/")) return json({pullFilters}, pullFilters.at(-1) === path.slice("/assert/filters/".length) ? 200 : 409);
         if (pullsMode && path.startsWith("/assert/pulls/")) {
           const expected = path.slice("/assert/pulls/".length);
@@ -460,13 +468,20 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           const method = frame.tag.slice("pullRequests.".length);
           pullReads.push(method);
           const repository = `${id}/client`;
-          if (method !== "list" && (frame.payload.projectId !== "shared" || frame.payload.repository !== repository || frame.payload.number !== 9 || !["first.test", "second.test"].includes(frame.payload.host))) throw new Error("Incorrect pull request coordinates");
+          const offPage = secondary && frame.payload.host === "second.test" && frame.payload.number === 29;
+          if (method !== "list" && (frame.payload.projectId !== "shared" || frame.payload.repository !== repository || (!offPage && frame.payload.number !== 9) || !["first.test", "second.test"].includes(frame.payload.host))) throw new Error("Incorrect pull request coordinates");
           const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: host === "first.test" ? "Keep the status column aligned when a long pull request title wraps onto its second line" : "Adjust safe-area spacing", headBranch: "fix", baseBranch: "main", author: {login: "juniper"}, additions: 18, updatedAt: timestamp,
             ...(host === "first.test" ? {mergeability: "conflicting", checksState: "failing", viewerReviewRequested: true, stack: {position: 1, size: 3}, labels: [{name:"accessibility and keyboard navigation",color:"a855f7"},{name:"appearance",color:"0ea5e9"},{name:"triage",color:null}],deletions: 4} : {isDraft: true})}));
           if (method === "list") pullFilters.push(`${frame.payload.state}-${frame.payload.involvement}`);
           const listed = frame.payload.state === "closed" ? [] : entries.filter(entry => frame.payload.involvement !== "reviewing" || entry.host === "first.test").map(entry => ({...entry, state: frame.payload.state === "merged" ? "merged" : "open"}));
+          const paged = frame.payload.query === "pages";
+          const continued = frame.payload.cursors?.fixture === "page-2";
+          if (paged && continued && listed.length) listed.push({...listed[0]!,number:19,title:"More pages"});
           const value = method === "list" ? {entries: listed, providers: [{host:"first.test",searchesOnHost:false},{host:"second.test",searchesOnHost:true}], viewers:{"first.test":"juniper","second.test":"otter"}, errors: secondary || frame.payload.state !== "open" ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body: "Fixture review", kind: "comment"}], commits: []} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
-          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value } }));
+          const detail = method === "detail" && offPage ? {...value,projectId:"shared",host:"second.test",repository,number:29,title:"Archived keyboard change",state:"merged",updatedAt:timestamp,baseBranch:"main",headBranch:"fix"} : value;
+          const answerPull = () => socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: method === "list" && paged ? {...value, nextCursors:continued ? {} : {fixture:"page-2"}} : detail } }));
+          if (method === "list" && paged && continued) setTimeout(answerPull, 400);
+          else answerPull();
         } else if (frame.tag === "server.getUsageSummary" && usageMode) {
           const count = frame.payload.resolution === "hour" ? 2 : 10;
           const periods = [

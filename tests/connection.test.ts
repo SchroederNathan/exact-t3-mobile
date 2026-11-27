@@ -12,7 +12,16 @@ import {
   newPinKey,
   threadIdFromUrl,
   threadIdentity,
+  catalogThreadIdentity,
 } from "../connection";
+
+test("invalid deep links leave the catalog unselected without weakening command identities", () => {
+  for (const route of ["", "composer-test", ":thread", "env:", "%GG:thread", "env:%C0"]) {
+    expect(catalogThreadIdentity(route)).toBeUndefined();
+  }
+  expect(catalogThreadIdentity(scopedThreadId("a:b", "x/y:%"))).toEqual({ environmentId: "a:b", threadId: "x/y:%" });
+  expect(() => threadIdentity("composer-test")).toThrow();
+});
 
 type SettingsRequest = {
   _tag: string;
