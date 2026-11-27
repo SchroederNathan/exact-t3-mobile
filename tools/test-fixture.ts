@@ -11,11 +11,16 @@ import { ComposerFixture } from "./composer-fixture";
 
 const app = NodePath.resolve(import.meta.dir, "..");
 const timestamp = "2026-11-10T12:00:00Z";
+const conversation = "This is a deterministic test conversation.";
 const activityMode = process.argv.includes("--activities");
 const attachmentMode = process.argv.includes("--attachments");
 const markdownMode = process.argv.includes("--markdown");
 const controlsMode = process.argv.includes("--controls");
 const composerMode = process.argv.includes("--composer");
+const usageMode = process.argv.includes("--usage");
+const pullsMode = process.argv.includes("--pulls");
+const threadTimeMode = process.argv.includes("--thread-time");
+const threadSearchMode = process.argv.includes("--thread-search");
 const thirdEnvironment = process.argv.includes("--third-environment");
 const fixturePorts = new Map<string, number>();
 const exactArguments: string[] = [];
@@ -28,6 +33,10 @@ for (let index = 2; index < process.argv.length; index++) {
       "--markdown",
       "--controls",
       "--composer",
+      "--usage",
+      "--pulls",
+      "--thread-time",
+      "--thread-search",
       "--attachments",
       "--third-environment",
     ].includes(argument)
@@ -206,10 +215,13 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       })
     : undefined;
   let modelFavorites: Array<{ provider: string; model: string }> = [];
+  const pullReads: string[] = [];
+  const pullFilters: string[] = [];
   const serverConfig = () => ({
-    settings: { favorites: modelFavorites },
+    settings: { favorites: modelFavorites, ...(threadTimeMode ? { snoozePresets: [{kind:"after", minutes:90}, {kind:"at", day:"tomorrow", time:"09:00"}] } : {}) },
     environment: {
       platform: { machine: secondary ? "laptop" : "mac-mini" },
+      ...(threadTimeMode ? { capabilities: { threadSnooze: true, threadTitleRegeneration: !secondary, threadAutoSettleOptOut: !secondary } } : {}),
       ...(activities || attachments || controls
         ? { capabilities: { ...activities?.config, ...attachments?.config, ...controls?.config } }
         : {}),
@@ -218,13 +230,18 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       ? { threadResumeCompletionMarker: true }
       : {}),
     ...(controls || attachments ? { threadSnapshotPagination: true } : {}),
+    ...(usageMode ? { usageLimitSources: [{id:"fixture-hub",label:"Fixture hub",accounts:[
+      {id:"mirror.json",driver:"codex",email:"shared@example.test",usageLimits:{checkedAt:"2026-11-01T00:00:00Z",windows:[{id:"other-slot",kind:"weekly",label:"Weekly",usedPercent:100}]}},
+      {id:"QA.json",driver:"codex",usageLimits:{checkedAt:timestamp,windows:[{id:"week",kind:"weekly",label:"Weekly",usedPercent:80},{id:"five-hour",kind:"session",label:"Session",usedPercent:35}]}},
+    ]}] } : {}),
     providers: [
       {
         instanceId: "fixture-provider",
         driver: "codex",
+        ...(usageMode ? { usageLimits: { checkedAt: timestamp, windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 24.5 }] } } : {}),
         installed: true,
         enabled: true,
-        auth: { status: "authenticated" },
+        auth: { status: "authenticated", ...(usageMode ? { email:"shared@example.test" } : {}) },
         ...composer?.provider,
         models: ["fixture-model", "fixture-fast"].map((slug) => ({
           slug,
@@ -248,6 +265,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     ],
   });
   const held: { socket: Socket; requestId: string }[] = [];
+  let clockSubscription: string | undefined;
   const projects = (
     secondary
       ? [{ id: "remote", title: "Remote project" }]
@@ -260,16 +278,27 @@ function environment(id: string, label: string, secondary = false, port = 0) {
     ...(markdown ? { workspaceRoot: markdown.workspaceRoot } : {}),
     ...(composer ? { workspaceRoot: composer.cwd } : {}),
   }));
-  const threads = (secondary ? ["gamma"] : ["alpha", "beta"])
+  const threads = (secondary ? ["gamma"] : threadTimeMode ? ["alpha", "beta", "later", "soon", "build"] : ["alpha", "beta"])
     .map((id) => ({
       id,
       projectId: secondary ? "remote" : "active",
       title:
-        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : "Beta thread",
+        id === "gamma" ? "Gamma remote thread" : id === "alpha" ? "Alpha thread" : id === "later" ? "Later nap" : id === "soon" ? "Soon nap" : id === "build" ? "Pinned build" : "Beta thread",
       status: "idle",
       runtimeMode: "full-access",
       updatedAt: timestamp,
       latestUserMessageAt: timestamp,
+      ...(threadTimeMode && ["build", "later", "beta"].includes(id) ? { pinnedAt: timestamp, pinOrderKey: id === "beta" ? "betb" : id } : {}),
+      ...(id === "build" ? { status: "running", latestRunId: "fixture-build" } : {}),
+      ...(threadSearchMode && id === "alpha" ? {
+        branch: "release/subscription-clock",
+        pullRequests: [
+          { repository: "fixture/ui", number: 72, url: "https://example.test/fixture/ui/pull/72", source: "manual", snapshot: { title: "Restore keyboard focus" } },
+          { repository: "fixture/ui", number: 81, url: "https://example.test/fixture/ui/pull/81", source: "stack-dismissed" },
+        ],
+      } : {}),
+      ...(threadTimeMode && id === "beta" ? { settledOverride: "settled", settledAt: "2026-11-09T13:00:00Z" } : {}),
+      ...(id === "later" || id === "soon" ? { snoozedAt: timestamp, snoozedUntil: id === "soon" ? "2026-11-10T12:59:15Z" : "2026-11-10T16:30:00Z" } : {}),
       modelSelection: { instanceId: "fixture-provider", model: "fixture-model" },
     }))
     .concat(activities?.threads ?? []);
@@ -291,13 +320,25 @@ function environment(id: string, label: string, secondary = false, port = 0) {
       const activityResponse = await activities?.http(request);
       if (activityResponse) return activityResponse;
       if (request.method === "POST") {
+        if (pullsMode && path.startsWith("/assert/filters/")) return json({pullFilters}, pullFilters.at(-1) === path.slice("/assert/filters/".length) ? 200 : 409);
+        if (pullsMode && path.startsWith("/assert/pulls/")) {
+          const expected = path.slice("/assert/pulls/".length);
+          return json({reads: pullReads}, (pullReads.slice().sort().join(",") || "none") === expected ? 200 : 409);
+        }
+        if (threadTimeMode && (path === "/clock/start" || path === "/clock/check")) {
+          const socket = readySocket(sockets);
+          if (!socket || sockets.size !== 1) return refused("Expected one connected clock fixture");
+          const identity = JSON.stringify([socket.data.serial, socket.data.shellRequest, socket.data.configRequest]);
+          if (path === "/clock/start") clockSubscription = identity;
+          return identity === clockSubscription ? json({ unchanged: true }) : refused("Clock replaced the connection or subscriptions");
+        }
         const assertion = assertions(path, request.signal);
         if (assertion) return assertion;
       }
       if (path === "/api/auth/session" && !controls && !attachments) {
         return json({
           authenticated: true,
-          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read"],
+          scopes: ["orchestration:read", "orchestration:operate", "source-control:write", "filesystem:read", ...(usageMode ? ["diagnostics:read"] : [])],
         });
       }
       if (path === "/.well-known/t3/environment") {
@@ -397,6 +438,46 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               ],
             },
           });
+        } else if (threadTimeMode && frame.tag === "orchestration.dispatchCommand" && ["thread.pin", "thread.unpin", "thread.snooze", "thread.unsnooze", "thread.metadata.update", "thread.auto-settle.set", "thread.settle", "thread.unsettle"].includes(frame.payload.type)) {
+          const row = threads.find(thread => thread.id === frame.payload.threadId);
+          if (!row || !frame.payload.commandId) throw new Error("List command missing thread or command identifier");
+          if (frame.payload.type === "thread.metadata.update") Object.assign(row, frame.payload.regenerateTitle === true ? { titleRegeneration: { requestId: frame.payload.commandId, startedAt: timestamp } } : { title: frame.payload.title });
+          else if (frame.payload.type === "thread.auto-settle.set") {
+            if (secondary || typeof frame.payload.enabled !== "boolean") throw new Error("Invalid auto-settle command");
+            Object.assign(row, { autoSettleDisabledAt: frame.payload.enabled ? null : timestamp });
+          } else if (frame.payload.type === "thread.pin") Object.assign(row, { pinnedAt: timestamp, pinOrderKey: frame.payload.orderKey, snoozedAt: null, snoozedUntil: null });
+          else if (frame.payload.type === "thread.snooze") Object.assign(row, { snoozedAt: timestamp, snoozedUntil: frame.payload.snoozedUntil });
+          else if (frame.payload.type === "thread.unsnooze") Object.assign(row, { snoozedAt: null, snoozedUntil: null });
+          else if (frame.payload.type === "thread.settle") Object.assign(row, { settledOverride: "settled", settledAt: timestamp, pinnedAt: null, pinOrderKey: null, snoozedAt: null, snoozedUntil: null });
+          else if (frame.payload.type === "thread.unsettle") {
+            if (frame.payload.reason !== "user") throw new Error("Missing explicit un-settle reason");
+            Object.assign(row, { settledOverride: "active", settledAt: null });
+          }
+          else Object.assign(row, { pinnedAt: null, pinOrderKey: null });
+          accepted(socket, frame.id);
+          for (const peer of sockets) if (peer.data.shellRequest) chunk(peer, peer.data.shellRequest, { kind: "thread.updated", location: "active", thread: row });
+        } else if (pullsMode && frame.tag.startsWith("pullRequests.")) {
+          const method = frame.tag.slice("pullRequests.".length);
+          pullReads.push(method);
+          const repository = `${id}/client`;
+          if (method !== "list" && (frame.payload.projectId !== "shared" || frame.payload.repository !== repository || frame.payload.number !== 9 || !["first.test", "second.test"].includes(frame.payload.host))) throw new Error("Incorrect pull request coordinates");
+          const entries = ["first.test", "second.test"].map(host => ({host, projectId: "shared", repository, number: 9, title: host === "first.test" ? "Keep the status column aligned when a long pull request title wraps onto its second line" : "Adjust safe-area spacing", headBranch: "fix", baseBranch: "main", author: {login: "juniper"}, additions: 18, updatedAt: timestamp,
+            ...(host === "first.test" ? {mergeability: "conflicting", checksState: "failing", viewerReviewRequested: true, stack: {position: 1, size: 3}, labels: [{name:"accessibility and keyboard navigation",color:"a855f7"},{name:"appearance",color:"0ea5e9"},{name:"triage",color:null}],deletions: 4} : {isDraft: true})}));
+          if (method === "list") pullFilters.push(`${frame.payload.state}-${frame.payload.involvement}`);
+          const listed = frame.payload.state === "closed" ? [] : entries.filter(entry => frame.payload.involvement !== "reviewing" || entry.host === "first.test").map(entry => ({...entry, state: frame.payload.state === "merged" ? "merged" : "open"}));
+          const value = method === "list" ? {entries: listed, providers: [{host:"first.test",searchesOnHost:false},{host:"second.test",searchesOnHost:true}], viewers:{"first.test":"juniper","second.test":"otter"}, errors: secondary || frame.payload.state !== "open" ? [] : [{ projectTitle: "Unavailable project", message: "Offline" }]} : method === "activity" ? {comments: [{id: `${id}-${frame.payload.host}`, body: "Fixture review", kind: "comment"}], commits: []} : {body: `${id} details`, changedFiles: 0, additions: 0, deletions: 0};
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value } }));
+        } else if (frame.tag === "server.getUsageSummary" && usageMode) {
+          const count = frame.payload.resolution === "hour" ? 2 : 10;
+          const periods = [
+            [frame.payload.sinceDay, frame.payload.sinceTime, "codex", count, 0.5],
+            [frame.payload.sinceDay, frame.payload.sinceTime, "claude", 2, 0.25],
+            [frame.payload.untilDay, frame.payload.untilTime ? new Date(Date.parse(frame.payload.untilTime) - 3600000).toISOString() : undefined, "claude", 3, frame.payload.awaitRefresh ? 0.75 : 0.25],
+          ];
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: {
+            contractVersion: 6, buckets: periods.map(([day, hourStart, provider, tokens, costUsd]) => ({ day, hourStart, provider, totals: { uncachedInputTokens: tokens, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+              records: 1, unpricedRecords: 0, costUsd })), sources: [{status: "ok", distinctSessions: 1}],
+          } } }));
         } else if (frame.tag === "subscribeServerConfig") {
           socket.data.config = true;
           socket.data.configRequest = frame.id;
@@ -416,6 +497,12 @@ function environment(id: string, label: string, secondary = false, port = 0) {
               exit: { _tag: "Success", value: { favorites: modelFavorites } },
             }),
           );
+        } else if (frame.tag === "orchestration.searchThreads") {
+          const query = String(frame.payload.query).trim().toLowerCase();
+          const matches = conversation.toLowerCase().includes(query) ? threads
+            .filter(thread => !frame.payload.projectIds || frame.payload.projectIds.includes(thread.projectId))
+            .map(thread => ({ threadId: thread.id, projectId: thread.projectId, source: "assistant", snippet: conversation, messageCreatedAt: timestamp })) : [];
+          socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: { matches } } }));
         } else if (frame.tag === "orchestration.subscribeThread") {
           chunk(socket, frame.id, {
             kind: "snapshot",
@@ -424,7 +511,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
                 {
                   id: `${frame.payload.threadId}-message`,
                   role: "assistant",
-                  text: "This is a deterministic test conversation.",
+                  text: conversation,
                   createdAt: timestamp,
                 },
               ],
@@ -568,7 +655,7 @@ try {
   } else {
     const file = NodePath.join(directory, "home-regression.test.contract");
     const source = await NodeFSP.readFile(
-      NodePath.join(import.meta.dir, composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
+      NodePath.join(import.meta.dir, pullsMode ? "pull-requests.test.contract" : threadSearchMode ? "thread-search.test.contract" : threadTimeMode ? "thread-time.test.contract" : usageMode ? "usage-regression.test.contract" : composerMode ? "composer-regression.test.contract" : "home-regression.test.contract"),
       "utf8",
     );
     await NodeFSP.writeFile(

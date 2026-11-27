@@ -1,0 +1,71 @@
+test "PRs load on demand and resolve duplicate repository and PR numbers on the selected source control host" on web
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  type "root" "/settings"
+  tap "environments-button"
+  clock settle
+  tap "environment-add-environments"
+  clock settle
+  type "address" "http://127.0.0.2:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/assert/pulls/none"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  type "root" "/pulls"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect text "pulls-error" == "Unavailable project: Offline"
+  tap "pull-fixture-second.test-fixture/client-shared-9"
+  clock data
+  clock settle
+  expect tree has "pull-request-comment-fixture-second.test"
+  expect text "pull-request-change-counts" == "0 changed files · +0 −0"
+  request POST "http://127.0.0.1:0/assert/pulls/activity,detail,list"
+  request POST "http://127.0.0.2:0/assert/pulls/none"
+  tap "pull-request-back"
+  clock settle
+  expect tree has "pull-fixture-second.test-fixture/client-shared-9"
+  type "root" "/pulls/shared/9"
+  clock data
+  clock settle
+  expect tree has "pull-request-ambiguous"
+  type "root" "/pulls"
+  clock settle
+  tap "pull-filter-state"
+  tap "pull-state-closed"
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No matching pull requests"
+  request POST "http://127.0.0.1:0/assert/filters/closed-all"
+  tap "pull-filter-involvement"
+  tap "pull-involvement-reviewing"
+  clock data
+  request POST "http://127.0.0.1:0/assert/filters/closed-reviewing"
+  tap "pull-filter-state"
+  tap "pull-state-merged"
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"
+  expect tree missing "pull-fixture-second.test-fixture/client-shared-9"
+  request POST "http://127.0.0.1:0/assert/filters/merged-reviewing"
+  type "pulls-search" "draft:false unmatched"
+  clock +179
+  expect state pullQuery == ""
+  clock +1
+  clock data
+  clock settle
+  expect text "pulls-empty" == "No results"
+  type "pulls-search" "author:@me keyboard"
+  clock +180
+  clock data
+  clock settle
+  expect tree has "pull-fixture-first.test-fixture/client-shared-9"

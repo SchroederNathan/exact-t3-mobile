@@ -1,3 +1,4 @@
 {
-  "purpose.microphone": "Record speech to add it to your message."
+  "purpose.microphone": "Record speech to add it to your message.",
+  "purpose.camera": "Scan a pairing QR code from your T3 Code environment."
 }

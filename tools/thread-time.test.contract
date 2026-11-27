@@ -1,0 +1,241 @@
+epoch "2026-11-10T12:59:00Z"
+time-zone "UTC"
+
+test "choose per-thread auto-settle without leaving the list"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-auto-settle"
+  tap "auto-settle-never"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-auto-settle"
+  tap "auto-settle-follow"
+  clock data
+  expect state activeThreadId == ""
+
+test "settle a pinned thread and undo the settlement without navigation"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:build" contextmenu
+  clock data
+  tap "thread-menu-settle"
+  clock data
+  clock settle
+  expect text "settled-title" == "Settled (2)"
+  expect text "thread-undo-label" == "Settled thread"
+  tap "undo-settle"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:build"
+  expect text "settled-title" == "Settled (1)"
+  expect state activeThreadId == ""
+
+test "rename uses the current row title and only the server updates its label"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/clock/start"
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-copy-id"
+  expect state activeThreadId == ""
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-rename"
+  expect state renameDraft == "Alpha thread"
+  type "rename-title" "  Corrected title  "
+  tap "rename-confirm"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-rename"
+  expect state renameDraft == "Corrected title"
+  type "rename-title" "Alpha thread"
+  tap "rename-confirm"
+  clock data
+  clock settle
+  expect state activeThreadId == ""
+  request POST "http://127.0.0.1:0/clock/check"
+
+test "custom snooze keeps invalid input open, then accepts a duration without opening a conversation"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-snooze"
+  tap "snooze-custom"
+  clock data
+  tap "custom-duration-mode"
+  type "custom-amount" "0"
+  tap "custom-submit"
+  clock data
+  expect text "custom-error" == "Enter a positive duration."
+  type "custom-amount" "1.5"
+  tap "custom-submit"
+  clock data
+  clock settle
+  expect tree missing "thread-fixture:alpha"
+  tap "snoozed-threads"
+  expect text "wake-fixture:alpha" == "2h"
+  expect state activeThreadId == ""
+  expect text "thread-undo-label" == "Snoozed thread"
+  tap "undo-snooze"
+  clock data
+  clock settle
+  expect tree missing "undo-snooze"
+  expect tree has "age-fixture:alpha"
+
+test "configured snooze starts on selection and wake returns the conversation without navigating"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/clock/start"
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-snooze"
+  expect tree missing "snooze-after:60"
+  tap "snooze-after:90"
+  clock data
+  clock settle
+  expect tree has "undo-snooze"
+  clock +5100
+  expect tree missing "undo-snooze"
+  expect tree missing "thread-fixture:alpha"
+  tap "snoozed-threads"
+  expect text "wake-fixture:alpha" == "2h"
+  tap "thread-fixture:alpha" contextmenu
+  clock data
+  tap "thread-menu-wake"
+  clock data
+  clock settle
+  expect tree missing "wake-fixture:alpha"
+  expect tree has "age-fixture:alpha"
+  expect state activeThreadId == ""
+  request POST "http://127.0.0.1:0/clock/check"
+
+test "compact thread ages update in place and catch up on return"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  expect text "age-fixture:alpha" == "59m"
+  expect tree missing "age-fixture:beta"
+  tap "settled-threads"
+  expect text "age-fixture:beta" == "23h"
+  request POST "http://127.0.0.1:0/clock/start"
+  clock +60000
+  expect text "age-fixture:alpha" == "1h"
+  expect text "age-fixture:beta" == "1d"
+  request POST "http://127.0.0.1:0/clock/check"
+  type "root" "/settings"
+  clock settle
+  clock +3600000
+  type "root" "/"
+  clock settle
+  expect text "age-fixture:alpha" == "2h"
+
+test "snoozed threads can be searched while collapsed and wake without replacing a subscription"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  expect text "snoozed-title" == "Snoozed (2)"
+  expect tree has "pin-fixture:build"
+  expect tree missing "working-threads"
+  expect tree missing "pin-fixture:beta"
+  expect tree missing "thread-fixture:soon"
+  type "search" "Soon nap"
+  expect tree missing "snoozed-threads"
+  expect text "wake-fixture:soon" == "1m"
+  type "search" ""
+  expect tree missing "thread-fixture:soon"
+  tap "snoozed-threads"
+  expect text "wake-fixture:later" == "4h"
+  expect tree missing "pin-fixture:later"
+  request POST "http://127.0.0.1:0/clock/start"
+  clock +16000
+  expect tree missing "wake-fixture:soon"
+  expect tree has "thread-fixture:soon"
+  tap "snoozed-threads"
+  expect text "snoozed-title" == "Snoozed (1)"
+  expect tree missing "thread-fixture:later"
+  request POST "http://127.0.0.1:0/clock/check"
+  tap "thread-fixture:soon"
+  clock settle
+  expect state activeThreadId == "fixture:soon"
+
+test "pin and unpin a list row without opening it or replacing its subscription"
+  clock data
+  tap "empty-add-environment"
+  clock settle
+  type "address" "http://127.0.0.1:0"
+  type "pair-code" "fixture-code"
+  tap "connect"
+  clock data
+  clock settle
+  request POST "http://127.0.0.1:0/clock/start"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:alpha"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree missing "pin-fixture:alpha"
+  expect state activeThreadId == ""
+  expect tree has "unpin-notice"
+  tap "undo-unpin"
+  clock data
+  clock settle
+  expect tree has "pin-fixture:alpha"
+  expect tree missing "unpin-notice"
+  tap "thread-fixture:alpha" contextmenu
+  tap "thread-menu-pin"
+  clock data
+  clock settle
+  expect tree has "unpin-notice"
+  clock +5100
+  expect tree missing "undo-unpin"
+  expect tree missing "pin-fixture:alpha"
+  request POST "http://127.0.0.1:0/clock/check"
