@@ -1887,21 +1887,24 @@ const sources: Sources = {
       return {key,path,viewed,error:""};
     } catch (error) { return {key,path,viewed,error:error instanceof Error ? error.message : "Could not update the viewed file."}; }
   },
-  loadPullFiles: async ([matches, revision], store, _storage, native) => {
-    const empty = { files: [], truncated: false, nextCursor: "", error: "" };
+  loadPullFiles: async ([matches, revision, commit], store, _storage, native) => {
+    const empty = { key:"", files: [], truncated: false, nextCursor: "", error: "" };
     if (matches.length !== 1) return empty;
     const row = matches[0];
+    const key = `${row.routeKey}:${row.number}:${commit}`;
+    if (commit && !/^[0-9a-f]{7,64}$/i.test(commit)) return {...empty,key,error:"This link does not identify a commit."};
     try {
-      return await readPullRequestData(row.environmentId, store, native, (session, token) => {
+      const result = await readPullRequestData(row.environmentId, store, native, (session, token) => {
         const pages = filePages.get(session) ?? new ChangedFilePages();
         filePages.set(session, pages);
-        return pages.read(JSON.stringify([session.controlAccessKey(),row.routeKey,row.number]), revision, cursor => readJson(`${session.environment.url}/api/pull-requests/diff`, {
+        return pages.read(JSON.stringify([session.controlAccessKey(),row.routeKey,row.number,commit]), revision, cursor => readJson(`${session.environment.url}/api/pull-requests/diff`, {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: row.projectId, repository: row.repository, number: row.number, ...(row.host ? {host: row.host} : {}), ...(cursor ? {cursor} : {}) }),
+          body: JSON.stringify({ projectId: row.projectId, repository: row.repository, number: row.number, ...(row.host ? {host: row.host} : {}), ...(commit ? {commit} : {}), ...(cursor ? {cursor} : {}) }),
         }));
       });
+      return {...result,key};
     } catch (error) {
-      return { ...empty, error: error instanceof Error ? error.message : "Changed files could not be loaded." };
+      return { ...empty, key, error: error instanceof Error ? error.message : "Changed files could not be loaded." };
     }
   },
   loadPullRequestActivity: async ([matches], store, _storage, native) => {

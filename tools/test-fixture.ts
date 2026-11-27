@@ -343,6 +343,11 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           const ref = await request.json();
           if (request.headers.get("authorization") !== "Bearer fixture-access" || ref.projectId !== "shared" || ref.repository !== `${id}/client` || !(ref.number === 9 || (secondary && ref.host === "second.test" && ref.number === 29)) || !["first.test", "second.test"].includes(ref.host)) return json({message:"Incorrect diff reference"}, 403);
           pullReads.push("diff");
+          if (ref.commit !== undefined) {
+            if (ref.commit !== "abcd1234" || ref.host !== "second.test" || ref.number !== 9 || (ref.cursor && ref.cursor !== "commit page / 1")) return json({message:"Incorrect commit scope"},400);
+            const file = ref.cursor ? "src/final.ts" : "example";
+            return json({patch:`diff --git a/${file} b/${file}\n@@ -0,0 +1 @@\n+commit-only ${file}`,truncated:!ref.cursor,nextCursor:ref.cursor ? null : "commit page / 1"});
+          }
           if (ref.cursor && ref.cursor !== "after fixture/1") return json({message:"Invalid diff cursor"}, 400);
           if (ref.host === "first.test") return json({patch:`diff --git a/src/panel.test.ts b/src/panel.test.ts\n@@ -0,0 +1,3 @@\n+ok\n+\t  ${"very_long_name_".repeat(12)}é  \n+`, truncated:false, nextCursor:null});
           return ref.cursor ? json({patch:"diff --git a/docs/old.txt b/final.txt\nrename from docs/old.txt\nrename to final.txt\n--- a/docs/old.txt\n+++ b/final.txt\n@@ -1 +1 @@\n-old\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
@@ -542,7 +547,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
             else if (frame.payload.host === "first.test") detail.body = ["## Keyboard changes", ...Array.from({length:15}, (_, index) => `- Verify **alignment** for row ${index + 1}`), "", "Final paragraph with `shortcuts` and [documentation](https://example.invalid/guide)."].join("\n");
           }
           if (!secondary && frame.payload.host === "second.test" && frame.payload.number === 9) {
-            if (method === "detail" && detail) Object.assign(detail,{capabilities:{review:{reply:true,resolve:true}},viewerPermissions:{comment:discussionViewer,resolve:discussionViewer}});
+            if (method === "detail" && detail) Object.assign(detail,entries[1],{state:"open",additions:0,capabilities:{review:{reply:true,resolve:true}},viewerPermissions:{comment:discussionViewer,resolve:discussionViewer}});
             if (method === "activity" && value.reviewThreads) Object.assign(value.reviewThreads[0]!,{isResolved:discussionResolved,commentCount:3+postedReplies.length,comments:[...value.reviewThreads[0]!.comments,...postedReplies]});
           }
           const answerPull = () => socket.send(JSON.stringify({ _tag: "Exit", requestId: frame.id, exit: { _tag: "Success", value: method === "list" && paged ? {...value, nextCursors:continued ? {} : {fixture:"page-2"}} : detail } }));

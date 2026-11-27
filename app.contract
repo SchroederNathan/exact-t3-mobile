@@ -56,6 +56,9 @@ routes nav
     pullFilterSearch "/pulls/filter/:kind/search"
     pullRequest "/pulls/:project/:number"
       pullDiscussion "/pulls/:project/:number/discussion/:thread"
+      pullCommit "/pulls/:project/:number/commit/:oid"
+        pullCommitPicker "/pulls/:project/:number/commit/:oid/picker"
+      pullCommitFile "/pulls/:project/:number/commit/:oid/file/:file"
       pullFile "/pulls/:project/:number/file/:file"
         pullFilesSheet "/pulls/:project/:number/file/:file/picker"
   tab usage "/usage"
@@ -480,6 +483,7 @@ shape PullChangedFile
   rows: ReviewRow[]
 
 shape PullFileList
+  key: string
   files: PullChangedFile[]
   truncated: bool
   nextCursor: string
@@ -829,7 +833,11 @@ component T3Code
   resource device = deviceTraits() as shape Device else empty()
   resource environmentState = loadEnvironmentState() as shape EnvironmentState else empty()
   state pullEnvironment = "" persist
-  derive pullDetailRoute = current.name == "pullRequest" or current.name == "pullFile" or current.name == "pullFilesSheet" or current.name == "pullDiscussion"
+  derive commitRoute = current.name == "pullCommit" or current.name == "pullCommitFile" or current.name == "pullCommitPicker"
+  derive commitOid = commitRoute ? current.params.oid : ""
+  derive diffScreen = current.name == "pullFile" or current.name == "pullCommit" or current.name == "pullCommitFile"
+  derive pickerScreen = current.name == "pullFilesSheet" or current.name == "pullCommitPicker"
+  derive pullDetailRoute = current.name == "pullRequest" or diffScreen or pickerScreen or current.name == "pullDiscussion"
   derive pullWorkspace = current.name == "pullRequests" or pullDetailRoute or current.name == "pullFilterSearch"
   derive selectedPullEnvironment = environmentState.items.filter(env => env.id == pullEnvironment).length > 0 ? pullEnvironment : ""
   resource pullLink = parsePullLink(pullDetailRoute ? current.params.project : "", pullDetailRoute ? current.params.number : "") as shape PullRef[] else empty()
@@ -974,8 +982,8 @@ component T3Code
   derive listedRefs = matchingPulls.map(item => PullRef(environmentId=item.environmentId, projectId=item.projectId, host=item.host, repository=item.repository, number=item.number, routeKey=item.routeKey))
   derive pullRefs = pullLink.length > 0 ? pullLink.filter(ref => catalog.environments.filter(env => env.id == ref.environmentId and env.enabled and env.status == "Connected").length > 0) : listedRefs
   resource pullRequestDetail = loadPullRequestDetail(pullRefs) as shape PullRequestDetail else empty()
-  resource viewedFiles = loadViewedFiles(pullRefs, pullRequestDetail.viewedKey) as shape ViewedFiles else empty()
-  derive viewedScope = viewedFiles.key != "" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == viewedFiles.key).length == 1
+  resource viewedFiles = loadViewedFiles(pullRefs, commitRoute ? "" : pullRequestDetail.viewedKey) as shape ViewedFiles else empty()
+  derive viewedScope = not commitRoute and viewedFiles.key != "" and pullRefs.filter(ref => `${ref.routeKey}:${ref.number}` == viewedFiles.key).length == 1
   resource pullRequestActivity = loadPullRequestActivity(pullRefs) as shape PullRequestActivity else empty()
   state activityKind = "All activity"
   state activityBots = false
@@ -1102,7 +1110,7 @@ component T3Code
   action selectDiffLine(key: string)
     selectedDiffVisit = diffVisit
     selectedDiffLine = key
-  derive selectedDiffRows = diffRows.filter(line => current.name == "pullFile" and selectedDiffVisit == diffVisit and line.key == selectedDiffLine and (line.kind == "addition" or line.kind == "deletion" or line.kind == "context"))
+  derive selectedDiffRows = diffRows.filter(line => diffScreen and selectedDiffVisit == diffVisit and line.key == selectedDiffLine and (line.kind == "addition" or line.kind == "deletion" or line.kind == "context"))
   action copyDiffLine
     match first(selectedDiffRows)
       case some(line)
@@ -1116,41 +1124,43 @@ component T3Code
     pullFileRevision = 0
     collapsedDiffFiles = []
     diffJumped = ""
-  resource pullFiles = loadPullFiles(pullRefs, pullFileRevision) as shape PullFileList else empty()
+  derive diffScope = match first(pullRefs) { case some(ref) => `${ref.routeKey}:${ref.number}:${commitOid}`, case none => "" }
+  resource rawPullFiles = loadPullFiles(pullRefs, pullFileRevision, commitOid) as shape PullFileList else empty()
+  derive pullFiles = rawPullFiles.key == diffScope ? rawPullFiles : PullFileList(key="", files=[], truncated=false, nextCursor="", error="")
   state hidePullTests = false persist
   state filteredDiffVisit = ""
   derive visiblePullFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile)
   derive hiddenPullFileCount = pullFiles.files.length - visiblePullFiles.length
   state foldedPullDirectories: string[] = []
-  resource pickerFiles = pullFilePickerRows(current.name == "pullFilesSheet" ? visiblePullFiles : [], foldedPullDirectories) as shape FilePickerRow[] else empty()
+  resource pickerFiles = pullFilePickerRows(pickerScreen ? visiblePullFiles : [], foldedPullDirectories) as shape FilePickerRow[] else empty()
   action openFilePicker
-    if current.name == "pullFile"
+    if diffScreen
       foldedPullDirectories = []
-      nav = push(nav, path("pullFilesSheet", current.params.project, current.params.number, current.params.file))
+      nav = push(nav, commitRoute ? path("pullCommitPicker", current.params.project,current.params.number,commitOid) : path("pullFilesSheet", current.params.project, current.params.number, current.params.file))
   action foldFileDirectory(directory: string)
     foldedPullDirectories = foldedPullDirectories.includes(directory) ? foldedPullDirectories.filter(item => item != directory) : foldedPullDirectories.concat([directory])
   action jumpFromFilePicker(file: string)
-    if current.name == "pullFilesSheet" and visiblePullFiles.filter(item => item.path == file).length == 1
-      let next = path("pullFile", current.params.project, current.params.number, file)
+    if pickerScreen and visiblePullFiles.filter(item => item.path == file).length == 1
+      let next = commitRoute ? path("pullCommitFile",current.params.project,current.params.number,commitOid,file) : path("pullFile", current.params.project, current.params.number, file)
       collapsedDiffFiles = collapsedDiffFiles.filter(item => item != file)
       diffJumped = ""
       nav = replace(back(nav), next)
   derive visibleViewedCount = visiblePullFiles.filter(file => viewedFiles.paths.includes(file.path)).length
   action togglePullTests
     selectedDiffLine = ""
-    if current.name == "pullFile"
+    if diffScreen
       filteredDiffVisit = diffVisit
     hidePullTests = not hidePullTests
   action retryPullFiles
     pullFileRevision = pullFileRevision + 1
-  derive diffPath = current.name == "pullFile" or current.name == "pullFilesSheet" ? current.params.file : ""
-  derive diffVisit = current.name == "pullFile" ? `${current.id}:${diffPath}` : ""
-  derive diffFileFound = pullFiles.files.filter(file => file.path == diffPath).length > 0
+  derive diffPath = current.name == "pullFile" or current.name == "pullFilesSheet" or current.name == "pullCommitFile" ? current.params.file : ""
+  derive diffVisit = diffScreen ? `${current.id}:${commitOid}:${diffPath}` : ""
+  derive diffFileFound = (commitRoute and diffPath == "" and rawPullFiles.key == diffScope and diffScope != "") or pullFiles.files.filter(file => file.path == diffPath).length > 0
   derive diffVisibleFiles = pullFiles.files.filter(file => not hidePullTests or not file.testFile or (file.path == diffPath and filteredDiffVisit != diffVisit))
-  resource diffRows = pullDiffRows(diffPath != "" ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
-  task fetchDiffTarget when current.name == "pullFile" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(pullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
+  resource diffRows = pullDiffRows(diffScreen or pickerScreen ? diffVisibleFiles : [], collapsedDiffFiles) as shape PullDiffRow[] else empty()
+  task fetchDiffTarget when diffScreen and diffPath != "" and not diffFileFound and pullFiles.nextCursor != "" and pullFiles.error == "" and not pending(rawPullFiles) key=`${diffVisit}:${pullFiles.nextCursor}`
     after(1, retryPullFiles)
-  task jumpToPullFile when current.name == "pullFile" and diffVisit != diffJumped and diffRows.filter(row => row.key == `file:${diffPath}`).length > 0 key=diffVisit
+  task jumpToPullFile when diffScreen and diffPath != "" and diffVisit != diffJumped and diffRows.filter(row => row.key == `file:${diffPath}`).length > 0 key=diffVisit
     after(1, revealPullFile)
   action revealPullFile
     scrollIntoView("pull-diff-lines", `file:${diffPath}`, block="start", behavior="instant")
@@ -1158,6 +1168,10 @@ component T3Code
   action openPullFile(project: string, number: number, file: string)
     collapsedDiffFiles = []
     nav = push(nav, path("pullFile", project, `${number}`, file))
+  action openPullCommit(oid: string)
+    if correctActivity and current.name == "pullRequest" and pullRequestActivity.events.filter(event => event.kind == "commit" and event.id == oid).length == 1
+      collapsedDiffFiles = []
+      nav = push(nav, path("pullCommit",current.params.project,current.params.number,oid))
   action foldDiffFile(file: string)
     if selectedDiffRows.filter(line => line.path == file).length > 0
       selectedDiffLine = ""
@@ -3296,7 +3310,11 @@ component T3Code
                                     text `${event.author} ${event.summary}` font-size="0.875rem" font-weight=500 line-clamp=2
                                     if event.path != ""
                                       text `${event.path}${event.line > 0 ? `:${event.line}` : ""}` color="muted" font-family="ui-monospace" font-size="0.8125rem" line-clamp=2
-                                    if event.body != ""
+                                    if event.kind == "commit"
+                                      button press=openPullCommit(event.id) aria-label=`View commit ${event.id.slice(0, 7)}, ${event.body}` min-height=44 appearance="none" display="flex" align-items="center" gap=7 text-align="left" testId=`pull-open-commit-${event.id}`
+                                        text event.body flex=1 min-width=0 line-clamp=1
+                                        text event.id.slice(0, 7) color="muted" font-family="Menlo" font-size="0.75rem"
+                                    else if event.body != ""
                                       text event.body user-select="text" white-space="pre-wrap" line-clamp=8 overflow-wrap="break-word"
                                     if event.kind == "discussion"
                                       button press=openDiscussion(event.id) aria-label=`Open ${event.resolved ? "resolved" : "unresolved"} discussion in ${event.path == "" ? "the overview" : event.path}` min-height=44 appearance="none" text-align="left" testId=`pull-open-discussion-${event.id}`
@@ -3316,7 +3334,7 @@ component T3Code
                                 if pullFiles.files.length > 0
                                   button popovertarget="pull-file-filter-menu" aria-label="Filter review files" aria-haspopup="menu" min-height=44 min-width=44 testId="pull-file-filter"
                                     image "symbol:filter"
-                              if pending(pullFiles) and pullFiles.files.length == 0
+                              if pending(rawPullFiles) and pullFiles.files.length == 0
                                 progress aria-label="Loading changed files" width=18 height=18
                               else if pullFiles.error != "" and pullFiles.files.length == 0
                                 text pullFiles.error color="danger" testId="pull-files-error"
@@ -3352,7 +3370,7 @@ component T3Code
                                 if pullFiles.nextCursor != ""
                                   if pullFiles.error != ""
                                     text pullFiles.error color="danger"
-                                  button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-files-more"
+                                  button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-files-more"
                                     text (pullFiles.error != "" ? "Retry loading files" : "Load more files")
                               button press=openPullRequestUrl(pull.url) buttonStyle="filled" testId="pull-request-open-url"
                                 text "Open in source control"
@@ -3402,7 +3420,7 @@ component T3Code
                       if replyAllowed
                         button press=postDiscussionReply disabled=(discussionBusy or shownDraft.trim() == "") min-height=44 min-width=44 testId="discussion-post"
                           text "Reply"
-              if e.name == "pullFilesSheet"
+              if e.name == "pullFilesSheet" or e.name == "pullCommitPicker"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationDetent="60% large" navigationInitialDetent="60%" navigationGrabber="visible" navigationScroll="pull-picker-files" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header
                     button id="back" press=backPullRequest aria-label="Close changed files" testId="pull-picker-close"
@@ -3431,7 +3449,7 @@ component T3Code
                             if viewedScope and viewedFiles.paths.includes(item.path)
                               image "symbol:select-fill" color="status-done" width=18 height=18
                             image "symbol:icon.disclose-forward" color="muted" width=12 height=12
-                  if pending(pullFiles) and pullFiles.files.length == 0
+                  if pending(rawPullFiles) and pullFiles.files.length == 0
                     progress aria-label="Loading changed files"
                   else if pullFiles.error != ""
                     text pullFiles.error color="danger" padding=14
@@ -3443,30 +3461,32 @@ component T3Code
                       button press=togglePullTests min-height=44 testId="pull-picker-show-tests"
                         text "Show test files"
                   if pullFiles.nextCursor != "" and pullFiles.error == ""
-                    button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-picker-more"
+                    button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-picker-more"
                       text "Load more files"
-              if e.name == "pullFile"
+              if e.name == "pullFile" or e.name == "pullCommit" or e.name == "pullCommitFile"
                 column navigationKey=`${e.id}` navigationScroll="pull-diff-lines" position="absolute" inset=0 background-color="screen" display="flex" flex-direction="column"
                   header
                     button id="back" press=backPullRequest aria-label="Back to pull request" testId="pull-diff-back"
                       image "symbol:back"
-                    text "Changes" role="heading" aria-level=2
+                    text (commitRoute ? "Commit changes" : "Changes") role="heading" aria-level=2
                     button popovertarget="pull-diff-options-menu" aria-haspopup="menu" aria-label="Diff options" min-width=44 min-height=44 testId="pull-diff-options"
                       image "symbol:sf/ellipsis"
-                  text `#${e.params.number} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
+                  text `${commitRoute ? commitOid.slice(0, 7) : `#${e.params.number}`} · ${diffVisibleFiles.length} ${diffVisibleFiles.length == 1 ? "file" : "files"}` color="muted" font="-exact-footnote" padding="7px 14px" testId="pull-diff-summary"
                   if viewedError != ""
                     text viewedError color="danger" role="alert" padding="7px 14px" testId="pull-viewed-error"
                   if pullFiles.error != ""
                     text pullFiles.error color="danger" padding=14
                     button press=retryPullFiles testId="pull-diff-retry"
                       text "Retry loading files"
-                  else if not diffFileFound and (pending(pullFiles) or pending(catalog) or pullFiles.nextCursor != "")
+                  else if not diffFileFound and (pending(rawPullFiles) or pending(catalog) or pullFiles.nextCursor != "")
                     progress aria-label="Loading changes" testId="pull-diff-loading"
                   else if not diffFileFound
                     text "This file is not in the available diff." color="muted" padding=14 testId="pull-diff-missing"
                   else if diffVisibleFiles.length == 0 and hidePullTests
                     button press=togglePullTests min-height=44 testId="pull-diff-show-tests"
                       text "Show test files"
+                  else if commitRoute and diffFileFound and pullFiles.files.length == 0
+                    text "No text changes available." color="muted" padding=14 testId="pull-commit-empty"
                   list id="pull-diff-lines" appearance="none" virtualized=true flex=1 min-height=0 estimated-item-height=22 background-color="code-surface"
                     for line in diffRows key=line.key
                       column min-width=0
@@ -3490,7 +3510,7 @@ component T3Code
                             text (line.newLine != "" ? line.newLine : line.oldLine) width=39 padding-right=7 box-sizing="border-box" text-align="right" color="muted" font-family="ui-monospace" font-size="0.6875rem" line-height="1.375rem" font-variant-numeric="tabular-nums" flex-shrink=0
                             text `${line.prefix}${line.text == "" ? " " : line.text}` user-select="text" flex=1 min-width=0 font-family="ui-monospace" font-size="0.75rem" line-height="1.375rem" color="foreground" padding-right=7 white-space=(wrapPullDiff ? "pre-wrap" : "pre") overflow-wrap=(wrapPullDiff ? "anywhere" : "normal") overflow-x=(wrapPullDiff ? "visible" : "auto") testId=`pull-diff-${line.key}`
                   if pullFiles.nextCursor != "" and diffFileFound
-                    button press=retryPullFiles disabled=pending(pullFiles) min-height=44 testId="pull-diff-more"
+                    button press=retryPullFiles disabled=pending(rawPullFiles) min-height=44 testId="pull-diff-more"
                       text "Load more files"
                   button press=openFilePicker aria-label="Changed files" buttonStyle="glass" align-self="end" min-height=44 min-width=44 testId="pull-diff-open-picker"
                     image "symbol:sf/doc.on.doc" font-size=20

@@ -405,3 +405,31 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   expect tree missing "discussion-post"
   request POST "http://127.0.0.1:0/assert/discussion-writes/3"
   request POST "http://127.0.0.2:0/assert/discussion-writes/0"
+  type "root" "/pulls/pr-5b2266697874757265222c22736861726564222c227365636f6e642e74657374222c22666978747572652f636c69656e74225d/9"
+  clock data
+  clock settle
+  tap "pull-section-Activity"
+  clock data
+  tap "pull-open-commit-abcd1234"
+  clock data
+  clock settle
+  expect text "pull-diff-summary" == "abcd123 · 1 file"
+  expect text "pull-diff-line:2:example" == "+commit-only example"
+  expect tree missing "pull-diff-file-omitted"
+  tap "pull-diff-open-picker"
+  clock settle
+  tap "pull-picker-more"
+  clock data
+  clock settle
+  tap "pull-picker-file:src/final.ts"
+  clock settle
+  expect state current.name == "pullCommitFile"
+  expect text "pull-diff-line:2:src/final.ts" == "+commit-only src/final.ts"
+  reload
+  clock data
+  clock settle
+  clock +10
+  clock data
+  clock settle
+  expect text "pull-diff-line:2:src/final.ts" == "+commit-only src/final.ts"
+  expect tree missing "pull-toggle-viewed-src/final.ts"
