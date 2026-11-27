@@ -1,7 +1,7 @@
 import { projectTurnDiff, type ReviewRow } from "./turn-review";
 
 function describePath(path: string) {
-  const parts = path.replaceAll("\\", "/").split("/");
+  const parts = path.split("/");
   const name = parts.pop() ?? path;
   const directory = parts.join("/");
   const generated = /(?:^|\/)(?:__generated__|_?generated)(?:\/|$)|\.(?:generated|gen|min)\.|(?:\.lockb?|\.sum|lock\.json|lock\.yaml|\.map)$/i.test(path);
@@ -10,7 +10,7 @@ function describePath(path: string) {
   return {name, directory, testFile: !generated && (testDirectory || testName)};
 }
 
-export type ChangedFile = ReturnType<typeof describePath> & { path: string; additions: number; deletions: number; omitted: boolean; rows: ReviewRow[] };
+export type ChangedFile = ReturnType<typeof describePath> & { path: string; previousPath: string; copied: boolean; additions: number; deletions: number; omitted: boolean; rows: ReviewRow[] };
 
 export function changedFiles(value: Record<string, unknown>) {
   if (typeof value.patch !== "string" || typeof value.truncated !== "boolean" || !(value.nextCursor === null || typeof value.nextCursor === "string")) throw new Error("The environment returned an invalid diff.");
@@ -18,7 +18,8 @@ export function changedFiles(value: Record<string, unknown>) {
   let file: ChangedFile | undefined;
   for (const row of projectTurnDiff(value.patch)) {
     if (row.kind === "file") {
-      file = { path: row.text, ...describePath(row.text), additions: 0, deletions: 0, omitted: false, rows: [] };
+      const path = row.targetPath ?? row.text;
+      file = { path, ...describePath(path), previousPath:row.previousPath ?? "", copied:row.copied === true, additions: 0, deletions: 0, omitted: false, rows: [] };
       files.push(file);
     } else if (file) {
       file.rows.push(row);
@@ -30,7 +31,7 @@ export function changedFiles(value: Record<string, unknown>) {
   if (Array.isArray(value.omittedFileStats)) for (const stat of value.omittedFileStats) {
     if (typeof stat?.path !== "string" || paths.has(stat.path) || !Number.isSafeInteger(stat.additions) || !Number.isSafeInteger(stat.deletions)) continue;
     paths.add(stat.path);
-    files.push({ path: stat.path, ...describePath(stat.path), additions: stat.additions, deletions: stat.deletions, omitted: true, rows: [] });
+    files.push({ path: stat.path, ...describePath(stat.path), previousPath:"", copied:false, additions: stat.additions, deletions: stat.deletions, omitted: true, rows: [] });
   }
   return { files, truncated: value.truncated, nextCursor: value.nextCursor || "" };
 }

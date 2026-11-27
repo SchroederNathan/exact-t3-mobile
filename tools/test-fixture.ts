@@ -336,7 +336,7 @@ function environment(id: string, label: string, secondary = false, port = 0) {
           pullReads.push("diff");
           if (ref.cursor && ref.cursor !== "after fixture/1") return json({message:"Invalid diff cursor"}, 400);
           if (ref.host === "first.test") return json({patch:"diff --git a/src/panel.test.ts b/src/panel.test.ts\n@@ -0,0 +1 @@\n+ok", truncated:false, nextCursor:null});
-          return ref.cursor ? json({patch:"diff --git a/final.txt b/final.txt\n@@ -0,0 +1 @@\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
+          return ref.cursor ? json({patch:"diff --git a/docs/old.txt b/final.txt\nrename from docs/old.txt\nrename to final.txt\n--- a/docs/old.txt\n+++ b/final.txt\n@@ -1 +1 @@\n-old\n+last", truncated:false, nextCursor:null}) : json({patch:`diff --git a/example b/example\n--- a/example\n+++ b/example\n@@ -1 +1 @@\n-old\n+${ref.host}\n`, truncated:true, nextCursor:"after fixture/1", omittedFileStats:[{path:"omitted",additions:4,deletions:2}]});
         }
         if (pullsMode && path.startsWith("/assert/project/")) return json({lastPullProject}, lastPullProject === path.slice("/assert/project/".length) ? 200 : 409);
         if (pullsMode && path.startsWith("/assert/options/")) {

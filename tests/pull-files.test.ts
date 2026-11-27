@@ -3,6 +3,16 @@ import { changedFiles, ChangedFilePages } from "../pull-files";
 
 const sample = (name: string, nextCursor: string | null = null) => ({patch:`diff --git a/${name} b/${name}\n@@ -1 +1 @@\n-old\n+new`, truncated:false, nextCursor});
 
+test("renames separate the actual target from display text, including literal arrows and backslashes", () => {
+  const patch = 'diff --git a/old.ts "b/src/new → literal\\\\name.ts"\nrename from old.ts\nrename to "src/new → literal\\\\name.ts"\n--- a/old.ts\n+++ "b/src/new → literal\\\\name.ts"\n@@ -1 +1 @@\n-a\n+b';
+  const path = 'src/new → literal\\name.ts';
+  const result = changedFiles({patch,truncated:false,nextCursor:null,omittedFileStats:[{path,additions:0,deletions:0}]});
+  expect(result.files).toHaveLength(1);
+  expect(result.files[0]).toMatchObject({path,directory:"src",name:'new → literal\\name.ts',previousPath:"old.ts",copied:false,additions:1,deletions:1});
+  const copy = changedFiles({patch:"diff --git a/old b/new\ncopy from old\ncopy to new",truncated:false,nextCursor:null});
+  expect(copy.files[0]).toMatchObject({path:"new",previousPath:"old",copied:true});
+});
+
 test("review filtering keeps production and generated paths, including similarly named files", () => {
   const paths = ["tests/a.swift", "pkg/FooTest.java", "src/Latest.java", "src/foo.spec.ts", "pkg/__snapshots__/x.snap", "tests/generated/model.ts", "src/latest.ts"];
   const stats = changedFiles({...sample("src/a.ts"), omittedFileStats:paths.map(path=>({path,additions:1,deletions:0}))}).files;

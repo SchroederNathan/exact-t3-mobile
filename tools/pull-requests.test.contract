@@ -50,6 +50,13 @@ test "PRs load on demand and resolve duplicate repository and PR numbers on the 
   clock data
   clock settle
   expect tree has "pull-file-final.txt"
+  expect text "pull-file-origin-final.txt" == "Renamed from docs/old.txt"
+  tap "pull-file-final.txt"
+  clock settle
+  expect state current.params.file == "final.txt"
+  expect text "pull-diff-line:7:final.txt" == "+last"
+  tap "pull-diff-back"
+  clock settle
   expect tree has "pull-file-example"
   expect tree missing "pull-files-more"
   request POST "http://127.0.0.1:0/assert/pulls/activity,detail,diff,diff,list"

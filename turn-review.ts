@@ -4,6 +4,9 @@ export interface ReviewRow {
   text: string;
   oldLine: string;
   newLine: string;
+  targetPath?: string;
+  previousPath?: string;
+  copied?: boolean;
 }
 
 const pathEscapes: Record<string, string> = {
@@ -103,6 +106,10 @@ export function projectTurnDiff(diff: string): ReviewRow[] {
     }
     if (line.startsWith("+++ ") && file && hasFileMarkers) {
       const newPath = patchPath(line.slice(4));
+      if (oldPath !== "/dev/null" && newPath !== "/dev/null" && oldPath !== newPath) {
+        file.targetPath = newPath;
+        file.previousPath = oldPath;
+      }
       file.text =
         newPath === "/dev/null"
           ? oldPath
@@ -114,7 +121,11 @@ export function projectTurnDiff(diff: string): ReviewRow[] {
     const rename = /^(rename|copy) (from|to) (.*)$/.exec(line);
     if (rename) {
       const path = unquoteGitPatchPath(rename[3]!);
-      if (file && rename[2] === "to") file.text = path;
+      if (file) {
+        if (rename[2] === "to") file.targetPath = file.text = path;
+        else file.previousPath = path;
+        file.copied = rename[1] === "copy";
+      }
       append("meta", `${rename[1]} ${rename[2]} ${path}`);
       continue;
     }

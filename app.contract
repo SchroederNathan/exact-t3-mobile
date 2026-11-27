@@ -467,6 +467,8 @@ shape PullRequests
 
 shape PullChangedFile
   path: string
+  previousPath: string
+  copied: bool
   name: string
   directory: string
   testFile: bool
@@ -3102,6 +3104,8 @@ component T3Code
                                         text file.name font-size="0.875rem" font-weight=500 line-clamp=2
                                         if file.directory != ""
                                           text file.directory font-size="0.8125rem" color="muted" line-clamp=1
+                                        if file.previousPath != ""
+                                          text `${file.copied ? "Copied" : "Renamed"} from ${file.previousPath}` font-size="0.8125rem" color="muted" line-clamp=1 testId=`pull-file-origin-${file.path}`
                                       text `+${file.additions}` color="status-done"
                                       text `−${file.deletions}` color="danger"
                                       if viewedScope and viewedFiles.paths.includes(file.path)
