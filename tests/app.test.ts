@@ -3,6 +3,27 @@ import { expect, test, spyOn } from "bun:test";
 import { answer as sourceAnswer } from "../app";
 import type { Answer, NativeModule, Storage, Store } from "../app.contract.d.ts";
 
+test("scanning a pairing QR only prepares editable connection fields", async () => {
+  const scan = (payload: string) =>
+    sourceAnswer("scannedPairing", [payload], {} as Store, {} as Storage);
+  const host = "http://192.168.1.100:3773";
+  const direct = `${host}/#token=alpha%2Bbeta`;
+  const hosted = `https://app.t3.codes/?host=${encodeURIComponent(host)}&token=alpha%2Bbeta`;
+  for (const payload of [direct, hosted, `t3code://pair?pairingUrl=${encodeURIComponent(hosted)}`]) {
+    expect(await scan(payload)).toEqual({ address: host, code: "alpha+beta", error: "" });
+  }
+  for (const payload of [
+    "",
+    "not a pairing link",
+    "https://example.test",
+    "file:///tmp/#token=secret",
+    "https://user:password@example.test/#token=secret",
+  ]) {
+    const result = await scan(payload);
+    expect(result).toMatchObject({ address: "", code: "", error: expect.stringMatching(/pairing/i) });
+  }
+});
+
 test("native environments aggregate colliding IDs and keep commands and connection lifetimes scoped", async () => {
   let saved = JSON.stringify(
     ["a", "b"].map((id) => ({

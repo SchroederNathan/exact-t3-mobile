@@ -40,6 +40,7 @@ import {
   normalizeEnvironmentUrl,
   object,
   pair,
+  parsePairingAddress,
   readJson,
   socketUrl,
   scopedThreadId,
@@ -52,6 +53,7 @@ import {
 } from "./connection";
 
 export const grants =
+  "device.camera purpose.camera\n" +
   "device.microphone purpose.microphone\nfs.read app:/data/new-task-prefs-v1.json\nfs.write app:/data/new-task-prefs-v1.json\nfs.read app:/tmp/picked\nfs.read app:/data/composer-attachments\nfs.write app:/data/composer-attachments\nfs.read app:/cache/attachment-previews\nfs.write app:/cache/attachment-previews\nfs.read app:/data/environments-v1.json\nfs.write app:/data/environments-v1.json\nfs.read app:/data/drafts-v1.json\nfs.write app:/data/drafts-v1.json\nfs.read app:/data/model-drafts-v1.json\nfs.write app:/data/model-drafts-v1.json\nsecret.keep t3-environment-tokens\nnet.fetch http:\nnet.fetch https:\nnet.websocket ws:\nnet.websocket wss:";
 
 const FILE = "app:/data/environments-v1.json";
@@ -534,6 +536,14 @@ const addProject = addProjectSources({
 });
 
 const sources: Sources = {
+  scannedPairing: ([payload]) => {
+    try {
+      const { origin, credential } = parsePairingAddress(payload, "");
+      return { address: origin, code: credential, error: "" };
+    } catch {
+      return { address: "", code: "", error: "Scan a pairing QR code from t3 pair or desktop Connections settings." };
+    }
+  },
   ...composerSources({sessionFor, sessions: allSessions, composerSettings, awaitReply}),
   ...composerImportSources({ sessionFor, awaitReply, readableEnvironmentIds: (environmentId) => sessionFor(environmentId).readableComposerEnvironmentIds() }),
   ...mediaSources({ sessionFor, sync: syncNativeConnections, awaitReply }),

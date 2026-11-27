@@ -7,6 +7,9 @@
     "test": "bun test tests"
   },
   "dependencies": {
+    "@exact/barcode-detection": "link:../../expo-exact/packages/barcode-detection",
+    "@exact/camera": "link:../../expo-exact/packages/camera",
+    "@exact/media-capture": "link:../../expo-exact/packages/media-capture",
     "entities": "9.0.0",
     "marked": "18.1.3"
   }
